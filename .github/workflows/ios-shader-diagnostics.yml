@@ -1,0 +1,28 @@
+name: iOS shader resource diagnostics
+on:
+  push:
+    paths:
+      - 'ios-diagnostics/shader-probe/**'
+      - '.github/workflows/ios-shader-diagnostics.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shader-probe:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build synthetic shader observer
+        run: bash ios-diagnostics/shader-probe/build.sh
+      - name: Execute native initializer in simulator
+        working-directory: ios-diagnostics/shader-probe
+        run: python3 run-simulator.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shader-resources
+          path: |
+            ios-diagnostics/shader-probe/build/Wallet-Studio-Shaders-sin-firmar.ipa
+            ios-diagnostics/shader-probe/build/shader-report-simulator.json
+          if-no-files-found: error
+          retention-days: 7

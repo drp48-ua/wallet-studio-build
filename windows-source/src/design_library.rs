@@ -1,0 +1,215 @@
+//! Local, bounded image inputs. The library never interprets URLs or manifests.
+use anyhow::{Context, Result};
+use std::io::{Cursor, Read, Write};
+use std::path::{Path, PathBuf};
+
+pub const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_PIXELS: u64 = 16 * 1024 * 1024;
+pub const MAX_DESIGNS: usize = 100;
+
+#[derive(Clone, Debug)]
+pub struct Design {
+    pub path: PathBuf,
+    pub title: String,
+}
+
+pub fn library_dir() -> Result<PathBuf> {
+    Ok(std::env::current_exe()?.parent().context("No hay carpeta de aplicación")?.join("designs"))
+}
+
+pub fn supported_path(path: &Path) -> bool {
+    path.extension().and_then(|value| value.to_str()).is_some_and(|value|
+        ["png", "jpg", "jpeg", "webp", "gif"].contains(&value.to_ascii_lowercase().as_str()))
+}
+
+pub fn discover(root: &Path) -> Result<Vec<Design>> {
+    if !root.exists() { return Ok(Vec::new()); }
+    anyhow::ensure!(!std::fs::symlink_metadata(root).context("Inspección de la carpeta de diseños")?.file_type().is_symlink(), "La biblioteca no puede ser un enlace");
+    let canonical = root.canonicalize().context("Ruta real de la carpeta de diseños")?;
+    let mut ranked = Vec::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !supported_path(&path) || !entry.file_type()?.is_file() { continue; }
+        let metadata = std::fs::symlink_metadata(&path).context("Inspección del archivo de diseño")?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() || !supported_path(&path)
+            || metadata.len() == 0 || metadata.len() > MAX_IMAGE_BYTES { continue; }
+        let resolved = path.canonicalize().context("Ruta real del archivo de diseño")?;
+        if resolved.parent() != Some(canonical.as_path()) { continue; }
+        let mut title: String = path.file_stem().unwrap_or_default().to_string_lossy()
+            .replace(['_', '-'], " ").chars().filter(|c| !c.is_control()).take(80).collect();
+        if let Some(id) = path.file_stem().and_then(|stem| stem.to_str()).and_then(|stem| stem.strip_prefix("guardado-")) {
+            title = format!("Diseño guardado · {}", id.chars().take(8).collect::<String>());
+        }
+        ranked.push((metadata.modified().unwrap_or(std::time::UNIX_EPOCH), Design { path: resolved, title }));
+        // Bounded storage, but inspect the entire directory so new saves are not hidden.
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.path.cmp(&b.1.path)));
+        ranked.truncate(MAX_DESIGNS);
+    }
+    let mut designs: Vec<_> = ranked.into_iter().map(|(_, design)| design).collect();
+    designs.sort_by_cached_key(|design| design.title.to_lowercase());
+    Ok(designs)
+}
+
+/// Save the exact prepared PNG without overwriting any existing design.
+/// The content key is for deduplication only; exact byte equality verifies reuse.
+pub fn save_prepared_png(root: &Path, png: &[u8]) -> Result<PathBuf> {
+    anyhow::ensure!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "El diseño preparado debe ser PNG");
+    let image = decode_still(png)?;
+    anyhow::ensure!(image.width() == crate::image_skin::CARD_WIDTH && image.height() == crate::image_skin::CARD_HEIGHT,
+        "El diseño preparado no tiene el tamaño de tarjeta");
+    std::fs::create_dir_all(root).context("No se pudo crear la biblioteca de diseños")?;
+    let metadata = std::fs::symlink_metadata(root)?;
+    anyhow::ensure!(metadata.is_dir() && !metadata.file_type().is_symlink(), "La biblioteca debe ser una carpeta normal");
+    let root = root.canonicalize()?;
+    let key = png.iter().fold(0xcbf29ce484222325u64, |hash, byte|
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3));
+    for suffix in 0..1000 {
+        let name = if suffix == 0 { format!("guardado-{key:016x}.png") }
+            else { format!("guardado-{key:016x}-{suffix}.png") };
+        let path = root.join(name);
+        let file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path);
+        match file {
+            Ok(mut file) => {
+                let saved = (|| -> Result<()> {
+                    file.write_all(png)?;
+                    file.sync_all()?;
+                    anyhow::ensure!(read_image(&path)? == png, "El diseño guardado no pasó la verificación");
+                    Ok(())
+                })();
+                drop(file);
+                if let Err(error) = saved {
+                    // Only this newly created file is owned by this operation.
+                    let _ = std::fs::remove_file(&path);
+                    return Err(error).context("No se pudo guardar el diseño en la biblioteca");
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if read_image(&path).is_ok_and(|existing| existing == png) { return Ok(path); }
+            }
+            Err(error) => return Err(error).context("No se pudo guardar el diseño en la biblioteca"),
+        }
+    }
+    anyhow::bail!("No se pudo reservar un nombre para el diseño")
+}
+
+/// A transfer can only start after an exact, durable library copy exists.
+pub fn save_before_apply<T>(root: &Path, png: &[u8], apply: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
+    let path = save_prepared_png(root, png)
+        .context("No se guardó el diseño; no se inició la aplicación en el iPhone")?;
+    apply(&path)
+}
+
+pub fn read_image(path: &Path) -> Result<Vec<u8>> {
+    anyhow::ensure!(supported_path(path), "Usa PNG, JPG, WebP o GIF");
+    let metadata = std::fs::symlink_metadata(path)?;
+    anyhow::ensure!(metadata.is_file() && !metadata.file_type().is_symlink(), "Selecciona un archivo local normal");
+    anyhow::ensure!(metadata.len() > 0 && metadata.len() <= MAX_IMAGE_BYTES, "El diseño debe ocupar como máximo 32 MB");
+    // Bound the read itself as the file may change after metadata inspection.
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?.take(MAX_IMAGE_BYTES + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(!bytes.is_empty() && bytes.len() as u64 <= MAX_IMAGE_BYTES, "El diseño debe ocupar como máximo 32 MB");
+    Ok(bytes)
+}
+
+pub fn decode_still(bytes: &[u8]) -> Result<image::DynamicImage> {
+    anyhow::ensure!(!bytes.is_empty() && bytes.len() as u64 <= MAX_IMAGE_BYTES, "Imagen demasiado grande");
+    let dimensions = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?.into_dimensions()?;
+    anyhow::ensure!(dimensions.0 > 0 && dimensions.1 > 0
+        && u64::from(dimensions.0) * u64::from(dimensions.1) <= MAX_PIXELS,
+        "La imagen supera el límite de 16 megapíxeles");
+    let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(16384);
+    limits.max_image_height = Some(16384);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    Ok(reader.decode()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn prepared_png() -> Vec<u8> {
+        let mut png = Vec::new();
+        image::DynamicImage::new_rgb8(crate::image_skin::CARD_WIDTH, crate::image_skin::CARD_HEIGHT)
+            .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        png
+    }
+    #[test]
+    fn automatically_saved_design_is_exact_reusable_and_survives_a_failed_transfer() {
+        let root = std::env::temp_dir().join(format!("wallet-autosave-{}", std::process::id()));
+        let png = prepared_png();
+        let result: Result<()> = save_before_apply(&root, &png, |path| {
+            assert_eq!(read_image(path)?, png);
+            anyhow::bail!("simulated transport failure")
+        });
+        assert!(result.is_err());
+        let saved = save_prepared_png(&root, &png).unwrap();
+        assert_eq!(discover(&root).unwrap().len(), 1);
+        assert_eq!(read_image(&saved).unwrap(), png);
+        assert_eq!(save_prepared_png(&root, &png).unwrap(), saved);
+        std::fs::remove_file(saved).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+    #[test]
+    fn library_error_blocks_transfer_without_replacing_existing_data() {
+        let root = std::env::temp_dir().join(format!("wallet-autosave-blocked-{}", std::process::id()));
+        std::fs::write(&root, b"preserve this file").unwrap();
+        let mut called = false;
+        assert!(save_before_apply(&root, &prepared_png(), |_| { called = true; Ok(()) }).is_err());
+        assert!(!called);
+        assert_eq!(std::fs::read(&root).unwrap(), b"preserve this file");
+        std::fs::remove_file(root).unwrap();
+    }
+    #[test]
+    fn occupied_design_filename_is_preserved_and_another_name_is_reserved() {
+        let root = std::env::temp_dir().join(format!("wallet-autosave-occupied-{}", std::process::id()));
+        let png = prepared_png();
+        let first = save_prepared_png(&root, &png).unwrap();
+        std::fs::write(&first, b"existing file must survive").unwrap();
+        let second = save_prepared_png(&root, &png).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(&first).unwrap(), b"existing file must survive");
+        assert_eq!(read_image(&second).unwrap(), png);
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_file(second).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+    #[test]
+    fn library_only_lists_direct_supported_regular_images() {
+        let dir = std::env::temp_dir().join(format!("wallet-library-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("nested")).unwrap();
+        std::fs::write(dir.join("02_blue.PNG"), b"sample").unwrap();
+        std::fs::write(dir.join("01-green.webp"), b"sample").unwrap();
+        std::fs::write(dir.join("run.exe"), b"sample").unwrap();
+        std::fs::write(dir.join("nested/hidden.png"), b"sample").unwrap();
+        let designs = discover(&dir).unwrap();
+        assert_eq!(designs.iter().map(|d| d.title.as_str()).collect::<Vec<_>>(), ["01 green", "02 blue"]);
+        assert!(designs.iter().all(|d| d.path.parent() == Some(dir.canonicalize().unwrap().as_path())));
+        for path in [dir.join("02_blue.PNG"), dir.join("01-green.webp"), dir.join("run.exe"), dir.join("nested/hidden.png")] { std::fs::remove_file(path).unwrap(); }
+        std::fs::remove_dir(dir.join("nested")).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+    #[test]
+    fn rejects_unsupported_inputs_and_pixel_bombs() {
+        assert!(!supported_path(Path::new("image.svg")));
+        assert!(!supported_path(Path::new("run.png.exe")));
+        assert!(supported_path(Path::new("design.JPEG")));
+        let mut png = Vec::new();
+        image::DynamicImage::new_rgb8(1, 1).write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        assert_eq!(decode_still(&png).unwrap().width(), 1);
+        assert!(decode_still(b"not an image").is_err());
+        png[16..20].copy_from_slice(&32768u32.to_be_bytes());
+        png[20..24].copy_from_slice(&32768u32.to_be_bytes());
+        let mut crc = !0u32;
+        for byte in &png[12..29] {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 { crc = (crc >> 1) ^ (0xedb88320 & (0u32.wrapping_sub(crc & 1))); }
+        }
+        png[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        assert_eq!(image::ImageReader::new(Cursor::new(&png)).with_guessed_format().unwrap().into_dimensions().unwrap(), (32768, 32768));
+        assert!(decode_still(&png).unwrap_err().to_string().contains("16 megapíxeles"));
+    }
+}

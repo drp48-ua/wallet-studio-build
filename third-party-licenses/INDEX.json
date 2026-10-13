@@ -1,0 +1,4018 @@
+{
+  "scope": "Fetched Cargo.lock dependency sources; includes unused platform dependencies",
+  "crates": [
+    {
+      "crate": "ab_glyph",
+      "version": "0.2.32",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "ab_glyph_rasterizer",
+      "version": "0.1.10",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "accesskit",
+      "version": "0.21.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "accesskit_atspi_common",
+      "version": "0.14.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "accesskit_consumer",
+      "version": "0.31.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "accesskit_macos",
+      "version": "0.22.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "accesskit_unix",
+      "version": "0.17.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "accesskit_windows",
+      "version": "0.29.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "accesskit_winit",
+      "version": "0.29.2",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "adler2",
+      "version": "2.0.1",
+      "license": "0BSD OR MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-0BSD",
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "ahash",
+      "version": "0.8.12",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "aho-corasick",
+      "version": "1.1.5",
+      "license": "Unlicense OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "COPYING",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "android-activity",
+      "version": "0.6.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE",
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "android-properties",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "android_system_properties",
+      "version": "0.1.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "anyhow",
+      "version": "1.0.104",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "arbitrary",
+      "version": "1.4.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "arboard",
+      "version": "3.6.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE.txt",
+        "LICENSE-MIT.txt"
+      ]
+    },
+    {
+      "crate": "arrayref",
+      "version": "0.3.9",
+      "license": "BSD-2-Clause",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "arrayvec",
+      "version": "0.7.8",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "as-raw-xcb-connection",
+      "version": "1.0.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "ash",
+      "version": "0.38.0+1.3.281",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-broadcast",
+      "version": "0.7.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-channel",
+      "version": "2.5.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-executor",
+      "version": "1.14.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-io",
+      "version": "2.6.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-lock",
+      "version": "3.4.2",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-process",
+      "version": "2.5.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-recursion",
+      "version": "1.1.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-signal",
+      "version": "0.2.14",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-task",
+      "version": "4.7.1",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "async-trait",
+      "version": "0.1.92",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "atomic-waker",
+      "version": "1.1.2",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-THIRD-PARTY"
+      ]
+    },
+    {
+      "crate": "atspi",
+      "version": "0.25.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE2.txt",
+        "LICENSE-MIT.txt"
+      ]
+    },
+    {
+      "crate": "atspi-common",
+      "version": "0.9.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE2.txt",
+        "LICENSE-MIT.txt"
+      ]
+    },
+    {
+      "crate": "atspi-connection",
+      "version": "0.9.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE2.txt",
+        "LICENSE-MIT.txt"
+      ]
+    },
+    {
+      "crate": "atspi-proxies",
+      "version": "0.9.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "autocfg",
+      "version": "1.5.1",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "base64",
+      "version": "0.23.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "bit-set",
+      "version": "0.8.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "bit-vec",
+      "version": "0.8.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "bitflags",
+      "version": "1.3.2",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "bitflags",
+      "version": "2.13.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "block",
+      "version": "0.1.6",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "block2",
+      "version": "0.5.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "block2",
+      "version": "0.6.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "blocking",
+      "version": "1.7.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "bumpalo",
+      "version": "3.20.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "bytemuck",
+      "version": "1.25.2",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-ZLIB"
+      ]
+    },
+    {
+      "crate": "bytemuck_derive",
+      "version": "1.12.1",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-ZLIB"
+      ]
+    },
+    {
+      "crate": "byteorder-lite",
+      "version": "0.1.0",
+      "license": "Unlicense OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "bytes",
+      "version": "1.12.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "calloop",
+      "version": "0.13.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "calloop",
+      "version": "0.14.4",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "calloop-wayland-source",
+      "version": "0.3.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "calloop-wayland-source",
+      "version": "0.4.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "cc",
+      "version": "1.4.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "cfg-if",
+      "version": "1.0.5",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "cfg_aliases",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE",
+        "NOTICES.md"
+      ]
+    },
+    {
+      "crate": "cgl",
+      "version": "0.3.2",
+      "license": "MIT / Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "COPYING",
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "clipboard-win",
+      "version": "5.4.1",
+      "license": "BSL-1.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "codespan-reporting",
+      "version": "0.12.0",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "combine",
+      "version": "4.6.8",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "concurrent-queue",
+      "version": "2.5.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "core-foundation",
+      "version": "0.10.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "core-foundation",
+      "version": "0.9.4",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "core-foundation-sys",
+      "version": "0.8.7",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "core-graphics",
+      "version": "0.23.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "core-graphics-types",
+      "version": "0.1.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "core-graphics-types",
+      "version": "0.2.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "crc32fast",
+      "version": "1.5.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "crossbeam-utils",
+      "version": "0.8.23",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "crunchy",
+      "version": "0.2.4",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "cursor-icon",
+      "version": "1.2.0",
+      "license": "MIT OR Apache-2.0 OR Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-ZLIB"
+      ]
+    },
+    {
+      "crate": "deranged",
+      "version": "0.5.8",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-Apache",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "derive_arbitrary",
+      "version": "1.4.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "dispatch",
+      "version": "0.2.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "dispatch2",
+      "version": "0.3.1",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "displaydoc",
+      "version": "0.2.7",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "dlib",
+      "version": "0.5.3",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "document-features",
+      "version": "0.2.12",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "downcast-rs",
+      "version": "1.2.1",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "dpi",
+      "version": "0.1.2",
+      "license": "Apache-2.0 AND MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE",
+        "LICENSE-LIBM-MIT"
+      ]
+    },
+    {
+      "crate": "ecolor",
+      "version": "0.33.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "eframe",
+      "version": "0.33.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "egui",
+      "version": "0.33.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "egui-wgpu",
+      "version": "0.33.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "egui-winit",
+      "version": "0.33.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "egui_glow",
+      "version": "0.33.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "emath",
+      "version": "0.33.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "endi",
+      "version": "1.1.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "enumflags2",
+      "version": "0.7.12",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "enumflags2_derive",
+      "version": "0.7.12",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "epaint",
+      "version": "0.33.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "epaint_default_fonts",
+      "version": "0.33.3",
+      "license": "(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "fonts/OFL.txt"
+      ]
+    },
+    {
+      "crate": "equivalent",
+      "version": "1.0.2",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "errno",
+      "version": "0.3.14",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "error-code",
+      "version": "3.4.0",
+      "license": "BSL-1.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "event-listener",
+      "version": "5.4.2",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "event-listener-strategy",
+      "version": "0.5.4",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "fastrand",
+      "version": "2.5.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "fax",
+      "version": "0.2.7",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "fdeflate",
+      "version": "0.3.7",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "find-msvc-tools",
+      "version": "0.1.12",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "flate2",
+      "version": "1.1.10",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "foldhash",
+      "version": "0.1.5",
+      "license": "Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "foldhash",
+      "version": "0.2.0",
+      "license": "Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "foreign-types",
+      "version": "0.5.0",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "foreign-types-macros",
+      "version": "0.2.4",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "foreign-types-shared",
+      "version": "0.3.1",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "form_urlencoded",
+      "version": "1.2.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "futures-core",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "futures-io",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "futures-lite",
+      "version": "2.6.1",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-THIRD-PARTY"
+      ]
+    },
+    {
+      "crate": "futures-macro",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "futures-task",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "futures-util",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "gethostname",
+      "version": "1.1.0",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "getrandom",
+      "version": "0.3.4",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "getrandom",
+      "version": "0.4.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "gl_generator",
+      "version": "0.14.0",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "glow",
+      "version": "0.16.0",
+      "license": "MIT OR Apache-2.0 OR Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-ZLIB"
+      ]
+    },
+    {
+      "crate": "glutin",
+      "version": "0.32.3",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "glutin-winit",
+      "version": "0.5.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "glutin_egl_sys",
+      "version": "0.7.1",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "glutin_glx_sys",
+      "version": "0.6.1",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "glutin_wgl_sys",
+      "version": "0.6.1",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "gpu-alloc",
+      "version": "0.6.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "gpu-alloc-types",
+      "version": "0.3.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "gpu-allocator",
+      "version": "0.27.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "gpu-descriptor",
+      "version": "0.3.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "gpu-descriptor-types",
+      "version": "0.2.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "half",
+      "version": "2.7.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "hashbrown",
+      "version": "0.15.5",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "hashbrown",
+      "version": "0.16.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "hashbrown",
+      "version": "0.17.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "hermit-abi",
+      "version": "0.5.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "hex",
+      "version": "0.4.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "hexf-parse",
+      "version": "0.2.1",
+      "license": "CC0-1.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "icu_collections",
+      "version": "2.3.0",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "icu_locale_core",
+      "version": "2.3.0",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "icu_normalizer",
+      "version": "2.3.0",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "icu_normalizer_data",
+      "version": "2.3.0",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "icu_properties",
+      "version": "2.3.0",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "icu_properties_data",
+      "version": "2.3.0",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "icu_provider",
+      "version": "2.3.1",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "idna",
+      "version": "1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "idna_adapter",
+      "version": "1.2.2",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "image",
+      "version": "0.25.10",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "image-webp",
+      "version": "0.2.4",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "indexmap",
+      "version": "2.14.2",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "itoa",
+      "version": "1.0.18",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "jni",
+      "version": "0.22.4",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "jni-macros",
+      "version": "0.22.4",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "jni-sys",
+      "version": "0.3.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "jni-sys",
+      "version": "0.4.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "jni-sys-macros",
+      "version": "0.4.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "jobserver",
+      "version": "0.1.35",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "js-sys",
+      "version": "0.3.105",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "khronos-egl",
+      "version": "6.0.0",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "khronos_api",
+      "version": "3.1.0",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "libc",
+      "version": "0.2.189",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "libloading",
+      "version": "0.8.9",
+      "license": "ISC",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "libm",
+      "version": "0.2.16",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "libredox",
+      "version": "0.1.24",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "linux-raw-sys",
+      "version": "0.12.1",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-Apache-2.0_WITH_LLVM-exception",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "linux-raw-sys",
+      "version": "0.4.15",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-Apache-2.0_WITH_LLVM-exception",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "litemap",
+      "version": "0.8.3",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "litrs",
+      "version": "1.0.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "lock_api",
+      "version": "0.4.14",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "log",
+      "version": "0.4.34",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "malloc_buf",
+      "version": "0.0.6",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "memchr",
+      "version": "2.8.3",
+      "license": "Unlicense OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "COPYING",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "memmap2",
+      "version": "0.9.11",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "memoffset",
+      "version": "0.9.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "metal",
+      "version": "0.32.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "miniz_oxide",
+      "version": "0.8.9",
+      "license": "MIT OR Zlib OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE",
+        "LICENSE-APACHE.md",
+        "LICENSE-MIT.md",
+        "LICENSE-ZLIB.md"
+      ]
+    },
+    {
+      "crate": "miniz_oxide",
+      "version": "0.9.1",
+      "license": "MIT OR Zlib OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE",
+        "LICENSE-APACHE.md",
+        "LICENSE-MIT.md",
+        "LICENSE-ZLIB.md"
+      ]
+    },
+    {
+      "crate": "moxcms",
+      "version": "0.8.1",
+      "license": "BSD-3-Clause OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE.md",
+        "LICENSE.md"
+      ]
+    },
+    {
+      "crate": "naga",
+      "version": "27.0.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.APACHE",
+        "LICENSE.MIT"
+      ]
+    },
+    {
+      "crate": "ndk",
+      "version": "0.9.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "ndk-context",
+      "version": "0.1.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "ndk-sys",
+      "version": "0.6.0+11769913",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "nohash-hasher",
+      "version": "0.2.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "num-conv",
+      "version": "0.2.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-Apache",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "num-traits",
+      "version": "0.2.19",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "num_enum",
+      "version": "0.7.6",
+      "license": "BSD-3-Clause OR MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-BSD",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "num_enum_derive",
+      "version": "0.7.6",
+      "license": "BSD-3-Clause OR MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-BSD",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "objc",
+      "version": "0.2.7",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "objc-sys",
+      "version": "0.3.5",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2",
+      "version": "0.5.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2",
+      "version": "0.6.4",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-app-kit",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-app-kit",
+      "version": "0.3.2",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-cloud-kit",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-contacts",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-core-data",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-core-foundation",
+      "version": "0.3.2",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-core-graphics",
+      "version": "0.3.2",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-core-image",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-core-location",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-encode",
+      "version": "4.1.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-foundation",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "src/copying.rs",
+        "src/tests/copying.rs"
+      ]
+    },
+    {
+      "crate": "objc2-foundation",
+      "version": "0.3.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "src/copying.rs",
+        "src/tests/copying.rs"
+      ]
+    },
+    {
+      "crate": "objc2-io-surface",
+      "version": "0.3.2",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-link-presentation",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-metal",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-quartz-core",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-symbols",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-ui-kit",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-uniform-type-identifiers",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "objc2-user-notifications",
+      "version": "0.2.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "once_cell",
+      "version": "1.21.4",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "orbclient",
+      "version": "0.3.55",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "ordered-float",
+      "version": "5.5.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "ordered-stream",
+      "version": "0.2.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "owned_ttf_parser",
+      "version": "0.25.1",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "parking",
+      "version": "2.2.1",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-THIRD-PARTY"
+      ]
+    },
+    {
+      "crate": "parking_lot",
+      "version": "0.12.5",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "parking_lot_core",
+      "version": "0.9.12",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "paste",
+      "version": "1.0.15",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "percent-encoding",
+      "version": "2.3.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "pin-project",
+      "version": "1.1.13",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "pin-project-internal",
+      "version": "1.1.13",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "pin-project-lite",
+      "version": "0.2.17",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "piper",
+      "version": "0.2.5",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "pkg-config",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "plain",
+      "version": "0.2.3",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "plist",
+      "version": "1.10.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "png",
+      "version": "0.18.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "polling",
+      "version": "3.11.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "pollster",
+      "version": "0.4.0",
+      "license": "Apache-2.0/MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "portable-atomic",
+      "version": "1.15.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "portable-atomic-util",
+      "version": "0.2.8",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "potential_utf",
+      "version": "0.1.6",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "powerfmt",
+      "version": "0.2.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-Apache",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "presser",
+      "version": "0.3.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "proc-macro-crate",
+      "version": "3.5.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "proc-macro2",
+      "version": "1.0.107",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "profiling",
+      "version": "1.0.18",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "pxfm",
+      "version": "0.1.30",
+      "license": "BSD-3-Clause OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE.md",
+        "LICENSE.md"
+      ]
+    },
+    {
+      "crate": "quick-error",
+      "version": "2.0.1",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "quick-xml",
+      "version": "0.41.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT.md"
+      ]
+    },
+    {
+      "crate": "quick-xml",
+      "version": "0.42.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT.md"
+      ]
+    },
+    {
+      "crate": "quote",
+      "version": "1.0.47",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "r-efi",
+      "version": "5.3.0",
+      "license": "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "r-efi",
+      "version": "6.0.0",
+      "license": "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "range-alloc",
+      "version": "0.1.5",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.APACHE",
+        "LICENSE.MIT"
+      ]
+    },
+    {
+      "crate": "raw-window-handle",
+      "version": "0.6.2",
+      "license": "MIT OR Apache-2.0 OR Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE.md",
+        "LICENSE-MIT.md",
+        "LICENSE-ZLIB.md"
+      ]
+    },
+    {
+      "crate": "redox_syscall",
+      "version": "0.4.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "redox_syscall",
+      "version": "0.5.18",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "redox_syscall",
+      "version": "0.9.4",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "regex",
+      "version": "1.13.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "regex-automata",
+      "version": "0.4.18",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "regex-syntax",
+      "version": "0.8.11",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "src/unicode_tables/LICENSE-UNICODE"
+      ]
+    },
+    {
+      "crate": "renderdoc-sys",
+      "version": "1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "rfd",
+      "version": "0.17.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE",
+        "src/backend/xdg_desktop_portal/window_identifier/LICENSE"
+      ]
+    },
+    {
+      "crate": "rustc-hash",
+      "version": "1.1.0",
+      "license": "Apache-2.0/MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "rustc-hash",
+      "version": "2.1.3",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "rustc_version",
+      "version": "0.4.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "rustix",
+      "version": "0.38.44",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-Apache-2.0_WITH_LLVM-exception",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "rustix",
+      "version": "1.1.5",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-Apache-2.0_WITH_LLVM-exception",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "rustversion",
+      "version": "1.0.23",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "same-file",
+      "version": "1.0.6",
+      "license": "Unlicense/MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "COPYING",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "scoped-tls",
+      "version": "1.0.1",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "scopeguard",
+      "version": "1.2.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "sctk-adwaita",
+      "version": "0.10.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "semver",
+      "version": "1.0.28",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "serde",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "serde_core",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "serde_derive",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "serde_json",
+      "version": "1.0.151",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "serde_repr",
+      "version": "0.1.21",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "shlex",
+      "version": "2.0.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "signal-hook-registry",
+      "version": "1.4.8",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "simd-adler32",
+      "version": "0.3.10",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.md"
+      ]
+    },
+    {
+      "crate": "simd_cesu8",
+      "version": "1.2.0",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "simdutf8",
+      "version": "0.1.5",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-Apache",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "slab",
+      "version": "0.4.12",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "slotmap",
+      "version": "1.1.1",
+      "license": "Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "smallvec",
+      "version": "1.16.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "smithay-client-toolkit",
+      "version": "0.19.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "smithay-client-toolkit",
+      "version": "0.20.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "smithay-clipboard",
+      "version": "0.7.3",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "smol_str",
+      "version": "0.2.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "spirv",
+      "version": "0.3.0+sdk-1.3.268.0",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": []
+    },
+    {
+      "crate": "stable_deref_trait",
+      "version": "1.2.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "static_assertions",
+      "version": "1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "strict-num",
+      "version": "0.1.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "syn",
+      "version": "2.0.119",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "syn",
+      "version": "3.0.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "synstructure",
+      "version": "0.14.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "tempfile",
+      "version": "3.27.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "termcolor",
+      "version": "1.4.1",
+      "license": "Unlicense OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "COPYING",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "thiserror",
+      "version": "1.0.69",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "thiserror",
+      "version": "2.0.20",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "thiserror-impl",
+      "version": "1.0.69",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "thiserror-impl",
+      "version": "2.0.20",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "tiff",
+      "version": "0.11.3",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "time",
+      "version": "0.3.55",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-Apache",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "time-core",
+      "version": "0.1.9",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-Apache",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "time-macros",
+      "version": "0.2.32",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-Apache",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "tiny-skia",
+      "version": "0.11.4",
+      "license": "BSD-3-Clause",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "tiny-skia-path",
+      "version": "0.11.4",
+      "license": "BSD-3-Clause",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "tinystr",
+      "version": "0.8.4",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "toml_datetime",
+      "version": "1.1.1+spec-1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "toml_edit",
+      "version": "0.25.15+spec-1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "toml_parser",
+      "version": "1.1.3+spec-1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "tracing",
+      "version": "0.1.44",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "tracing-attributes",
+      "version": "0.1.31",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "tracing-core",
+      "version": "0.1.36",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE",
+        "src/spin/LICENSE"
+      ]
+    },
+    {
+      "crate": "ttf-parser",
+      "version": "0.25.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "type-map",
+      "version": "0.5.1",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "uds_windows",
+      "version": "1.2.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "unicode-ident",
+      "version": "1.0.26",
+      "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-UNICODE"
+      ]
+    },
+    {
+      "crate": "unicode-segmentation",
+      "version": "1.13.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "unicode-width",
+      "version": "0.2.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "url",
+      "version": "2.5.8",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "utf8_iter",
+      "version": "1.0.4",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "uuid",
+      "version": "1.26.1",
+      "license": "Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "version_check",
+      "version": "0.9.5",
+      "license": "MIT/Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "walkdir",
+      "version": "2.5.0",
+      "license": "Unlicense/MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "COPYING",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "wasip2",
+      "version": "1.0.4+wasi-0.2.12",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-Apache-2.0_WITH_LLVM-exception",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "wasm-bindgen",
+      "version": "0.2.128",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "wasm-bindgen-futures",
+      "version": "0.4.78",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "wasm-bindgen-macro",
+      "version": "0.2.128",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "wasm-bindgen-macro-support",
+      "version": "0.2.128",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "wasm-bindgen-shared",
+      "version": "0.2.128",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "wayland-backend",
+      "version": "0.3.17",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "wayland-client",
+      "version": "0.31.15",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "wayland-csd-frame",
+      "version": "0.3.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "wayland-cursor",
+      "version": "0.31.14",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "wayland-protocols",
+      "version": "0.32.13",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt",
+        "protocols/COPYING"
+      ]
+    },
+    {
+      "crate": "wayland-protocols-experimental",
+      "version": "20250721.0.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "wayland-protocols-misc",
+      "version": "0.3.12",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "wayland-protocols-plasma",
+      "version": "0.3.12",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt",
+        "plasma-wayland-protocols/COPYING.LIB"
+      ]
+    },
+    {
+      "crate": "wayland-protocols-wlr",
+      "version": "0.3.12",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "wayland-scanner",
+      "version": "0.31.11",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "wayland-sys",
+      "version": "0.31.11",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "crate": "web-sys",
+      "version": "0.3.105",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "web-time",
+      "version": "1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "webbrowser",
+      "version": "1.2.4",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "weezl",
+      "version": "0.1.12",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "wgpu",
+      "version": "27.0.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.APACHE",
+        "LICENSE.MIT"
+      ]
+    },
+    {
+      "crate": "wgpu-core",
+      "version": "27.0.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.APACHE",
+        "LICENSE.MIT"
+      ]
+    },
+    {
+      "crate": "wgpu-core-deps-apple",
+      "version": "27.0.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.APACHE",
+        "LICENSE.MIT"
+      ]
+    },
+    {
+      "crate": "wgpu-core-deps-emscripten",
+      "version": "27.0.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.APACHE",
+        "LICENSE.MIT"
+      ]
+    },
+    {
+      "crate": "wgpu-core-deps-windows-linux-android",
+      "version": "27.0.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.APACHE",
+        "LICENSE.MIT"
+      ]
+    },
+    {
+      "crate": "wgpu-hal",
+      "version": "27.0.4",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.APACHE",
+        "LICENSE.MIT"
+      ]
+    },
+    {
+      "crate": "wgpu-types",
+      "version": "27.0.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE.APACHE",
+        "LICENSE.MIT"
+      ]
+    },
+    {
+      "crate": "winapi-util",
+      "version": "0.1.11",
+      "license": "Unlicense OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "COPYING",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "windows",
+      "version": "0.58.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows",
+      "version": "0.61.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-collections",
+      "version": "0.2.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-core",
+      "version": "0.58.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-core",
+      "version": "0.61.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-future",
+      "version": "0.2.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-implement",
+      "version": "0.58.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-implement",
+      "version": "0.60.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-interface",
+      "version": "0.58.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-interface",
+      "version": "0.59.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-link",
+      "version": "0.1.3",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-link",
+      "version": "0.2.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-numerics",
+      "version": "0.2.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-result",
+      "version": "0.2.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-result",
+      "version": "0.3.4",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-strings",
+      "version": "0.1.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-strings",
+      "version": "0.4.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-sys",
+      "version": "0.52.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-sys",
+      "version": "0.59.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-sys",
+      "version": "0.60.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-sys",
+      "version": "0.61.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-targets",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-targets",
+      "version": "0.53.5",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows-threading",
+      "version": "0.1.0",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_aarch64_gnullvm",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_aarch64_gnullvm",
+      "version": "0.53.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_aarch64_msvc",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_aarch64_msvc",
+      "version": "0.53.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_i686_gnu",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_i686_gnu",
+      "version": "0.53.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_i686_gnullvm",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_i686_gnullvm",
+      "version": "0.53.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_i686_msvc",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_i686_msvc",
+      "version": "0.53.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_x86_64_gnu",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_x86_64_gnu",
+      "version": "0.53.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_x86_64_gnullvm",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_x86_64_gnullvm",
+      "version": "0.53.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_x86_64_msvc",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "windows_x86_64_msvc",
+      "version": "0.53.1",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "crate": "winit",
+      "version": "0.30.13",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "winnow",
+      "version": "1.0.4",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "wit-bindgen",
+      "version": "0.57.1",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-Apache-2.0_WITH_LLVM-exception",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "writeable",
+      "version": "0.6.4",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "x11-dl",
+      "version": "2.21.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "x11rb",
+      "version": "0.13.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "x11rb-protocol",
+      "version": "0.13.2",
+      "license": "MIT OR Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "xcursor",
+      "version": "0.3.11",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "xkbcommon-dl",
+      "version": "0.4.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "xkeysym",
+      "version": "0.2.1",
+      "license": "MIT OR Apache-2.0 OR Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-ZLIB"
+      ]
+    },
+    {
+      "crate": "xml-rs",
+      "version": "0.8.29",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "yoke",
+      "version": "0.8.3",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "yoke-derive",
+      "version": "0.8.3",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zbus",
+      "version": "5.19.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zbus-lockstep",
+      "version": "0.5.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "zbus-lockstep-macros",
+      "version": "0.5.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "zbus_macros",
+      "version": "5.19.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zbus_names",
+      "version": "4.3.4",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zbus_xml",
+      "version": "5.2.1",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zcheapstr",
+      "version": "1.1.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zerocopy",
+      "version": "0.8.57",
+      "license": "BSD-2-Clause OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-BSD",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "zerocopy-derive",
+      "version": "0.8.57",
+      "license": "BSD-2-Clause OR Apache-2.0 OR MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-BSD",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "zerofrom",
+      "version": "0.1.8",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zerofrom-derive",
+      "version": "0.1.8",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zerotrie",
+      "version": "0.2.5",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zerovec",
+      "version": "0.11.8",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zerovec-derive",
+      "version": "0.11.6",
+      "license": "Unicode-3.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zip",
+      "version": "2.4.2",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zlib-rs",
+      "version": "0.6.8",
+      "license": "Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zmij",
+      "version": "1.0.23",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "crate": "zopfli",
+      "version": "0.8.3",
+      "license": "Apache-2.0",
+      "licenseFile": null,
+      "includedNotices": [
+        "COPYING"
+      ]
+    },
+    {
+      "crate": "zune-core",
+      "version": "0.5.3",
+      "license": "MIT OR Apache-2.0 OR Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-ZLIB"
+      ]
+    },
+    {
+      "crate": "zune-jpeg",
+      "version": "0.5.15",
+      "license": "MIT OR Apache-2.0 OR Zlib",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-ZLIB"
+      ]
+    },
+    {
+      "crate": "zvariant",
+      "version": "5.15.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zvariant_derive",
+      "version": "5.15.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "crate": "zvariant_utils",
+      "version": "4.2.0",
+      "license": "MIT",
+      "licenseFile": null,
+      "includedNotices": [
+        "LICENSE"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+windows-source/target/
+windows/*.exe
+dist/
+__pycache__/
+*.pyc
+ios-diagnostics/shader-probe/build/

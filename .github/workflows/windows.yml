@@ -1,0 +1,36 @@
+name: Windows checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Pruebas sin hardware ni catálogo personal
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -TestOnly
+      - name: Compilar Wallet Studio
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - name: Preparar paquete portable
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Version ((Get-Item 'windows/Wallet Studio.exe').VersionInfo.FileVersion)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wallet-studio-windows
+          path: |
+            dist/Wallet-Studio-*-Windows.zip
+            dist/release-manifest.json
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
