@@ -182,6 +182,7 @@ pub struct AirCardApp {
     source_texture: Option<egui::TextureHandle>,
     crop_focus: [f32; 2],
     crop_zoom: f32,
+    crop_edges: Option<[f32; 4]>,
     crop_draft: Option<CardCrop>,
     crop_dirty: bool,
     skin: Option<PreparedSkin>,
@@ -211,7 +212,7 @@ pub struct AirCardApp {
 
 impl AirCardApp {
     fn current_crop(&self) -> CardCrop {
-        CardCrop { focus: self.crop_focus, zoom: self.crop_zoom }
+        CardCrop { focus: self.crop_focus, zoom: self.crop_zoom, edges: self.crop_edges }
     }
 
     fn show_crop_editor(&mut self, ctx: &egui::Context) {
@@ -230,19 +231,18 @@ impl AirCardApp {
             .max_width((ctx.content_rect().width() - 48.0).max(200.0))
             .max_height((ctx.content_rect().height() - 48.0).max(300.0))
             .show(ctx, |ui| {
-                ui.label("Arrastra el marco para moverlo y sus esquinas para recortar. La imagen original se conserva.");
+                ui.label("Arrastra cada lado por separado o ajusta su porcentaje. Las esquinas cambian solo sus dos lados.");
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     crate::crop_editor::selection(ui, &texture, dimensions, &mut draft,
                         (ctx.content_rect().height() - 280.0).clamp(100.0, 400.0));
-                    ui.add(egui::Slider::new(&mut draft.zoom, 1.0..=8.0).text("Ampliación del recorte"));
-                    ui.add(egui::Slider::new(&mut draft.focus[0], 0.0..=1.0).text("Posición horizontal"));
-                    ui.add(egui::Slider::new(&mut draft.focus[1], 0.0..=1.0).text("Posición vertical"));
+                    crate::crop_editor::edge_controls(ui, dimensions, &mut draft);
+                    ui.label("La imagen original se conserva. El área elegida se ajusta al tamaño de tarjeta sin recortes adicionales.");
                 });
                 ui.separator();
                 ui.horizontal_wrapped(|ui| {
                     accept = ui.add_enabled(!self.is_busy, egui::Button::new("Aplicar recorte")).clicked();
                     cancel = ui.button("Cancelar").clicked();
-                    if ui.button("Restablecer recorte").clicked() { draft = CardCrop::default(); }
+                    if ui.button("Restablecer recorte").clicked() { draft = CardCrop::full_image(); }
                 });
             });
         if !open || cancel { self.crop_draft = None; }
@@ -252,6 +252,7 @@ impl AirCardApp {
                 Ok(skin) => {
                     self.crop_focus = draft.focus;
                     self.crop_zoom = draft.zoom;
+                    self.crop_edges = draft.edges;
                     self.skin = Some(skin);
                     self.crop_dirty = false;
                     self.crop_draft = None;
@@ -320,6 +321,7 @@ impl AirCardApp {
             source_texture: None,
             crop_focus: [0.5, 0.5],
             crop_zoom: 1.0,
+            crop_edges: None,
             crop_draft: None,
             crop_dirty: false,
             skin: None,
@@ -568,6 +570,7 @@ impl AirCardApp {
                 self.source_image = Some(source_image);
                 self.crop_focus = [0.5, 0.5];
                 self.crop_zoom = 1.0;
+                self.crop_edges = None;
                 self.crop_draft = None;
                 self.crop_dirty = false;
                 self.skin = Some(skin);
@@ -2052,12 +2055,14 @@ impl AirCardApp {
                 ui.add_space(8.0);
                 ui.label(egui::RichText::new("PNG · JPG · WebP · GIF / salida estática PNG + PDF").size(10.5).color(md3::ON_SURFACE_VARIANT));
                 if ui.add_enabled(!self.is_busy && self.gif_playback.is_none() && self.source_image.is_some() && self.crop_draft.is_none(), egui::Button::new("Recortar imagen…")).clicked() {
-                    self.crop_draft = Some(self.current_crop());
+                    let crop = self.current_crop();
+                    self.crop_draft = Some(if crop.edges.is_some() { crop } else { CardCrop::full_image() });
                 }
                 if self.source_image.is_some() && self.current_crop() != CardCrop::default()
                     && ui.add_enabled(!self.is_busy && self.gif_playback.is_none() && self.crop_draft.is_none(), egui::Button::new("Restablecer recorte")).clicked() {
                     self.crop_focus = [0.5, 0.5];
                     self.crop_zoom = 1.0;
+                    self.crop_edges = None;
                     self.rebuild_skin_from_source();
                 }
                 if !self.gif_frames.is_empty() {
@@ -2096,8 +2101,17 @@ impl AirCardApp {
                         let crop_rect = egui::Rect::from_min_max(egui::pos2(uv[0], uv[1]), egui::pos2(uv[2], uv[3]));
                         let response = ui.add(egui::Image::new((texture.id(), texture.size_vec2())).uv(crop_rect).fit_to_exact_size(egui::vec2(width, height)).maintain_aspect_ratio(false).sense(if self.is_busy || self.gif_playback.is_some() || self.crop_draft.is_some() { egui::Sense::hover() } else { egui::Sense::drag() }));
                         if response.dragged() && !self.is_busy && self.gif_playback.is_none() && self.crop_draft.is_none() {
-                            self.crop_focus[0] = (self.crop_focus[0] - response.drag_motion().x / width * 0.2).clamp(0.0, 1.0);
-                            self.crop_focus[1] = (self.crop_focus[1] - response.drag_motion().y / height * 0.2).clamp(0.0, 1.0);
+                            let mut crop = self.current_crop();
+                            let delta = response.drag_motion();
+                            if crop.edges.is_some() {
+                                crop.translate(self.source_image.as_ref().unwrap().width(), self.source_image.as_ref().unwrap().height(),
+                                    [-delta.x / width * 0.2, -delta.y / height * 0.2]);
+                            } else {
+                                crop.focus[0] = (crop.focus[0] - delta.x / width * 0.2).clamp(0.0, 1.0);
+                                crop.focus[1] = (crop.focus[1] - delta.y / height * 0.2).clamp(0.0, 1.0);
+                            }
+                            self.crop_focus = crop.focus;
+                            self.crop_edges = crop.edges;
                             self.crop_dirty = true;
                             ctx.request_repaint();
                         }

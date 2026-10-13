@@ -6,21 +6,44 @@ use image::{DynamicImage, GenericImageView, ImageFormat, imageops::FilterType};
 pub const CARD_WIDTH: u32 = 1_536;
 pub const CARD_HEIGHT: u32 = 969;
 
-/// A non-destructive, card-shaped selection in the original image.
+/// Non-destructive selection. Explicit edges crop freely; legacy focus keeps card framing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CardCrop {
     pub focus: [f32; 2],
     pub zoom: f32,
+    pub edges: Option<[f32; 4]>, // left, top, right, bottom in original-image coordinates
 }
 
 impl Default for CardCrop {
-    fn default() -> Self { Self { focus: [0.5, 0.5], zoom: 1.0 } }
+    fn default() -> Self { Self { focus: [0.5, 0.5], zoom: 1.0, edges: None } }
 }
 
 impl CardCrop {
+    pub fn full_image() -> Self {
+        Self { edges: Some([0.0, 0.0, 1.0, 1.0]), ..Default::default() }
+    }
+
+    /// Move one edge only, retaining at least one original pixel.
+    pub fn set_edge(&mut self, index: usize, value: f32, width: u32, height: u32) {
+        if index >= 4 || !value.is_finite() { return; }
+        let mut edges = self.uv(width, height);
+        let minimum = 1.0 / if index % 2 == 0 { width.max(1) } else { height.max(1) } as f32;
+        edges[index] = if index < 2 { value.clamp(0.0, (edges[index + 2] - minimum).max(0.0)) }
+            else { value.clamp((edges[index - 2] + minimum).min(1.0), 1.0) };
+        self.edges = Some(edges);
+    }
+
     pub fn bounds(self, width: u32, height: u32) -> (u32, u32, u32, u32) {
         let width = width.max(1);
         let height = height.max(1);
+        if let Some(edges) = self.edges {
+            let finite = |v: f32, fallback: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { fallback };
+            let x = ((finite(edges[0], 0.0) * width as f32).round() as u32).min(width - 1);
+            let y = ((finite(edges[1], 0.0) * height as f32).round() as u32).min(height - 1);
+            let right = ((finite(edges[2], 1.0) * width as f32).round() as u32).clamp(x + 1, width);
+            let bottom = ((finite(edges[3], 1.0) * height as f32).round() as u32).clamp(y + 1, height);
+            return (x, y, right - x, bottom - y);
+        }
         let (_, _, fit_width, fit_height) = crop_bounds_for_card(width, height, 0.5, 0.5);
         let zoom = if self.zoom.is_finite() { self.zoom.clamp(1.0, 8.0) } else { 1.0 };
         let crop_width = ((fit_width as f32 / zoom).round() as u32).clamp(1, width);
@@ -39,6 +62,17 @@ impl CardCrop {
 
     pub fn translate(&mut self, width: u32, height: u32, delta: [f32; 2]) {
         let uv = self.uv(width, height);
+        if self.edges.is_some() {
+            let mut edges = uv;
+            for axis in 0..2 {
+                if !delta[axis].is_finite() { continue; }
+                let movement = delta[axis].clamp(-uv[axis], 1.0 - uv[axis + 2]);
+                edges[axis] += movement;
+                edges[axis + 2] += movement;
+            }
+            self.edges = Some(edges);
+            return;
+        }
         for axis in 0..2 {
             let free = 1.0 - (uv[axis + 2] - uv[axis]);
             if free > 0.00001 && delta[axis].is_finite() {
@@ -62,7 +96,7 @@ impl PreparedSkin {
         focus_x: f32,
         focus_y: f32,
     ) -> Result<Self> {
-        Self::from_image_with_crop(image, CardCrop { focus: [focus_x, focus_y], zoom: 1.0 })
+        Self::from_image_with_crop(image, CardCrop { focus: [focus_x, focus_y], ..Default::default() })
     }
 
     pub fn from_image_with_crop(image: DynamicImage, crop: CardCrop) -> Result<Self> {
@@ -95,7 +129,7 @@ pub fn crop_uv_for_card(
     focus_x: f32,
     focus_y: f32,
 ) -> [f32; 4] {
-    CardCrop { focus: [focus_x, focus_y], zoom: 1.0 }.uv(source_width, source_height)
+    CardCrop { focus: [focus_x, focus_y], ..Default::default() }.uv(source_width, source_height)
 }
 
 pub fn png_to_pdf(png_bytes: &[u8]) -> Result<Vec<u8>> {
@@ -196,8 +230,9 @@ mod tests {
     #[test]
     fn crop_selection_is_bounded_for_portrait_landscape_and_invalid_controls() {
         for (width, height) in [(2400, 1000), (800, 1800), (1536, 969), (1, 1)] {
-            for crop in [CardCrop::default(), CardCrop { focus: [1.0, 0.0], zoom: 8.0 },
-                CardCrop { focus: [f32::NAN, f32::INFINITY], zoom: f32::NAN }] {
+            for crop in [CardCrop::default(), CardCrop { focus: [1.0, 0.0], zoom: 8.0, ..Default::default() },
+                CardCrop { focus: [f32::NAN, f32::INFINITY], zoom: f32::NAN, ..Default::default() },
+                CardCrop { edges: Some([f32::NAN, 1.0, -4.0, f32::INFINITY]), ..Default::default() }] {
                 let (x, y, w, h) = crop.bounds(width, height);
                 assert!(w > 0 && h > 0 && x + w <= width && y + h <= height);
                 assert!(crop.uv(width, height).iter().all(|value| value.is_finite() && (0.0..=1.0).contains(value)));
@@ -210,7 +245,7 @@ mod tests {
         let image = image::RgbImage::from_fn(320, 200, |x, _|
             if x < 160 { image::Rgb([255, 0, 0]) } else { image::Rgb([0, 0, 255]) });
         for (focus, color) in [(0.0, [255, 0, 0]), (1.0, [0, 0, 255])] {
-            let crop = CardCrop { focus: [focus, 0.5], zoom: 3.0 };
+            let crop = CardCrop { focus: [focus, 0.5], zoom: 3.0, ..Default::default() };
             let prepared = PreparedSkin::from_image_with_crop(DynamicImage::ImageRgb8(image.clone()), crop).unwrap();
             let result = image::load_from_memory(&prepared.png).unwrap().to_rgb8();
             assert_eq!(result.dimensions(), (CARD_WIDTH, CARD_HEIGHT));
@@ -227,6 +262,62 @@ mod tests {
         let (x, y, w, _) = crop.bounds(2400, 1000);
         assert_eq!(x + w, 2400);
         assert_eq!(y, 0);
+    }
+
+    #[test]
+    fn each_free_edge_changes_only_that_edge() {
+        for (index, value, expected) in [
+            (0, 0.1, (100, 0, 900, 800)), (1, 0.25, (0, 200, 1000, 600)),
+            (2, 0.8, (0, 0, 800, 800)), (3, 0.75, (0, 0, 1000, 600)),
+        ] {
+            let mut crop = CardCrop::full_image();
+            crop.set_edge(index, value, 1000, 800);
+            assert_eq!(crop.bounds(1000, 800), expected);
+        }
+        let mut crop = CardCrop::full_image();
+        crop.set_edge(0, 0.1, 1000, 800);
+        crop.set_edge(2, 0.8, 1000, 800);
+        assert_eq!(crop.bounds(1000, 800), (100, 0, 700, 800));
+    }
+
+    #[test]
+    fn edge_cannot_cross_its_opposite_or_discard_the_last_pixel() {
+        let mut crop = CardCrop::full_image();
+        crop.set_edge(0, 1.0, 100, 50);
+        crop.set_edge(2, 0.0, 100, 50);
+        crop.set_edge(1, 1.0, 100, 50);
+        crop.set_edge(3, 0.0, 100, 50);
+        assert_eq!(crop.bounds(100, 50), (99, 49, 1, 1));
+        let before = crop;
+        crop.set_edge(2, f32::NAN, 100, 50);
+        assert_eq!(crop, before);
+        assert_eq!(CardCrop::full_image().bounds(1, 1), (0, 0, 1, 1));
+    }
+
+    #[test]
+    fn free_drag_preserves_selection_size_and_clamps_to_original_edges() {
+        let mut crop = CardCrop { edges: Some([0.1, 0.2, 0.7, 0.8]), ..Default::default() };
+        crop.translate(1000, 500, [2.0, -2.0]);
+        assert_eq!(crop.bounds(1000, 500), (400, 0, 600, 300));
+    }
+
+    #[test]
+    fn removing_only_left_and_right_preserves_top_and_bottom_pixels_in_export() {
+        let image = image::RgbImage::from_fn(320, 200, |x, y| {
+            if !(80..240).contains(&x) { image::Rgb([0, 0, 0]) }
+            else if y < 30 { image::Rgb([255, 0, 0]) }
+            else if y >= 170 { image::Rgb([0, 255, 0]) }
+            else { image::Rgb([0, 0, 255]) }
+        });
+        let mut crop = CardCrop::full_image();
+        crop.set_edge(0, 0.25, 320, 200);
+        crop.set_edge(2, 0.75, 320, 200);
+        assert_eq!(crop.bounds(320, 200), (80, 0, 160, 200));
+        let prepared = PreparedSkin::from_image_with_crop(DynamicImage::ImageRgb8(image), crop).unwrap();
+        let result = image::load_from_memory(&prepared.png).unwrap().to_rgb8();
+        assert_eq!(result.get_pixel(CARD_WIDTH / 2, 0).0, [255, 0, 0]);
+        assert_eq!(result.get_pixel(CARD_WIDTH / 2, CARD_HEIGHT - 1).0, [0, 255, 0]);
+        assert_eq!(result.get_pixel(CARD_WIDTH / 2, CARD_HEIGHT / 2).0, [0, 0, 255]);
     }
 
     #[test]
