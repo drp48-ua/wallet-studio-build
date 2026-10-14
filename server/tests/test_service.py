@@ -1,9 +1,11 @@
-import sys,pathlib,unittest,tempfile,threading,json,urllib.request,urllib.error,hashlib,zipfile,io
+import sys,pathlib,unittest,tempfile,threading,json,urllib.request,urllib.error,hashlib,zipfile,io,os
+from unittest.mock import patch
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]))
 from app import Store,Server
 class ServiceTests(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
+  cls.environment=patch.dict(os.environ,{'WALLET_STORAGE_MODE':'local','RENDER':''});cls.environment.start();cls.addClassCleanup(cls.environment.stop)
   cls.scratch=pathlib.Path(__file__).resolve().parents[1]/'test-runtime';cls.scratch.mkdir(exist_ok=True);cls.tmp=tempfile.TemporaryDirectory(dir=cls.scratch);cls.store=Store(cls.tmp.name,True);cls.server=Server(('127.0.0.1',0),cls.store);cls.thread=threading.Thread(target=cls.server.serve_forever,daemon=True);cls.thread.start();cls.url='http://127.0.0.1:'+str(cls.server.server_port)
  @classmethod
  def tearDownClass(cls):cls.server.shutdown();cls.server.server_close();assert pathlib.Path(cls.tmp.name).resolve().is_relative_to(cls.scratch.resolve());cls.tmp.cleanup()

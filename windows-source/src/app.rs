@@ -330,7 +330,8 @@ impl AirCardApp {
     }
     fn show_account_tab(&mut self,ui:&mut egui::Ui,ctx:&egui::Context) {
         m3_card(ui,|ui| {
-            ui.heading(if self.account_stage==2 {"Verifica tu correo y crea tu contraseña"} else {"Accede con el correo de tu compra"}); ui.label(&self.cloud_status);
+            ui.heading(if self.account_stage==2 {"Crea tu contraseña"} else if self.account_stage==1 {"Te damos la bienvenida"} else {"Tu estudio empieza aquí"});
+            ui.add_space(8.0); ui.label(&self.cloud_status); ui.add_space(12.0);
             if self.account_authenticated {
                 ui.label("Sesión guardada de forma segura en este equipo. Se comprobará al abrir la app; caduca tras 30 días sin uso o a los 90 días.");
                 let idle=self.account_devices_rx.is_none() && self.cloud_rx.is_none() && !self.is_busy && !self.scanning_syslog;
@@ -354,15 +355,15 @@ impl AirCardApp {
                 }
                 return;
             }
-            ui.label("Usa el mismo correo que en Shopify. La primera activación requiere el código recibido en ese correo; conocer una dirección no permite reclamar su compra.");
-            ui.label("La cuenta conserva originales bancarios verificados e historial por iPhone y tarjeta. Las copias del formato antiguo se conservan localmente; todavía no se sincronizan con otro PC. Los diarios inciertos permanecen en este equipo.");
-            if self.account_server.is_empty() { ui.label(egui::RichText::new("Servicio aún no desplegado. Esta versión no permite acceder hasta que el proveedor configure el servicio oficial. Las copias locales se conservan.").color(md3::ON_SURFACE_VARIANT)); }
+            ui.label("Accede con el correo que utilizaste al comprar Wallet Studio.");
+            if self.account_stage==2 { ui.label("Introduce el código que te enviamos a ese correo y elige tu contraseña."); }
+            if self.account_server.is_empty() && !self.auth_preview { ui.add_space(8.0); ui.label(egui::RichText::new("El servicio de cuentas aún no está configurado. El acceso estará disponible cuando se active. Tus copias locales se conservan.").color(md3::ON_SURFACE_VARIANT)); }
             #[cfg(debug_assertions)]
             egui::CollapsingHeader::new("Configuración avanzada del servicio").default_open(false).show(ui,|ui| {
                 ui.label("Servicio de sincronización (HTTPS)");
                 ui.add(egui::TextEdit::singleline(&mut self.account_server).hint_text("https://tu-servicio.example").desired_width(ui.available_width()));
             });
-            ui.label("Correo electrónico"); ui.add(egui::TextEdit::singleline(&mut self.account_email).desired_width(ui.available_width()));
+            ui.add_space(12.0); ui.label("Correo electrónico"); ui.add(egui::TextEdit::singleline(&mut self.account_email).hint_text("tu@correo.com").background_color(md3::SURFACE_CONTAINER_HIGH).margin(egui::vec2(12.0,10.0)).desired_width(ui.available_width())); ui.add_space(10.0);
             let available=!self.account_server.is_empty() && self.storage_ready && self.cloud_rx.is_none() && self.activation_rx.is_none() && !self.is_busy && !self.scanning_syslog && !crate::storage::is_demo();
             if self.account_stage==0 {
                 if studio_button(ui,"Primera vez · continuar con mi correo",available,true) {
@@ -378,12 +379,12 @@ impl AirCardApp {
                     thread::spawn(move|| {let ok=crate::cloud_sync::start_email_code(&server,&email,true).is_ok();let _=tx.send(ok);ctx.request_repaint();});
                 }
             } else {
-                if self.account_stage==2 {ui.label("Código de 6 cifras recibido por correo");ui.add(egui::TextEdit::singleline(&mut self.account_code).desired_width(ui.available_width()));}
-                ui.label("Contraseña (12–128 caracteres)");ui.add(egui::TextEdit::singleline(&mut self.account_password).password(true).desired_width(ui.available_width()));
-                if self.account_stage==2 {ui.label("Repite la contraseña");ui.add(egui::TextEdit::singleline(&mut self.account_confirmation).password(true).desired_width(ui.available_width()));}
+                if self.account_stage==2 {ui.label("Código de verificación");ui.add(egui::TextEdit::singleline(&mut self.account_code).hint_text("6 cifras").background_color(md3::SURFACE_CONTAINER_HIGH).margin(egui::vec2(12.0,10.0)).desired_width(ui.available_width()));ui.add_space(10.0);}
+                ui.label("Contraseña (12–128 caracteres)");ui.add(egui::TextEdit::singleline(&mut self.account_password).password(true).background_color(md3::SURFACE_CONTAINER_HIGH).margin(egui::vec2(12.0,10.0)).desired_width(ui.available_width()));ui.add_space(10.0);
+                if self.account_stage==2 {ui.label("Repite la contraseña");ui.add(egui::TextEdit::singleline(&mut self.account_confirmation).password(true).background_color(md3::SURFACE_CONTAINER_HIGH).margin(egui::vec2(12.0,10.0)).desired_width(ui.available_width()));ui.add_space(10.0);}
                 if self.account_stage==2 && self.account_recovery {ui.checkbox(&mut self.account_reset_devices,"Desvincular mis equipos anteriores y registrar este PC (requiere el código del correo). Sus sesiones se cerrarán; sus copias locales se conservan.");}
             }
-            ui.checkbox(&mut self.account_link_consent,"Confirmo la primera vinculación: todas las copias locales e historiales bancarios de este perfil se sincronizarán con esta cuenta y servicio. Después no podré cambiar su propietario desde esta instalación.");
+            if self.account_stage>0 {ui.checkbox(&mut self.account_link_consent,"Vincular las copias de este perfil a mi cuenta").on_hover_text("Confirmo que todas las copias e historiales de este perfil me pertenecen. Se sincronizarán con esta cuenta; su propietario no podrá cambiarse desde esta instalación.");}
             let activation=self.account_stage==2;
             let matching=!activation || (self.account_password==self.account_confirmation && (12..=128).contains(&self.account_password.chars().count()) && self.account_code.len()==6);
             let action=if self.account_stage>0 && studio_button(ui,if activation {"Verificar y crear mi cuenta"} else {"Iniciar sesión"},available && matching,true) {Some(activation)} else {None};
@@ -413,9 +414,12 @@ impl AirCardApp {
                 });
             }
             if self.account_stage>0 && studio_button(ui,"Volver al correo",available,false) {self.account_stage=0;self.account_password.clear();self.account_confirmation.clear();self.account_code.clear();}
-            if studio_button(ui,"Comprobar sincronización",available && self.cloud_configured,false) { self.cloud_sync_queued=true; self.start_cloud_sync(ctx.clone()); }
-            ui.add_space(12.0); ui.label("Un original ausente solo se capturará después de comprobar la nube y verificar cada recurso presente contra la declaración exacta del emisor. Un diseño personalizado o un archivo sin procedencia verificable queda bloqueado.");
-            ui.separator(); ui.label("Actualizaciones"); ui.label(&self.update_status);
+            ui.add_space(12.0);
+            egui::CollapsingHeader::new("Sobre tu cuenta y tus copias").show(ui,|ui| {
+                ui.label("La nube conserva originales bancarios verificados e historial por iPhone y tarjeta. Las copias del formato antiguo y los diarios inciertos se conservan localmente.");
+                ui.label("El propietario de las copias no se cambia al iniciar sesión con otra cuenta. Solo se captura un original ausente después de verificar la nube y su procedencia.");
+                ui.label(&self.update_status);
+            });
         });
     }
     fn current_crop(&self) -> CardCrop {
@@ -1628,7 +1632,12 @@ impl eframe::App for AirCardApp {
         if (!crate::storage::is_demo() || self.auth_preview) && !self.account_authenticated {
             egui::CentralPanel::default().show(ctx,|ui| {
                 egui::ScrollArea::vertical().show(ui,|ui| {
-                    ui.add_space(36.0);
+                    let form_width=(ui.available_width()-32.0).clamp(240.0,520.0);
+                    ui.add_space(28.0);
+                    ui.horizontal(|ui| {
+                    ui.add_space(((ui.available_width()-form_width)*0.5).max(0.0));
+                    ui.vertical(|ui| {
+                    ui.set_width(form_width);
                     ui.horizontal(|ui| {ui.add(egui::Image::new((self.brand_texture.id(),egui::vec2(64.0,64.0))));ui.heading("Wallet Studio");});
                     ui.label("Acceso para clientes · hasta 3 equipos por cuenta");ui.add_space(18.0);
                     if self.auth_preview {ui.label("DEMOSTRACIÓN AISLADA · no envía correos ni conecta con cuentas o teléfonos");ui.horizontal(|ui| {
@@ -1638,6 +1647,9 @@ impl eframe::App for AirCardApp {
                         if ui.button("Vista recuperación").clicked() {self.account_stage=2;self.account_recovery=true;}
                     });}
                     self.show_account_tab(ui,ctx);
+                    ui.add_space(24.0);
+                    });
+                    });
                 });
             });
             return;

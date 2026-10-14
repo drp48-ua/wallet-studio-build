@@ -6,6 +6,7 @@ from accounts import Accounts,AccountError
 
 class AccountTests(unittest.TestCase):
  def setUp(self):
+  self.environment=patch.dict(os.environ,{'WALLET_STORAGE_MODE':'local','RENDER':''});self.environment.start();self.addCleanup(self.environment.stop)
   self.tmp=tempfile.TemporaryDirectory();self.store=Store(self.tmp.name);self.mail=[]
   self.config={'WALLET_AUTH_SECRET':'s'*32,'SHOPIFY_SHOP_DOMAIN':'fixture.myshopify.com','SHOPIFY_PRODUCT_IDS':'123','SHOPIFY_WEBHOOK_SECRET':'fixture-secret'}
   self.auth=Accounts(self.store,self.config,lambda email,code:self.mail.append((email,code)));self.store.accounts=self.auth

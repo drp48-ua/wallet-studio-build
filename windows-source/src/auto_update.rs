@@ -48,7 +48,10 @@ fn request(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usiz
     anyhow::ensure!(!req.0.is_null(),"No se pudo crear la petición");
     let mut disable=2u32; // WINHTTP_DISABLE_REDIRECTS (SDK); 8 disables keep-alive.
     anyhow::ensure!(unsafe{WinHttpSetOption(req.0,63,(&mut disable as *mut u32).cast(),4)}!=0,"No se pudo bloquear la redirección");
-    let timeout=|h|->Result<()>{let ms=deadline.saturating_duration_since(Instant::now()).as_millis();anyhow::ensure!(ms>0,"El servicio agotó el tiempo de espera");let t=ms.min(15000) as i32;anyhow::ensure!(unsafe{WinHttpSetTimeouts(h,t,t,t,t)}!=0,"No se pudo configurar el tiempo de espera");Ok(())};
+    // Free hosting can cold-start while receiving the first response. Keep the
+    // existing total deadline and short connect timeouts, but allow that wake-up
+    // within the remaining receive budget. Calls run off the UI thread.
+    let timeout=|h|->Result<()>{let ms=deadline.saturating_duration_since(Instant::now()).as_millis();anyhow::ensure!(ms>0,"El servicio agotó el tiempo de espera");let t=ms.min(15000) as i32;let receive=ms.min(60000) as i32;anyhow::ensure!(unsafe{WinHttpSetTimeouts(h,t,t,t,receive)}!=0,"No se pudo configurar el tiempo de espera");Ok(())};
     timeout(req.0)?;
     anyhow::ensure!(unsafe{WinHttpSendRequest(req.0,hw.as_ptr(),header.encode_utf16().count() as u32,if body.is_empty(){std::ptr::null_mut()}else{body.as_ptr() as *mut _},body.len() as u32,body.len() as u32,0)}!=0,"No se pudo enviar la petición");
     timeout(req.0)?;

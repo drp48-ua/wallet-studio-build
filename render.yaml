@@ -1,24 +1,30 @@
-# Review the paid service and disk estimate before applying this Blueprint.
-# A single instance owns SQLite + immutable account bundles; never scale replicas.
+# Free compute only. Durable accounts and private objects MUST reside remotely.
+# Never use ephemeral SQLite/blob files as the production source of truth.
 services:
   - type: web
     name: wallet-studio-accounts
     runtime: docker
-    plan: 0.5c-512mb
+    plan: free
     region: frankfurt
     dockerfilePath: ./server/Dockerfile
     dockerContext: ./server
     autoDeployTrigger: "off"
     healthCheckPath: /health
-    disk:
-      name: wallet-private-data
-      mountPath: /data
-      sizeGB: 10
     envVars:
       - key: PORT
         value: "8766"
       - key: WALLET_AUTH_SECRET
         generateValue: true
+      - key: WALLET_STORAGE_MODE
+        value: remote
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        value: https://pbdaitvqblaltjosgkrm.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: wallet-private
       - key: WALLET_MAX_CONCURRENT_REQUESTS
         value: "1"
       - key: SHOPIFY_SHOP_DOMAIN
@@ -27,13 +33,9 @@ services:
         value: "10459984298313"
       - key: SHOPIFY_WEBHOOK_SECRET
         sync: false
-      - key: SMTP_HOST
+      - key: BREVO_API_KEY
         sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USERNAME
+      - key: BREVO_SENDER_EMAIL
         sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: SMTP_FROM
-        sync: false
+      - key: BREVO_SENDER_NAME
+        value: Wallet Studio

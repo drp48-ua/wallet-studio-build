@@ -1,7 +1,10 @@
 FROM python:3.12-slim
 WORKDIR /service
+COPY requirements.txt /service/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && test -s /etc/ssl/certs/ca-certificates.crt
 COPY app.py /service/app.py
 COPY accounts.py /service/accounts.py
+COPY remote.py /service/remote.py
 RUN useradd --uid 10001 --create-home wallet && mkdir /data && chown wallet:wallet /data
 USER wallet
 EXPOSE 8766

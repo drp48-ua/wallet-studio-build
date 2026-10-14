@@ -5,6 +5,7 @@ SMTP is injected for tests; production always uses authenticated TLS delivery.
 """
 import base64, hashlib, hmac, json, os, re, secrets, smtplib, ssl, time
 from email.message import EmailMessage
+from remote import https_request
 
 DEVICE = re.compile(r'^[0-9a-f]{64}$')
 
@@ -26,7 +27,7 @@ class Accounts:
             CREATE TABLE IF NOT EXISTS activation(email TEXT PRIMARY KEY,digest TEXT NOT NULL,expires INTEGER NOT NULL,attempts INTEGER NOT NULL,last_sent INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS computers(user_id TEXT NOT NULL,id TEXT NOT NULL,created INTEGER NOT NULL,last_seen INTEGER NOT NULL,peer_digest TEXT NOT NULL,PRIMARY KEY(user_id,id));
             ''')
-            columns={row[1] for row in db.execute('PRAGMA table_info(sessions)')}
+            columns={'device_id','last_seen'} if store.remote else {row[1] for row in db.execute('PRAGMA table_info(sessions)')}
             for name,definition in [('device_id',"TEXT NOT NULL DEFAULT ''"),('last_seen','INTEGER NOT NULL DEFAULT 0')]:
                 if name not in columns: db.execute(f'ALTER TABLE sessions ADD COLUMN {name} {definition}')
 
@@ -45,6 +46,15 @@ class Accounts:
 
     def send_mail(self,email,code):
         cfg=self.config
+        if cfg.get('BREVO_API_KEY'):
+            sender=self.email(cfg.get('BREVO_SENDER_EMAIL',''))
+            data=json.dumps({'sender':{'email':sender,'name':cfg.get('BREVO_SENDER_NAME','Wallet Studio')[:100]},'to':[{'email':email}],'subject':'Tu código de Wallet Studio','textContent':f'Tu código de Wallet Studio es {code}. Caduca en 10 minutos. Si no lo solicitaste, ignora este mensaje.'}).encode()
+            try:
+                status,body=https_request('https://api.brevo.com/v3/smtp/email','POST',{'api-key':cfg['BREVO_API_KEY'],'Content-Type':'application/json','Accept':'application/json'},data,65536)
+                if status not in (200,201,202) or not json.loads(body).get('messageId'):raise AccountError('email_delivery_unavailable')
+                return
+            except Exception:raise AccountError('email_delivery_unavailable') from None
+        if self.store.remote:raise AccountError('email_delivery_unavailable')
         if not all(cfg.get(k) for k in ('SMTP_HOST','SMTP_USERNAME','SMTP_PASSWORD','SMTP_FROM')):
             raise AccountError('email_delivery_unavailable')
         message=EmailMessage();message['From']=cfg['SMTP_FROM'];message['To']=email;message['Subject']='Tu código de Wallet Studio'

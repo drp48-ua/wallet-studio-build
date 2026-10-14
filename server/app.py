@@ -2,12 +2,25 @@
 import argparse,contextlib,hashlib,hmac,json,os,pathlib,re,secrets,sqlite3,threading,time,uuid,zipfile,io,getpass
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from accounts import Accounts,AccountError
+from remote import PgDatabase,SupabaseBlobs,RemoteError,MAX_REMOTE_BUNDLE
 
 HEX=re.compile(r'^[0-9a-f]{64}$')
 MAX_BUNDLE=100*1024*1024
 PASSWORD_ROUNDS=600_000
 class Store:
     def __init__(self,root,allow_registration=False,session_seconds=86400*7):
+        self.remote=os.environ.get('WALLET_STORAGE_MODE')=='remote'
+        self.remote_db=None;self.blob_store=None;self.max_bundle=MAX_REMOTE_BUNDLE if self.remote else MAX_BUNDLE
+        if os.environ.get('RENDER') and not self.remote:raise ValueError('Render requires durable remote database and private storage')
+        if self.remote:
+            required=('DATABASE_URL','SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','SUPABASE_STORAGE_BUCKET')
+            if not all(os.environ.get(key) for key in required):raise ValueError('remote_storage_configuration_required')
+            if allow_registration:raise ValueError('remote_registration_fixture_forbidden')
+            self.remote_db=PgDatabase(os.environ['DATABASE_URL']);self.lock=self.remote_db.lock
+            self.blob_store=SupabaseBlobs(os.environ['SUPABASE_URL'],os.environ['SUPABASE_SERVICE_ROLE_KEY'],os.environ['SUPABASE_STORAGE_BUCKET'])
+            self.remote_db.initialize();self.blob_store.verify_bucket()
+            self.allow_registration=False;self.session_seconds=session_seconds;self.limits={}
+            self.accounts=Accounts(self);self.remote_db.secure_tables();return
         self.root=pathlib.Path(root).absolute()
         if os.name=='nt' and not str(self.root).startswith('\\\\?\\'):
             self.root=pathlib.Path('\\\\?\\'+str(self.root))
@@ -25,6 +38,9 @@ class Store:
         self.accounts=Accounts(self)
     @contextlib.contextmanager
     def connect(self):
+        if self.remote_db:
+            with self.remote_db.connect() as db:yield db
+            return
         db=sqlite3.connect(self.db,timeout=10)
         try:
             with db:yield db
@@ -162,9 +178,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self.path.startswith('/v1/bundles/') or not HEX.fullmatch(ident):return self.error(404,'not_found')
         with self.server.store.connect() as db:row=db.execute('SELECT size FROM bundles WHERE user_id=? AND id=?',(user,ident)).fetchone()
         if not row:return self.error(404,'not_found')
-        path=self.server.store.blobs/user/ident
-        try:data=path.read_bytes()
-        except OSError:return self.error(503,'object_unavailable')
+        store=self.server.store
+        try:data=store.blob_store.read(user,ident) if store.remote else (store.blobs/user/ident).read_bytes()
+        except (OSError,RemoteError):return self.error(503,'object_unavailable')
         if len(data)!=row[0] or hashlib.sha256(data).hexdigest()!=ident:return self.error(503,'object_integrity_error')
         return self.reply(200,body=data)
     def do_PUT(self):
@@ -173,7 +189,8 @@ class Handler(BaseHTTPRequestHandler):
         ident=self.path.removeprefix('/v1/bundles/')
         if not self.path.startswith('/v1/bundles/') or not HEX.fullmatch(ident):return self.error(400,'invalid_object_id')
         try:
-            data=self.read_body(MAX_BUNDLE)
+            if int(self.headers.get('Content-Length','0'))>self.server.store.max_bundle:return self.error(413,'remote_bundle_size_limit' if self.server.store.remote else 'bundle_size_limit')
+            data=self.read_body(self.server.store.max_bundle)
             if hashlib.sha256(data).hexdigest()!=ident or self.headers.get('X-Content-SHA256',ident)!=ident:return self.error(400,'object_digest_mismatch')
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 files=archive.infolist()
@@ -186,6 +203,13 @@ class Handler(BaseHTTPRequestHandler):
         with store.lock:
             with store.connect() as db:
                 old=db.execute('SELECT size FROM bundles WHERE user_id=? AND id=?',(user,ident)).fetchone()
+                if store.remote:
+                    count,total=db.execute('SELECT count(*),coalesce(sum(size),0) FROM bundles WHERE user_id=?',(user,)).fetchone()
+                    if not old and (count>=1000 or total+len(data)>1024*1024*1024):return self.error(413,'account_storage_limit')
+                    try:store.blob_store.create(user,ident,data)
+                    except RemoteError:return self.error(503,'immutable_object_not_saved')
+                    if not old:db.execute('INSERT INTO bundles VALUES(?,?,?)',(user,ident,len(data)))
+                    return self.reply(200 if old else 201,{'id':ident,'sha256':ident,'size':len(data)})
                 directory=store.blobs/user;directory.mkdir(exist_ok=True)
                 if old:
                     if (directory/ident).read_bytes()!=data:return self.error(409,'immutable_object_conflict')
@@ -223,7 +247,8 @@ class Server(ThreadingHTTPServer):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--data',default=os.environ.get('WALLET_DATA','/data'));p.add_argument('--host',default='127.0.0.1');p.add_argument('--port',type=int,default=8766);p.add_argument('--create-user');args=p.parse_args()
     # Registration fixtures are never enabled through a production environment flag.
-    store=Store(args.data)
+    try:store=Store(args.data)
+    except Exception:p.error('No se pudo iniciar el almacenamiento privado. Revisa la configuración y disponibilidad; no se usará un almacén local alternativo.')
     if args.create_user:store.create_user(args.create_user,getpass.getpass('Contraseña de al menos 12 caracteres: '));print('Cuenta creada');return
     try:server=Server((args.host,args.port),store)
     except ValueError as error:p.error(str(error))
