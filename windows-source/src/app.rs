@@ -20,7 +20,7 @@ use crate::passthm::{PasscodeTheme, parse_passthm_file};
 use crate::scanner::{SavedCard, load_saved_cards, scan_syslog_for_cards};
 #[path = "ui_card_state.rs"]
 mod ui_card_state;
-use ui_card_state::{AutoCapture, CapturePhase, OriginalState, SnapshotCache};
+use ui_card_state::{AutoCapture, CapturePhase, OriginalState, SnapshotCache, capture_device_for_selection};
 
 struct CardSnapshot {
     udid: Option<String>, known_device: Option<String>, original: OriginalState,
@@ -1739,7 +1739,9 @@ impl AirCardApp {
             .map(|card| card.name.clone())
             .unwrap_or_default();
         self.rename_error = None;
-        let expected = self.offline_baseline_device.get(hash).cloned().or_else(||self.selected_udid.clone());
+        let connected = self.selected_udid.as_deref().filter(|selected|
+            self.devices.iter().any(|device| device.udid == *selected));
+        let expected = capture_device_for_selection(connected,self.offline_baseline_device.get(hash).map(String::as_str));
         self.auto_capture = Some(AutoCapture::selected(hash.to_string(),expected));
     }
 
@@ -2167,6 +2169,7 @@ impl AirCardApp {
                         Some(CapturePhase::Running) => "Guardando automáticamente el original y verificando su devolución…",
                         Some(CapturePhase::Failed) => "La captura no terminó. Conserva las copias y resuelve cualquier recuperación antes de reintentar.",
                         Some(CapturePhase::Blocked) => "Hay copia o historial incompleto. La captura automática está bloqueada para conservar el original y la evidencia.",
+                        Some(CapturePhase::ForeignOriginal) => "Hay una copia original para otro iPhone, pero falta una verificable para el seleccionado. No se capturará su diseño actual como original; conserva las copias y comprueba su procedencia.",
                         Some(CapturePhase::Waiting) if self.auto_capture.as_ref().is_some_and(|capture|capture.device.is_none()) => "Conecta el iPhone correcto por USB y vuelve a seleccionar esta tarjeta para guardar el original.",
                         Some(CapturePhase::Waiting) => "La copia se guardará automáticamente cuando el iPhone seleccionado esté disponible por USB y no haya recuperaciones pendientes.",
                         _ => "Selecciona una tarjeta: su original se guardará automáticamente antes de aplicar diseños.",
