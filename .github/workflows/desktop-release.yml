@@ -19,6 +19,15 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/msvc-dev-cmd@v1
+      - name: Require an approved official account service
+        shell: pwsh
+        env:
+          WALLET_STUDIO_CLOUD_URL: ${{ vars.WALLET_STUDIO_CLOUD_URL }}
+        run: |
+          $service = $null
+          if (-not [Uri]::TryCreate($env:WALLET_STUDIO_CLOUD_URL, [UriKind]::Absolute, [ref]$service) -or $service.Scheme -ne 'https' -or -not $service.IsDefaultPort -or $service.UserInfo -or $service.Query -or $service.Fragment -or $service.Host -in @('localhost', '127.0.0.1')) {
+            throw 'Set the real HTTPS WALLET_STUDIO_CLOUD_URL before publishing a mandatory-account build.'
+          }
       - name: Validate private cloud service with synthetic data
         shell: pwsh
         run: python -m unittest discover -s server/tests -v

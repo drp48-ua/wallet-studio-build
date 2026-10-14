@@ -1,6 +1,7 @@
 """Private immutable backup service. Python standard library; HTTPS proxy in production."""
 import argparse,contextlib,hashlib,hmac,json,os,pathlib,re,secrets,sqlite3,threading,time,uuid,zipfile,io,getpass
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+from accounts import Accounts,AccountError
 
 HEX=re.compile(r'^[0-9a-f]{64}$')
 MAX_BUNDLE=100*1024*1024
@@ -21,6 +22,7 @@ class Store:
               CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,salt BLOB NOT NULL,password BLOB NOT NULL);
               CREATE TABLE IF NOT EXISTS sessions(digest TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires INTEGER NOT NULL);
               CREATE TABLE IF NOT EXISTS bundles(user_id TEXT NOT NULL,id TEXT NOT NULL,size INTEGER NOT NULL,PRIMARY KEY(user_id,id));''')
+        self.accounts=Accounts(self)
     @contextlib.contextmanager
     def connect(self):
         db=sqlite3.connect(self.db,timeout=10)
@@ -42,19 +44,26 @@ class Store:
         salt=secrets.token_bytes(32);digest=hashlib.pbkdf2_hmac('sha256',password.encode(),salt,PASSWORD_ROUNDS);user=str(uuid.uuid4())
         with self.connect() as db:db.execute('INSERT INTO users VALUES(?,?,?,?)',(user,email,salt,digest))
         return user
-    def login(self,email,password):
+    def verify_password(self,email,password):
         email=email.strip().casefold()
         with self.connect() as db:row=db.execute('SELECT id,salt,password FROM users WHERE email=?',(email,)).fetchone()
         # Unknown accounts still perform the same expensive password hash.
         salt=row[1] if row else bytes(32)
         supplied=hashlib.pbkdf2_hmac('sha256',password.encode(),salt,PASSWORD_ROUNDS)
         if not row or not hmac.compare_digest(supplied,row[2]):return None
+        return row[0]
+    def login(self,email,password):
+        # Isolated integration fixtures only. The production handler never uses it.
+        if not self.allow_registration:return None
+        user=self.verify_password(email,password)
+        if not user:return None
         token=secrets.token_hex(32);expires=int(time.time())+self.session_seconds
         with self.connect() as db:
             db.execute('DELETE FROM sessions WHERE expires<?',(int(time.time()),))
-            db.execute('INSERT INTO sessions VALUES(?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),row[0],expires))
-        return {'access_token':token,'expires_in':self.session_seconds,'user_id':row[0]}
+            db.execute('INSERT INTO sessions(digest,user_id,expires) VALUES(?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),user,expires))
+        return {'access_token':token,'expires_in':self.session_seconds,'user_id':user}
     def subject(self,token):
+        if not self.allow_registration:return self.accounts.subject(token)
         if not HEX.fullmatch(token):return None
         with self.connect() as db:row=db.execute('SELECT user_id FROM sessions WHERE digest=? AND expires>?',(hashlib.sha256(token.encode()).hexdigest(),int(time.time()))).fetchone()
         return row[0] if row else None
@@ -62,6 +71,9 @@ class Store:
 class Handler(BaseHTTPRequestHandler):
     protocol_version='HTTP/1.1'
     def log_message(self,*args):pass # Never log credentials, personal identifiers or bundle paths.
+    def handle(self):
+        try:super().handle()
+        except (ConnectionError,TimeoutError):pass # Normal client disconnect; never print peer identifiers.
     def setup(self):super().setup();self.connection.settimeout(15)
     def reply(self,status,value=None,body=None):
         raw=body if body is not None else json.dumps(value or {}).encode()
@@ -81,6 +93,14 @@ class Handler(BaseHTTPRequestHandler):
         value=self.headers.get('Authorization','')
         return self.server.store.subject(value[7:]) if value.startswith('Bearer ') else None
     def do_POST(self):
+        if self.path=='/v1/shopify/webhook':
+            try:
+                raw=self.read_body(2*1024*1024)
+                self.server.store.accounts.webhook(raw,self.headers.get('X-Shopify-Hmac-Sha256',''),self.headers.get('X-Shopify-Shop-Domain',''),self.headers.get('X-Shopify-Topic',''),self.headers.get('X-Shopify-Webhook-Id',''))
+                return self.reply(200,{'received':True})
+            except (ValueError,TypeError,KeyError,AttributeError,OverflowError):return self.error(400,'webhook_rejected')
+        if not self.server.store.allow_registration:
+            return self.account_post()
         if self.path not in ('/v1/auth/login','/v1/auth/register'):return self.error(404,'not_found')
         try:
             body=json.loads(self.read_body(4096))
@@ -96,12 +116,44 @@ class Handler(BaseHTTPRequestHandler):
             if not result:return self.error(401,'invalid_credentials')
             return self.reply(200,result)
         except (ValueError,TypeError,json.JSONDecodeError):return self.error(400,'invalid_request')
+    def account_post(self):
+        if self.path=='/v1/auth/register':return self.error(403,'registration_disabled')
+        accounts=self.server.store.accounts
+        try:
+            body=json.loads(self.read_body(4096))
+            if not isinstance(body,dict):raise ValueError()
+            email=body.get('email','')
+            if not isinstance(email,str) or len(email)>254 or not self.server.store.rate(self.client_address[0],email.casefold()):return self.error(429,'rate_limited')
+            if self.path=='/v1/auth/start':
+                accounts.start(email,body.get('purpose','activate'));return self.reply(200,{'message':'Si la compra y la solicitud son válidas, recibirás un código.'})
+            if self.path=='/v1/auth/activate':
+                result=accounts.activate(email,body.get('code'),body.get('password'),body.get('password_confirmation'),body.get('device_id'),self.client_address[0]);return self.reply(200,result)
+            if self.path=='/v1/auth/recover':
+                return self.reply(200,accounts.recover(email,body.get('code'),body.get('password'),body.get('password_confirmation'),body.get('device_id'),body.get('reset_devices',False),self.client_address[0]))
+            if self.path=='/v1/auth/login':
+                password=body.get('password','')
+                if not isinstance(password,str) or len(password)>128:raise ValueError()
+                return self.reply(200,accounts.login(email,password,body.get('device_id'),self.client_address[0]))
+            user=self.user()
+            if not user:return self.error(401,'unauthorized')
+            if self.path=='/v1/auth/devices/revoke':
+                device=body.get('device_id','')
+                if not isinstance(device,str) or not HEX.fullmatch(device):raise ValueError()
+                accounts.revoke(user,device);return self.reply(200)
+            if self.path=='/v1/auth/logout':
+                token=self.headers.get('Authorization','')[7:]
+                with self.server.store.connect() as db:db.execute('DELETE FROM sessions WHERE digest=?',(hashlib.sha256(token.encode()).hexdigest(),))
+                return self.reply(200)
+            return self.error(404,'not_found')
+        except AccountError as error:return self.error(403,str(error))
+        except (ValueError,TypeError,json.JSONDecodeError):return self.error(400,'invalid_request')
     def do_GET(self):
         if self.path=='/__fixture_redirect' and self.server.store.allow_registration:
             self.send_response(302);self.send_header('Location','/health');self.send_header('Content-Length','0');self.end_headers();return
         if self.path=='/health':return self.reply(200,{'status':'ok'})
         user=self.user()
         if not user:return self.error(401,'unauthorized')
+        if self.path=='/v1/auth/session':return self.reply(200,{'user_id':user,'devices':self.server.store.accounts.devices(user)})
         if self.path=='/v1/bundles':
             with self.server.store.connect() as db:rows=db.execute('SELECT id,size FROM bundles WHERE user_id=? ORDER BY id LIMIT 1001',(user,)).fetchall()
             if len(rows)>1000:return self.error(409,'account_object_limit')
@@ -152,7 +204,10 @@ class Handler(BaseHTTPRequestHandler):
 
 class Server(ThreadingHTTPServer):
     daemon_threads=True
-    def __init__(self,address,store):self.store=store;self.slots=threading.BoundedSemaphore(4);super().__init__(address,Handler)
+    def __init__(self,address,store):
+        maximum=os.environ.get('WALLET_MAX_CONCURRENT_REQUESTS','4')
+        if maximum not in ('1','2','3','4'):raise ValueError('WALLET_MAX_CONCURRENT_REQUESTS must be an integer from 1 to 4')
+        self.store=store;self.slots=threading.BoundedSemaphore(int(maximum));super().__init__(address,Handler)
     def process_request(self,request,address):
         if not self.slots.acquire(blocking=False):request.close();return
         try:super().process_request(request,address)
@@ -160,9 +215,17 @@ class Server(ThreadingHTTPServer):
     def process_request_thread(self,request,address):
         try:super().process_request_thread(request,address)
         finally:self.slots.release()
+    def handle_error(self,request,address):
+        # socketserver's default dumps client IP + traceback. Keep production
+        # errors observable without exposing request/account/backup details.
+        import logging
+        logging.error('request_failed')
 def main():
     p=argparse.ArgumentParser();p.add_argument('--data',default=os.environ.get('WALLET_DATA','/data'));p.add_argument('--host',default='127.0.0.1');p.add_argument('--port',type=int,default=8766);p.add_argument('--create-user');args=p.parse_args()
-    store=Store(args.data,os.environ.get('WALLET_ALLOW_REGISTRATION')=='1')
+    # Registration fixtures are never enabled through a production environment flag.
+    store=Store(args.data)
     if args.create_user:store.create_user(args.create_user,getpass.getpass('Contraseña de al menos 12 caracteres: '));print('Cuenta creada');return
-    Server((args.host,args.port),store).serve_forever()
+    try:server=Server((args.host,args.port),store)
+    except ValueError as error:p.error(str(error))
+    server.serve_forever()
 if __name__=='__main__':main()

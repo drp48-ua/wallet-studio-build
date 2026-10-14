@@ -108,7 +108,7 @@ enum AppTab {
     Help,
     Account,
 }
-struct CloudMessage { storage_ready:bool,configured:bool,synced:bool,server:String,status:&'static str,session:Option<crate::cloud_sync::Session> }
+struct CloudMessage { authenticated:bool,storage_ready:bool,configured:bool,synced:bool,server:String,status:&'static str,session:Option<crate::cloud_sync::Session> }
 
 enum BackgroundTaskMessage {
     Progress { step: usize, total: usize, message: String },
@@ -172,6 +172,10 @@ fn current_timestamp() -> String {
 
 pub struct AirCardApp {
     cloud_rx:Option<Receiver<CloudMessage>>,
+    activation_rx:Option<Receiver<bool>>,account_stage:u8,account_code:String,account_confirmation:String,account_authenticated:bool,
+    account_devices:Vec<crate::cloud_sync::RegisteredComputer>,account_devices_rx:Option<Receiver<Result<Vec<crate::cloud_sync::RegisteredComputer>,()>>>,
+    account_recovery:bool,account_reset_devices:bool,
+    auth_preview:bool,
     cloud_session:Option<crate::cloud_sync::Session>,cloud_sync_queued:bool,last_cloud_sync:Instant,
     storage_ready:bool,cloud_configured:bool,cloud_synced:bool,
     cloud_status:String,account_server:String,account_email:String,account_password:String,account_link_consent:bool,
@@ -262,12 +266,13 @@ impl AirCardApp {
         let (tx,rx)=channel(); self.cloud_rx=Some(rx);
         let endpoint=self.account_server.clone();
         thread::spawn(move || {
-            let mut message=CloudMessage { storage_ready:false,configured:false,synced:false,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación.",session:None };
+            let mut message=CloudMessage { authenticated:false,storage_ready:false,configured:true,synced:false,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación.",session:None };
             if crate::storage::migrate_legacy().is_ok() {
                 message.storage_ready=true;
                 message.configured=crate::cloud_sync::account_expected_without_session(&endpoint);
                 match crate::cloud_sync::load_session() {
                     Ok(Some(session))=> { message.configured=true; message.server=session.server.clone();
+                        message.authenticated=crate::cloud_sync::validate_session(&session).is_ok();
                         if crate::cloud_sync::synchronize(&session).is_ok() { message.synced=true; message.status="Originales e historial bancario sincronizados"; }
                         else { message.status="Nube sin verificar. Los originales válidos siguen disponibles; no se capturará un original ausente."; }
                         message.session=Some(session);
@@ -282,13 +287,26 @@ impl AirCardApp {
     }
     fn tick_cloud(&mut self,ctx:&egui::Context) {
         if crate::storage::is_demo() { return; }
+        if let Some(result)=self.activation_rx.as_ref().and_then(|rx|rx.try_recv().ok()) {
+            self.activation_rx=None;
+            if result {self.account_stage=2;self.cloud_status="Si tu compra y solicitud son válidas, recibirás un código. Revisa también el correo no deseado.".into();}
+            else {self.cloud_status="No se pudo enviar el código. El proveedor debe revisar el servicio y el correo de activación.".into();}
+        }
+        if self.activation_rx.is_some() {ctx.request_repaint_after(std::time::Duration::from_millis(150));}
+        if let Some(result)=self.account_devices_rx.as_ref().and_then(|rx|rx.try_recv().ok()) {
+            self.account_devices_rx=None;match result {Ok(devices)=>self.account_devices=devices,Err(())=>self.cloud_status="No se pudo actualizar la lista de equipos. Vuelve a comprobar la sesión.".into()}
+        }
+        if self.account_devices_rx.is_some() {ctx.request_repaint_after(std::time::Duration::from_millis(150));}
         if let Some(message)=self.cloud_rx.as_ref().and_then(|rx|rx.try_recv().ok()) {
             self.cloud_rx=None; self.storage_ready=message.storage_ready; self.cloud_configured=message.configured;
             self.cloud_synced=message.synced; self.cloud_status=message.status.into();
+            let newly_authenticated=!self.account_authenticated && message.authenticated;
+            self.account_authenticated=message.authenticated;
             if !message.server.is_empty() { self.account_server=message.server; }
-            if let Some(session)=message.session { self.cloud_session=Some(session); }
+            self.cloud_session=message.session;
             self.last_cloud_sync=Instant::now();
             self.saved_cards=load_saved_cards(); self.invalidate_card_cache();
+            if newly_authenticated && self.apple_ready {self.refresh_devices();self.refresh_recovery_status();}
         }
         if let Some(rx)=&self.update_rx { while let Ok(message)=rx.try_recv() { self.update_status=message; } }
         if self.cloud_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(150)); }
@@ -303,36 +321,85 @@ impl AirCardApp {
         self.cloud_sync_queued=false; self.last_cloud_sync=Instant::now();
         let (tx,rx)=channel(); self.cloud_rx=Some(rx);
         thread::spawn(move|| {
-            let synced=crate::cloud_sync::synchronize(&session).is_ok();
-            let message=CloudMessage { storage_ready:crate::storage::ensure_ready().is_ok(),configured:true,synced,
+            let authenticated=crate::cloud_sync::validate_session(&session).is_ok();
+            let synced=authenticated && crate::cloud_sync::synchronize(&session).is_ok();
+            let message=CloudMessage { authenticated,storage_ready:crate::storage::ensure_ready().is_ok(),configured:true,synced,
                 server:session.server.clone(),session:Some(session),status:if synced {"Originales e historial bancario sincronizados"} else {"Sin conexión verificada. Tus originales locales siguen disponibles; la copia ausente requiere comprobar la nube."} };
             let _=tx.send(message);ctx.request_repaint();
         });
     }
     fn show_account_tab(&mut self,ui:&mut egui::Ui,ctx:&egui::Context) {
         m3_card(ui,|ui| {
-            ui.heading("Tu cuenta y tus originales"); ui.label(&self.cloud_status);
-            ui.label("Tu proveedor te entrega la cuenta al adquirir Wallet Studio. Inicia sesión para conservar tus originales entre equipos.");
+            ui.heading(if self.account_stage==2 {"Verifica tu correo y crea tu contraseña"} else {"Accede con el correo de tu compra"}); ui.label(&self.cloud_status);
+            if self.account_authenticated {
+                ui.label("Sesión guardada de forma segura en este equipo. Se comprobará al abrir la app; caduca tras 30 días sin uso o a los 90 días.");
+                let idle=self.account_devices_rx.is_none() && self.cloud_rx.is_none() && !self.is_busy && !self.scanning_syslog;
+                let mut revoke=None;
+                for (index,device) in self.account_devices.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Equipo {} · {}{}",index+1,&device.id[..8],if device.current {" · este PC"} else {""}));
+                        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();let days=now.saturating_sub(device.last_seen)/86400;
+                        ui.label(if days==0 {"Último uso: hoy".to_string()} else {format!("Último uso: hace {days} días")});
+                        if studio_button(ui,"Desvincular",idle && !device.current,false) {revoke=Some(device.id.clone());}
+                    });
+                }
+                if studio_button(ui,"Ver / actualizar mis 3 equipos",idle,false) || revoke.is_some() {
+                    if let Some(session)=self.cloud_session.clone() {
+                        let (tx,rx)=channel();self.account_devices_rx=Some(rx);let ctx=ctx.clone();
+                        thread::spawn(move|| {let result=(|| {if let Some(id)=revoke {crate::cloud_sync::revoke_computer(&session,&id)?;}crate::cloud_sync::registered_computers(&session)})();let _=tx.send(result.map_err(|_:anyhow::Error|()));ctx.request_repaint();});
+                    }
+                }
+                if studio_button(ui,"Cerrar sesión en este PC",idle,false) {
+                    if crate::cloud_sync::forget_session().is_ok() {self.cloud_session=None;self.account_authenticated=false;self.cloud_synced=false;self.account_devices.clear();self.account_stage=1;self.cloud_status="Sesión cerrada. Tus originales y su propietario se conservan.".into();}
+                }
+                return;
+            }
+            ui.label("Usa el mismo correo que en Shopify. La primera activación requiere el código recibido en ese correo; conocer una dirección no permite reclamar su compra.");
             ui.label("La cuenta conserva originales bancarios verificados e historial por iPhone y tarjeta. Las copias del formato antiguo se conservan localmente; todavía no se sincronizan con otro PC. Los diarios inciertos permanecen en este equipo.");
-            if self.account_server.is_empty() { ui.label(egui::RichText::new("El proveedor todavía no ha configurado el servicio. Tus originales permanecen en este equipo.").color(md3::ON_SURFACE_VARIANT)); }
+            if self.account_server.is_empty() { ui.label(egui::RichText::new("Servicio aún no desplegado. Esta versión no permite acceder hasta que el proveedor configure el servicio oficial. Las copias locales se conservan.").color(md3::ON_SURFACE_VARIANT)); }
+            #[cfg(debug_assertions)]
             egui::CollapsingHeader::new("Configuración avanzada del servicio").default_open(false).show(ui,|ui| {
                 ui.label("Servicio de sincronización (HTTPS)");
                 ui.add(egui::TextEdit::singleline(&mut self.account_server).hint_text("https://tu-servicio.example").desired_width(ui.available_width()));
             });
             ui.label("Correo electrónico"); ui.add(egui::TextEdit::singleline(&mut self.account_email).desired_width(ui.available_width()));
-            ui.label("Contraseña"); ui.add(egui::TextEdit::singleline(&mut self.account_password).password(true).desired_width(ui.available_width()));
+            let available=!self.account_server.is_empty() && self.storage_ready && self.cloud_rx.is_none() && self.activation_rx.is_none() && !self.is_busy && !self.scanning_syslog && !crate::storage::is_demo();
+            if self.account_stage==0 {
+                if studio_button(ui,"Primera vez · continuar con mi correo",available,true) {
+                    self.account_recovery=false;
+                    let (tx,rx)=channel();self.activation_rx=Some(rx);let server=self.account_server.clone();let email=self.account_email.clone();let ctx=ctx.clone();
+                    self.cloud_status="Solicitando código de activación…".into();
+                    thread::spawn(move|| {let ok=crate::cloud_sync::start_activation(&server,&email).is_ok();let _=tx.send(ok);ctx.request_repaint();});
+                }
+                if studio_button(ui,"Ya tengo contraseña",available,false) {self.account_stage=1;}
+                if studio_button(ui,"Recuperar contraseña / liberar equipos",available,false) {
+                    self.account_recovery=true;let (tx,rx)=channel();self.activation_rx=Some(rx);let server=self.account_server.clone();let email=self.account_email.clone();let ctx=ctx.clone();
+                    self.cloud_status="Enviando código al correo de compra para recuperar el acceso…".into();
+                    thread::spawn(move|| {let ok=crate::cloud_sync::start_email_code(&server,&email,true).is_ok();let _=tx.send(ok);ctx.request_repaint();});
+                }
+            } else {
+                if self.account_stage==2 {ui.label("Código de 6 cifras recibido por correo");ui.add(egui::TextEdit::singleline(&mut self.account_code).desired_width(ui.available_width()));}
+                ui.label("Contraseña (12–128 caracteres)");ui.add(egui::TextEdit::singleline(&mut self.account_password).password(true).desired_width(ui.available_width()));
+                if self.account_stage==2 {ui.label("Repite la contraseña");ui.add(egui::TextEdit::singleline(&mut self.account_confirmation).password(true).desired_width(ui.available_width()));}
+                if self.account_stage==2 && self.account_recovery {ui.checkbox(&mut self.account_reset_devices,"Desvincular mis equipos anteriores y registrar este PC (requiere el código del correo). Sus sesiones se cerrarán; sus copias locales se conservan.");}
+            }
             ui.checkbox(&mut self.account_link_consent,"Confirmo la primera vinculación: todas las copias locales e historiales bancarios de este perfil se sincronizarán con esta cuenta y servicio. Después no podré cambiar su propietario desde esta instalación.");
-            let available=!self.account_server.is_empty() && self.storage_ready && self.cloud_rx.is_none() && !self.is_busy && !self.scanning_syslog && !crate::storage::is_demo();
-            let action=if studio_button(ui,"Iniciar sesión",available,true) {Some(false)} else {None};
+            let activation=self.account_stage==2;
+            let matching=!activation || (self.account_password==self.account_confirmation && (12..=128).contains(&self.account_password.chars().count()) && self.account_code.len()==6);
+            let action=if self.account_stage>0 && studio_button(ui,if activation {"Verificar y crear mi cuenta"} else {"Iniciar sesión"},available && matching,true) {Some(activation)} else {None};
             if let Some(register)=action {
                 let server=self.account_server.clone(); let email=self.account_email.clone(); let password=std::mem::take(&mut self.account_password);
+                let confirmation=std::mem::take(&mut self.account_confirmation);let code=std::mem::take(&mut self.account_code);
+                let recovery=self.account_recovery;let reset_devices=self.account_reset_devices;
                 let consent=self.account_link_consent;
                 let old_configured=self.cloud_configured; let (tx,rx)=channel(); self.cloud_rx=Some(rx); self.cloud_synced=false; self.storage_ready=false;
                 self.cloud_status="Verificando cuenta y originales…".into(); let ctx=ctx.clone();
                 thread::spawn(move || {
-                    let mut message=CloudMessage { storage_ready:true,configured:old_configured,synced:false,server:server.clone(),status:"No se pudo vincular la cuenta. Revisa servicio, conexión y datos.",session:None };
-                    match crate::cloud_sync::login(&server,&email,&password,register,consent) {
+                    let mut message=CloudMessage { authenticated:false,storage_ready:true,configured:old_configured,synced:false,server:server.clone(),status:"Acceso rechazado: revisa compra, código, contraseña y límite de 3 equipos.",session:None };
+                    let result=if register && recovery {crate::cloud_sync::recover_account(&server,&email,&code,&password,&confirmation,reset_devices,consent)} else if register {crate::cloud_sync::activate(&server,&email,&code,&password,&confirmation,consent)} else {crate::cloud_sync::login(&server,&email,&password,false,consent)};
+                    match result {
                       Ok(session)=> {
+                        message.authenticated=crate::cloud_sync::validate_session(&session).is_ok();
                         message.configured=true;
                         if crate::cloud_sync::synchronize(&session).is_ok() { message.synced=true; message.status="Cuenta vinculada · originales sincronizados"; }
                         else { message.status="Cuenta vinculada; sincronización incompleta. No se capturará un original ausente."; }
@@ -345,6 +412,7 @@ impl AirCardApp {
                     let _=tx.send(message); ctx.request_repaint();
                 });
             }
+            if self.account_stage>0 && studio_button(ui,"Volver al correo",available,false) {self.account_stage=0;self.account_password.clear();self.account_confirmation.clear();self.account_code.clear();}
             if studio_button(ui,"Comprobar sincronización",available && self.cloud_configured,false) { self.cloud_sync_queued=true; self.start_cloud_sync(ctx.clone()); }
             ui.add_space(12.0); ui.label("Un original ausente solo se capturará después de comprobar la nube y verificar cada recurso presente contra la declaración exacta del emisor. Un diseño personalizado o un archivo sin procedencia verificable queda bloqueado.");
             ui.separator(); ui.label("Actualizaciones"); ui.label(&self.update_status);
@@ -428,7 +496,11 @@ impl AirCardApp {
         let saved_cards = load_saved_cards();
         let offline_baseline_device = HashMap::new();
         let mut app = Self {
-            cloud_rx:None,cloud_session:None,cloud_sync_queued:false,last_cloud_sync:Instant::now(),storage_ready:false,cloud_configured:crate::cloud_sync::valid_server(option_env!("WALLET_STUDIO_CLOUD_URL").unwrap_or("")),cloud_synced:false,
+            activation_rx:None,account_stage:0,account_code:String::new(),account_confirmation:String::new(),account_authenticated:false,
+            account_devices:Vec::new(),account_devices_rx:None,
+            account_recovery:false,account_reset_devices:false,
+            auth_preview:crate::storage::is_demo() && (std::env::args().any(|arg|arg=="--wallet-studio-auth-demo") || std::env::current_exe().ok().and_then(|path|path.file_stem().map(|stem|stem.to_string_lossy().eq_ignore_ascii_case("WSDEMOAU"))).unwrap_or(false)),
+            cloud_rx:None,cloud_session:None,cloud_sync_queued:false,last_cloud_sync:Instant::now(),storage_ready:false,cloud_configured:true,cloud_synced:false,
             cloud_status:"Preparando almacenamiento seguro…".into(),account_server:option_env!("WALLET_STUDIO_CLOUD_URL").unwrap_or("").into(),account_email:String::new(),account_password:String::new(),account_link_consent:false,
             update_rx:None,update_status:"Actualizaciones automáticas".into(),
             brand_texture,
@@ -496,10 +568,7 @@ impl AirCardApp {
 
         if !crate::storage::is_demo() { app.update_rx=Some(crate::auto_update::start_background_check()); }
         if !crate::storage::is_demo() { app.start_cloud_startup(cc.egui_ctx.clone()); }
-        if app.apple_ready && !crate::storage::is_demo() {
-            app.refresh_devices();
-        }
-        if !crate::storage::is_demo() { app.refresh_recovery_status(); }
+        // No device query, recovery mutation or artwork capture before purchaser authentication.
         app.refresh_design_library();
 
         if crate::storage::is_demo() { app.seed_demo(&cc.egui_ctx); }
@@ -1556,6 +1625,23 @@ fn m3_tab(ui: &mut egui::Ui, current: &mut AppTab, target: AppTab, label: &str) 
 impl eframe::App for AirCardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.tick_cloud(ctx);
+        if (!crate::storage::is_demo() || self.auth_preview) && !self.account_authenticated {
+            egui::CentralPanel::default().show(ctx,|ui| {
+                egui::ScrollArea::vertical().show(ui,|ui| {
+                    ui.add_space(36.0);
+                    ui.horizontal(|ui| {ui.add(egui::Image::new((self.brand_texture.id(),egui::vec2(64.0,64.0))));ui.heading("Wallet Studio");});
+                    ui.label("Acceso para clientes · hasta 3 equipos por cuenta");ui.add_space(18.0);
+                    if self.auth_preview {ui.label("DEMOSTRACIÓN AISLADA · no envía correos ni conecta con cuentas o teléfonos");ui.horizontal(|ui| {
+                        if ui.button("Vista correo").clicked() {self.account_stage=0;}
+                        if ui.button("Vista contraseña").clicked() {self.account_stage=1;}
+                        if ui.button("Vista activación").clicked() {self.account_stage=2;self.account_recovery=false;}
+                        if ui.button("Vista recuperación").clicked() {self.account_stage=2;self.account_recovery=true;}
+                    });}
+                    self.show_account_tab(ui,ctx);
+                });
+            });
+            return;
+        }
         self.handle_messages();
         self.tick_card_cache(ctx);
         self.tick_auto_capture();

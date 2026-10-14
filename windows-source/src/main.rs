@@ -29,6 +29,10 @@ mod bank_runtime;
 mod transport_probe;
 
 fn main() -> eframe::Result<()> {
+    if let Some(result)=run_emergency_return_if_requested() {
+        if let Err(error)=result {eprintln!("RECUPERACION_ERROR: {error:#}");std::process::exit(2);}
+        return Ok(());
+    }
     if let Some(result) = run_prepare_animation_if_requested() {
         if let Err(error) = result {
             eprintln!("APNG_PREPARE_ERROR: {error:#}");
@@ -55,7 +59,7 @@ fn main() -> eframe::Result<()> {
     // A separate copy with this reserved name lets native GUI review launch a
     // fully isolated demo without command-line interaction with other apps.
     let demo_name=std::env::current_exe().ok().and_then(|p|p.file_stem().map(|s|s.to_string_lossy().into_owned())).filter(|s|s.starts_with("Wallet Studio Demo ")||s.to_ascii_uppercase().starts_with("WSDEMO"));
-    let demo = demo_name.is_some() || std::env::args().any(|a| a == "--wallet-studio-ui-demo");
+    let demo = demo_name.is_some() || std::env::args().any(|a| a == "--wallet-studio-ui-demo" || a=="--wallet-studio-auth-demo");
     if demo {
         let path = std::env::temp_dir().join(format!("wallet-studio-demo-{}", flasher::generate_token()));
         if let Err(error) = storage::initialize_demo(&path) {
@@ -94,6 +98,31 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| Ok(Box::new(app::AirCardApp::new(cc)))),
     )
+}
+
+/// Narrow offline recovery: only an existing, hash-verified return journal.
+/// Does not authorize arbitrary paths, designs, captures, or new phone writes.
+fn run_emergency_return_if_requested()->Option<anyhow::Result<()>> {
+    let mut args=std::env::args().skip(1);let command=args.next();
+    let list=command.as_deref()==Some("--wallet-studio-list-pending");
+    if !list && command.as_deref()!=Some("--wallet-studio-return-pending") {return None;}
+    Some((|| {
+        storage::migrate_legacy()?;
+        let pending=wallet_export::pending_recovery_operations()?;
+        if list {
+            anyhow::ensure!(args.next().is_none(),"Argumentos adicionales no permitidos");
+            for item in pending {if let Some(token)=item.operation_dir.file_name().and_then(|name|name.to_str()) {println!("{token} · {}",item.phase);}}
+            return Ok(());
+        }
+        let token=args.next().ok_or_else(||anyhow::anyhow!("Falta el token del diario de recuperación"))?;
+        anyhow::ensure!(args.next().is_none() && !token.is_empty() && token.len()<=128 && token.bytes().all(|byte|byte.is_ascii_hexdigit()),"Token de recuperación inválido");
+        let journal=pending.into_iter().find(|entry|entry.operation_dir.file_name().and_then(|name|name.to_str())==Some(token.as_str())).ok_or_else(||anyhow::anyhow!("No hay un diario pendiente que coincida"))?;
+        let _=wallet_export::load_preserved_original(&journal.operation_dir)?;
+        let devices=device::list_connected_devices()?;let usb:Vec<_>=devices.iter().filter(|device|device.has_transport(device::DeviceTransport::Usb)).collect();
+        anyhow::ensure!(usb.len()==1 && usb[0].udid.eq_ignore_ascii_case(&journal.udid),"Conecta únicamente el iPhone del diario pendiente");
+        wallet_export::resume_pending_return(&journal.operation_dir,&journal.udid,device::ConnectionMode::Usb,|_|{})?;
+        println!("Devolución del original y auxiliares verificada.");Ok(())
+    })())
 }
 
 /// Offline prototype generation runs before any device query or Apple runtime.
@@ -148,6 +177,9 @@ fn run_capture_if_requested() -> Option<anyhow::Result<()>> {
         && !test_bank_apply && !test_bank_replace && !test_bank_restore && !test_bank_animation
         && command.as_deref() != Some("--wallet-studio-capture-original") { return None; }
     let result = (|| -> anyhow::Result<()> {
+        // Emergency return of a preserved cache asset must remain possible even
+        // after licence/session expiry. Every new diagnostic/write requires login.
+        if !cache_restore { cloud_sync::require_access()?; }
         let identifier = args.next().ok_or_else(|| anyhow::anyhow!("Falta la referencia de tarjeta o token de caché"))?;
         let test_image = if test_bank_apply || test_bank_replace || test_bank_animation {
             Some(args.next().ok_or_else(|| anyhow::anyhow!("Falta la imagen PNG de prueba"))?)

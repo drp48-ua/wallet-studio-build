@@ -1,0 +1,39 @@
+# Review the paid service and disk estimate before applying this Blueprint.
+# A single instance owns SQLite + immutable account bundles; never scale replicas.
+services:
+  - type: web
+    name: wallet-studio-accounts
+    runtime: docker
+    plan: 0.5c-512mb
+    region: frankfurt
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    autoDeployTrigger: "off"
+    healthCheckPath: /health
+    disk:
+      name: wallet-private-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: PORT
+        value: "8766"
+      - key: WALLET_AUTH_SECRET
+        generateValue: true
+      - key: WALLET_MAX_CONCURRENT_REQUESTS
+        value: "1"
+      - key: SHOPIFY_SHOP_DOMAIN
+        value: store-09240616prrz2-itsdpkjq.myshopify.com
+      - key: SHOPIFY_PRODUCT_IDS
+        value: "10459984298313"
+      - key: SHOPIFY_WEBHOOK_SECRET
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false

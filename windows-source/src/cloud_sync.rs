@@ -252,13 +252,85 @@ pub fn load_session()->Result<Option<Session>> {
         !session.access_token.is_empty() && session.access_token.len()<=8192 && session.access_token.bytes().all(|b|(0x21..=0x7e).contains(&b)),"saved cloud service invalid"); Ok(Some(session))
 }
 pub fn login(server:&str,email:&str,password:&str,register:bool,initial_link_consent:bool)->Result<Session> {
-    anyhow::ensure!(valid_server(server) && email.len()<=254 && password.len()<=1024,"account inputs invalid");
+    #[cfg(test)]
+    if register {return finish_login(server,serde_json::json!({"email":email,"password":password}),"register",initial_link_consent);}
+    anyhow::ensure!(!register,"La activación requiere verificar el correo de compra");
+    finish_login(server,serde_json::json!({"email":email,"password":password,"device_id":computer_id()?}),"login",initial_link_consent)
+}
+pub fn start_activation(server:&str,email:&str)->Result<()> {
+    start_email_code(server,email,false)
+}
+pub fn start_email_code(server:&str,email:&str,recover:bool)->Result<()> {
+    require_service(server)?;
+    let body=serde_json::to_vec(&serde_json::json!({"email":email,"purpose":if recover {"recover"} else {"activate"}}))?;
+    crate::auto_update::http_request("POST",&format!("{}/v1/auth/start",normalized_server(server)?),&[("Content-Type".into(),"application/json".into())],&body,65536)?;Ok(())
+}
+pub fn activate(server:&str,email:&str,code:&str,password:&str,confirmation:&str,consent:bool)->Result<Session> {
+    anyhow::ensure!(password==confirmation && (12..=128).contains(&password.chars().count()),"Las contraseñas deben coincidir y tener entre 12 y 128 caracteres");
+    finish_login(server,serde_json::json!({"email":email,"code":code,"password":password,"password_confirmation":confirmation,"device_id":computer_id()?}),"activate",consent)
+}
+pub fn recover_account(server:&str,email:&str,code:&str,password:&str,confirmation:&str,reset_devices:bool,consent:bool)->Result<Session> {
+    anyhow::ensure!(password==confirmation && (12..=128).contains(&password.chars().count()),"Las contraseñas deben coincidir y tener entre 12 y 128 caracteres");
+    finish_login(server,serde_json::json!({"email":email,"code":code,"password":password,"password_confirmation":confirmation,"device_id":computer_id()?,"reset_devices":reset_devices}),"recover",consent)
+}
+fn require_service(server:&str)->Result<()> {
+    anyhow::ensure!(valid_server(server) && !crate::storage::is_demo(),"Servicio de cuentas no configurado");
+    // Customer release builds cannot be redirected to a substitute licence server.
+    #[cfg(all(not(debug_assertions),not(test)))]
+    anyhow::ensure!(option_env!("WALLET_STUDIO_CLOUD_URL").is_some_and(|endpoint|normalized_server(endpoint).ok()==normalized_server(server).ok()),"El proveedor debe configurar el servicio oficial antes de distribuir esta versión");
+    Ok(())
+}
+pub fn validate_session(session:&Session)->Result<()> {
+    require_service(&session.server)?;
+    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/auth/session",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],65536)?;
+    #[derive(Deserialize)] struct Reply {user_id:String}
+    let reply:Reply=serde_json::from_slice(&bytes)?;anyhow::ensure!(reply.user_id==session.user_id,"La cuenta requiere iniciar sesión de nuevo");Ok(())
+}
+pub fn require_access()->Result<()> {
+    anyhow::ensure!(!crate::storage::is_demo(),"La demostración no permite operaciones del teléfono");
+    let session=load_session()?.context("Inicia sesión con el correo de compra antes de continuar")?;validate_session(&session)
+}
+#[derive(Clone,Deserialize)] pub struct RegisteredComputer { pub id:String,pub last_seen:u64,#[serde(default)] pub current:bool }
+pub fn registered_computers(session:&Session)->Result<Vec<RegisteredComputer>> {
+    require_service(&session.server)?;
+    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/auth/session",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],65536)?;
+    #[derive(Deserialize)] struct Reply {devices:Vec<RegisteredComputer>}
+    let mut reply:Reply=serde_json::from_slice(&bytes)?;anyhow::ensure!(reply.devices.len()<=3 && reply.devices.iter().all(|d|d.id.len()==64 && d.id.bytes().all(|b|b.is_ascii_hexdigit())),"Inventario de equipos no válido");
+    let current=computer_id()?;for device in &mut reply.devices {device.current=device.id==current;}Ok(reply.devices)
+}
+pub fn revoke_computer(session:&Session,id:&str)->Result<()> {
+    require_service(&session.server)?;
+    let body=serde_json::to_vec(&serde_json::json!({"device_id":id}))?;
+    crate::auto_update::http_request("POST",&format!("{}/v1/auth/devices/revoke",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("Content-Type".into(),"application/json".into())],&body,65536)?;Ok(())
+}
+pub fn forget_session()->Result<()> {
+    let path=crate::storage::root().join("cloud-session.dpapi");crate::storage::safe_chain(&path)?;
+    if path.exists() {fs::remove_file(path)?;}Ok(())
+}
+fn computer_id()->Result<String> {
+    let root=crate::storage::root();crate::storage::safe_chain(&root)?;fs::create_dir_all(&root)?;
+    let _lease=crate::storage::operation_lease_for_import(&root)?;
+    let path=root.join("computer-id.dpapi");crate::storage::safe_chain(&path)?;
+    if !path.exists() {
+        // BCrypt failure is fatal; never silently register an all-zero computer.
+        #[link(name="bcrypt")] unsafe extern "system" {fn BCryptGenRandom(algorithm:*mut std::ffi::c_void,buffer:*mut u8,size:u32,flags:u32)->i32;}
+        let mut random=[0u8;32];let status=unsafe {BCryptGenRandom(std::ptr::null_mut(),random.as_mut_ptr(),32,2)};
+        anyhow::ensure!(status>=0,"No se pudo crear la identidad segura del equipo");
+        let id=random.iter().map(|b|format!("{b:02x}")).collect::<String>();
+        match crate::storage::write_new(&path,&protect(id.as_bytes(),false)?) {Ok(())=>{},Err(error) if path.exists()=>{let _=error;},Err(error)=>return Err(error)}
+    }
+    let meta=fs::symlink_metadata(&path)?;anyhow::ensure!(meta.is_file() && meta.len()<=65536,"Identidad de equipo no válida");
+    let id=String::from_utf8(protect(&fs::read(path)?,true)?)?;
+    anyhow::ensure!(id.len()==64 && id.bytes().all(|b|b.is_ascii_hexdigit()),"Identidad de equipo no válida");Ok(id)
+}
+fn finish_login(server:&str,body:serde_json::Value,operation:&str,initial_link_consent:bool)->Result<Session> {
+    require_service(server)?;
     anyhow::ensure!(!crate::storage::is_demo(),"demo has no account network");
     let server=normalized_server(server)?; let root=crate::storage::root();
     if let Some(owner)=load_owner_at(&root)? { if owner.server!=server { return Err(DifferentVaultOwner.into()); } }
     else { anyhow::ensure!(initial_link_consent,"Confirma la vinculación de todas las copias locales"); }
-    let body=serde_json::to_vec(&serde_json::json!({"email":email,"password":password}))?;
-    let bytes=crate::auto_update::http_request("POST",&format!("{server}/v1/auth/{}",if register {"register"} else {"login"}),&[("Content-Type".into(),"application/json".into())],&body,65536)?;
+    let body=serde_json::to_vec(&body)?;
+    let bytes=crate::auto_update::http_request("POST",&format!("{server}/v1/auth/{operation}"),&[("Content-Type".into(),"application/json".into())],&body,65536)?;
     #[derive(Deserialize)] struct Reply { access_token:String,user_id:String }
     let reply:Reply=serde_json::from_slice(&bytes)?;
     anyhow::ensure!(!reply.access_token.is_empty() && reply.access_token.len()<=8192 && reply.access_token.bytes().all(|b|(0x21..=0x7e).contains(&b)) &&
@@ -269,6 +341,7 @@ pub fn login(server:&str,email:&str,password:&str,register:bool,initial_link_con
     let path=root.join("cloud-session.dpapi"); crate::storage::write_mutable(&path,&encrypted)?; Ok(session)
 }
 pub fn synchronize(session:&Session)->Result<()> {
+    validate_session(session)?;
     anyhow::ensure!(!crate::storage::is_demo() && valid_server(&session.server),"cloud service unavailable"); crate::storage::ensure_ready()?;
     let root=crate::storage::root(); let owner=require_owner_at(&root,session)?;
     let headers=vec![("Authorization".into(),format!("Bearer {}",session.access_token))];
@@ -414,10 +487,12 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         assert!(crate::auto_update::http_request("GET",&format!("{server}/__fixture_redirect"),&[("Authorization".into(),"Bearer synthetic-redirect-probe".into())],&[],65536).is_err(),"redirects must not forward account headers to the health endpoint");
         let base=fixture_root(); let a=base.join("a");let b=base.join("b");let c=base.join("c");
         fn set_root(path:&Path) { unsafe {std::env::set_var("WALLET_STUDIO_TEST_STORAGE_ROOT",path);} }
-        set_root(&a); let input=fixture_baseline(); let path=crate::bank_backup::save_fixture_at(&a.join("bank-backups"),&input).unwrap();
+        set_root(&a);let computer_a=computer_id().unwrap();assert_eq!(computer_a.len(),64);assert_eq!(computer_id().unwrap(),computer_a);assert_ne!(computer_a,"0".repeat(64));
+        assert_ne!(fs::read(a.join("computer-id.dpapi")).unwrap(),computer_a.as_bytes());
+        let input=fixture_baseline(); let path=crate::bank_backup::save_fixture_at(&a.join("bank-backups"),&input).unwrap();
         let suffix=crate::flasher::generate_token(); let email_a=format!("fixture-a-{suffix}@example.invalid");let email_b=format!("fixture-b-{suffix}@example.invalid");let password="Synthetic-Fixture-Password-2026";
         let session_a=login(&server,&email_a,password,true,true).unwrap(); synchronize(&session_a).unwrap();
-        set_root(&b); let session_b=login(&server,&email_a,password,false,true).unwrap();synchronize(&session_b).unwrap();
+        set_root(&b);assert_ne!(computer_id().unwrap(),computer_a);let session_b=login(&server,&email_a,password,false,true).unwrap();synchronize(&session_b).unwrap();
         let imported=b.join("bank-backups").join(path.file_name().unwrap());assert_eq!(crate::bank_backup::validate_bundle_directory(&imported).unwrap(),input);
         let original_bytes=fs::read(imported.join("baseline.json")).unwrap();synchronize(&session_b).unwrap();assert_eq!(fs::read(imported.join("baseline.json")).unwrap(),original_bytes);
         fs::remove_file(imported.join("remote-artwork.bin")).unwrap();synchronize(&session_b).unwrap();

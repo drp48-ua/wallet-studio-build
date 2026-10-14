@@ -7,10 +7,10 @@ El servidor en `server/` conserva paquetes privados inmutables, separados por cu
 1. En un servidor con Docker, ejecuta `docker compose -f server/compose.yaml up -d --build`.
 2. Publica el servicio detrás de un proxy HTTPS con certificado válido. El puerto 8766 solo está expuesto en localhost. Configura límites de tamaño de petición, tiempos de espera y limitación de intentos de acceso en el proxy.
 3. Usa un volumen cifrado para `/data`, copias externas cifradas y acceso administrativo restringido. El servicio autentica usuarios y separa objetos por propietario; no ofrece cifrado de extremo a extremo. Nunca publiques ese volumen en GitHub.
-4. Crea una cuenta para cada cliente con `docker compose -f server/compose.yaml exec wallet-cloud python app.py --data /data --create-user cliente@example.com`. La contraseña se introduce interactivamente y se guarda como PBKDF2 con sal. El registro público está desactivado por defecto.
+4. Configura producto y webhooks Shopify y SMTP según `server/ACCOUNTS-DEPLOYMENT.md`. El comprador verifica un código enviado al correo de compra y crea su contraseña dos veces. Crear administrativamente un usuario no concede licencia: el servidor exige también una compra activa del producto autorizado y una de tres plazas de equipo.
 5. Define la variable de repositorio `WALLET_STUDIO_CLOUD_URL` con la URL HTTPS del servicio antes de compilar la versión para clientes. El cliente recibe esa dirección integrada y solo introduce correo y contraseña. Para pruebas o administración, existe configuración avanzada del endpoint. La primera vinculación requiere confirmar que todas las copias locales pertenecen a esa cuenta. El almacén queda vinculado a servidor y propietario; se rechaza cambiarlo a otra cuenta para evitar enviar copias ajenas.
 
-No hay servidor desplegado ni cuentas de clientes reales configuradas por este cambio. Las pruebas usan cuentas y archivos sintéticos locales. La integración con compras de Shopify y el alta automática de compradores requiere un flujo posterior de provisión de cuentas.
+La integración de compras y activación está implementada y probada con datos sintéticos. El despliegue real, SMTP y suscripciones de webhooks todavía requieren configuración y aceptación sobre HTTPS. `render.yaml` y `server/RENDER.md` preparan el alojamiento; no acreditan un servidor online por sí solos.
 
 ## Conservación
 
@@ -31,6 +31,6 @@ Además de HTTPS, cada manifiesto se verifica con RSA-PSS/SHA-256 y una clave p�
 1. Revisa e integra esta rama en `main` conservando los cambios de colaboradores.
 2. El propietario debe guardar la clave PEM privada del editor como secreto de GitHub `WALLET_STUDIO_UPDATE_SIGNING_KEY`. No se incluye en el repositorio ni en el ZIP de clientes. Conserva una copia privada cifrada: las apps confiarán en su clave pública integrada. `scripts/sign-update.ps1` rechaza claves diferentes.
 3. Configura `WALLET_STUDIO_CLOUD_URL` y, después de validar el paquete para distribución, la variable `WALLET_STUDIO_RELEASE_APPROVED=true`.
-4. Cada push de `main` probado genera una publicación firmada. Una app con este mecanismo la descarga en segundo plano y la usa en la siguiente apertura. Sin red sigue funcionando con sus originales locales ya verificados. Un fallo de sincronización impide capturar como original una imagen nueva cuando podría existir una copia histórica en la cuenta.
+4. Cada push de `main` probado genera una publicación firmada. Una app con este mecanismo la descarga en segundo plano y la usa en la siguiente apertura. Desde 0.6.1, la sesión debe verificarse online para acceder a la herramienta. Sin red se conservan los originales locales, pero no se permite iniciar nuevas operaciones. Las devoluciones de emergencia de diarios existentes siguen disponibles según `server/ACCOUNTS-DEPLOYMENT.md`.
 
 La clave privada generada para esta propuesta permanece fuera del repositorio, en el PC de desarrollo. No se ha configurado ningún secreto remoto ni se ha habilitado la publicación automática. La firma Authenticode y la versión para macOS siguen pendientes.

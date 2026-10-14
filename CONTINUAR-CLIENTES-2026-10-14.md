@@ -1,4 +1,16 @@
-# Wallet Studio 0.6.0: continuación y publicación
+# Wallet Studio: continuación y publicación
+
+## Actualización 15/10/2026: 0.6.1, cuentas obligatorias
+
+- El icono ahora tiene esquinas transparentes y su marco metálico como límite visible. Se comparten recursos PNG/ICO/ICNS/SVG.
+- Acceso obligatorio antes de consultar el teléfono o capturar imágenes. Activación con el correo de compra, código enviado a ese correo y contraseña repetida. El backend exige compra activa del producto autorizado, no simplemente una cuenta creada.
+- Máximo tres equipos, identidad aleatoria protegida por DPAPI y compartida entre versiones. Sesión persistente de 90 días, con caducidad por 30 días de inactividad. Revalidación al abrir y en reposo. Recuperación por correo puede revocar las plazas anteriores si el propietario lo solicita expresamente.
+- Producto Wallet Studio creado como **borrador**, ID `10459984298313`, en la tienda correcta `store-09240616prrz2-itsdpkjq.myshopify.com`. Sigue sin publicar; precio pendiente. Otros productos no conceden licencia.
+- Servicio preparado mediante `render.yaml`, configuración `.env.example` y `server/RENDER.md`. La configuración mínima propuesta cuesta aproximadamente 9,50 USD/mes antes de impuestos/correo/extras. **No confundir archivos de despliegue con servicio contratado u online.**
+- Antes de distribuir: alojar backend con disco persistente, configurar SMTP y suscripciones de Shopify, probar compra/activación/devolución reales y compilar con la URL oficial fija. El binario sin URL cierra el acceso; conservar la versión 0.6.0 para trabajo local mientras se completa la infraestructura. No habilitar todavía publicación automática ni reemplazar instalaciones del cliente.
+- Los documentos de despliegue de cuentas y Render prevalecen sobre las instrucciones históricas de alta administrativa o acceso sin conexión de 0.6.0 que se conservan debajo.
+
+## Historial: versión 0.6.0
 
 Repositorio: https://github.com/drp48-ua/wallet-studio-build
 Rama: `codex/customer-ready-storage-updates-ui-2026-10-14`. Parte de la corrección 0.5.4. No se ha sobrescrito main ni el trabajo del colaborador.
