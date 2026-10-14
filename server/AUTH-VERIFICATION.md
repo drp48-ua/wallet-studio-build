@@ -19,4 +19,10 @@ Datos usados: pedidos, correos, tokens, equipos y copias exclusivamente sintéti
 
 ## Pendientes de aceptación/despliegue
 
-Revisión visual del responsable sobre el binario final, HTTPS/SMTP reales, alta de webhooks de Shopify y primera compra de prueba del producto autorizado. Producto Wallet Studio aún en borrador. La cuenta Render y los secretos no se han configurado por este trabajo. Un binario sin endpoint oficial no concede acceso. No se probó macOS ni se promete atribución de IP final detrás de un proxy. La cuota observada al último control era 18 % semanal restante; no se utilizó crédito de reinicio.
+Ampliación gratuita: suite de Python ejecutó 30 pruebas: **29 correctas y 1 integración PostgreSQL omitida expresamente**, sin servidor local ni credenciales. Siete pruebas nuevas de adaptadores son simuladas; no sustituyen PostgreSQL/Storage/Brevo reales. `server/tests/postgres_smoke.sql` permite al responsable comprobar el motor PostgreSQL desde su panel sin compartir claves; usa una transacción con ROLLBACK y datos sintéticos. La entrega HTTP real del cliente Windows continúa utilizando el contrato anterior, sin cambios Rust en esta ampliación.
+
+El responsable comprobó el icono transparente y el formulario centrado de correo en Windows 0.6.1. Los demás pasos visuales siguen pendientes. El ajuste final de espera HTTP requiere recompilación y repetición de la integración de red.
+
+Comprobación adicional en PostgreSQL real de Supabase: prueba SQL sintética con siete tablas/tipos, índices, upserts, RLS y tres plazas devolvió `SQL_SMOKE_OK_ROLLBACK_NEXT`; consulta posterior `to_regnamespace('wallet_private') IS NULL` devolvió `true`. Todos los cambios de esa prueba se revirtieron. No valida todavía Psycopg/Storage/Brevo reales.
+
+Pendientes HTTPS/correo reales, webhooks de Shopify y compra de prueba del producto autorizado, aún en borrador. El usuario creó Supabase Free y accedió a Render/Brevo; Render acepta el Blueprint gratuito pero no se ha desplegado ni se han configurado secretos. Un binario sin endpoint oficial no concede acceso. No se probó macOS ni se promete atribución de IP final detrás de un proxy. Checkpoint al 2 % restante de ventana corta y 10 % semanal; no se utilizó crédito de reinicio. Estado operativo detallado en CONTINUAR-CLIENTES-2026-10-14.md.

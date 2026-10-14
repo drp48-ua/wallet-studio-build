@@ -2,6 +2,26 @@
 
 ## Actualización 15/10/2026: 0.6.1, cuentas obligatorias
 
+### Checkpoint de cuota, 15/10/2026
+
+Se inició el guardado al observar 2 % restante en la ventana corta y 10 % en la semanal. No se utilizó crédito de reinicio. La petición sigue pendiente de despliegue y aceptación reales; no darla por terminada.
+
+- Código de cuentas/logo: commit `3c784b4`. Alternativa gratuita y formulario centrado: `1f5fc71`, misma rama separada y PR #1. Main del colaborador se conserva; referencia observada `66c6dcd`.
+- El usuario rechazó pagar alojamiento. Se descartó Render con disco de pago. El Blueprint gratuito de esta rama ya carga en Render sin pedir contratación de pago, pero **NO se pulsó Deploy Blueprint ni existe un servicio de cuentas desplegado**.
+- Supabase Free creado por el usuario: proyecto `pbdaitvqblaltjosgkrm`, región Irlanda, nano, saludable. URL pública `https://pbdaitvqblaltjosgkrm.supabase.co`. En el panel figura como «drp48-ua's Project», dentro de la organización Wallet Studio.
+- Se ejecutó en el editor SQL del proyecto una prueba sintética de los siete tipos de tabla, índices, upserts, RLS, revocación de permisos públicos, contador OTP y tres plazas. Resultado `SQL_SMOKE_OK_ROLLBACK_NEXT`. Una segunda consulta devolvió `smoke_rolled_back = true`: el esquema temporal `wallet_private` no quedó creado. Esto verifica SQL sobre PostgreSQL real, **no** la integración Python/PostgreSQL, Storage ni Brevo.
+- Brevo Free: usuario registrado y sesión abierta; remitente Wallet Studio verificado, cuota visible de 300 emails/día. Hay un aviso de verificación de teléfono en el inicio que puede requerir intervención personal antes del primer envío. Revisar entregabilidad de su remitente antes de vender; no incorporar su correo privado al repositorio.
+- El usuario autorizó expresamente crear una clave API Brevo y guardar las credenciales de servidor de Supabase, Brevo y firma de webhooks Shopify como secretos de Wallet Studio en Render. La contraseña de base de datos debe introducirla él directamente en Render. **Aún no se creó la clave ni se leyeron/transfirieron secretos.** No solicitar contraseñas por el chat.
+- Pestañas del navegador integrado: Render con «Wallet Studio gratuito», rama `codex/customer-ready-storage-updates-ui-2026-10-14`, esperando cinco secretos; Supabase con consulta de comprobación SQL; Brevo en ajustes SMTP/API. Volver a observar el estado antes de interactuar; no reutilizar índices o coordenadas.
+- Campos pendientes de Render: `DATABASE_URL` (Transaction pooler IPv4, 6543, TLS verificado), `SUPABASE_SERVICE_ROLE_KEY`, `SHOPIFY_WEBHOOK_SECRET`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`. URL pública y bucket privado ya están definidos en el Blueprint. Confirmar que bucket/configuración usan el mismo nombre (`wallet-private`). No introducir secretos ficticios o públicos para lograr que arranque.
+- Después: desplegar gratis, comprobar persistencia tras reinicio, aislamiento/3 equipos/códigos sobre HTTPS y subida/descarga de copia sintética. Configurar webhooks reales `orders/paid`, `orders/updated`, `orders/cancelled`, entrega de correo y compra autorizada del producto borrador antes de permitir acceso real. Producto ID `10459984298313` sigue sin publicar y sin precio comercial decidido.
+- Pruebas: 132 Windows + 1 motor; integración WinHTTP/DPAPI con fixtures locales correcta. Ampliación backend: 29 correctas, 1 integración PostgreSQL/Python omitida. El SQL real descrito arriba no sustituye esa integración omitida.
+- Se compiló Windows 0.6.1 y revisó visualmente el icono transparente y formulario centrado de correo. La navegación visual de los demás pasos quedó pendiente por interacción/minimización de la ventana. La última compilación precede al ajuste final de espera de recepción HTTP para arranques gratuitos: **recompilar y repetir integración de red antes de entregar el nuevo binario**. No se generó ZIP final 0.6.1 de esta petición.
+- Demo local: `work/wallet-studio-ui-0.6.1/WSDEMOAU.exe`, solo visual y sin red/teléfono. El ejecutable 0.6.0 de trabajo sigue conservado en outputs; no reemplazarlo por un 0.6.1 sin endpoint, porque ese binario cierra el acceso por diseño.
+- Falta actualizar descripción de PR #1 con cuentas obligatorias y backend gratuito. No activar publicación automática ni fusionar main; el colaborador trabaja allí. No se hicieron escrituras al iPhone durante esta petición.
+
+### Cambios de esta versión
+
 - El icono ahora tiene esquinas transparentes y su marco metálico como límite visible. Se comparten recursos PNG/ICO/ICNS/SVG.
 - Acceso obligatorio antes de consultar el teléfono o capturar imágenes. Activación con el correo de compra, código enviado a ese correo y contraseña repetida. El backend exige compra activa del producto autorizado, no simplemente una cuenta creada.
 - Máximo tres equipos, identidad aleatoria protegida por DPAPI y compartida entre versiones. Sesión persistente de 90 días, con caducidad por 30 días de inactividad. Revalidación al abrir y en reposo. Recuperación por correo puede revocar las plazas anteriores si el propietario lo solicita expresamente.
