@@ -921,7 +921,7 @@ impl AirCardApp {
     }
 
     fn capture_original_backup(&mut self) {
-        if self.is_busy || self.scanning_syslog || !self.pending_recoveries.is_empty()
+        if self.is_busy || self.scanning_syslog || self.pending_recovery_blocks_selected()
             || self.recovery_status_error.is_some() || !self.selected_usb_ready() {
             return;
         }
@@ -950,7 +950,9 @@ impl AirCardApp {
                     crate::wallet_backup::load_original_assets(&udid,&hash)?;
                     return Ok(Some("verified".into()));
                 }
-                anyhow::ensure!(crate::wallet_export::pending_recovery_operations()?.is_empty(), "Resuelve la recuperación pendiente antes de capturar");
+                anyhow::ensure!(!crate::wallet_export::pending_recovery_blocks_device(
+                    Ok(&crate::wallet_export::pending_recovery_operations()?),Some(&udid)),
+                    "Resuelve la recuperación pendiente de este iPhone antes de capturar");
                 anyhow::ensure!(crate::bank_changes::load_latest_intent(&udid,&hash)?.is_none(),
                     "Existe historial de diseños sin original verificable; conserva la evidencia y resuelve la recuperación");
                 anyhow::ensure!(list_connected_devices()?.iter().any(|device| device.udid == udid && device.has_transport(DeviceTransport::Usb)),
@@ -1797,6 +1799,11 @@ impl AirCardApp {
                     && crate::device::wallet_version_warning(&device.ios_version).is_none()))
     }
 
+    fn pending_recovery_blocks_selected(&self) -> bool {
+        let pending = if self.recovery_status_error.is_some() { Err(()) } else { Ok(self.pending_recoveries.as_slice()) };
+        crate::wallet_export::pending_recovery_blocks_device(pending,self.selected_udid.as_deref())
+    }
+
     fn tick_card_cache(&mut self, ctx: &egui::Context) {
         let mut messages = Vec::new();
         if let Some(rx) = &self.card_cache_rx {
@@ -1856,7 +1863,7 @@ impl AirCardApp {
         let original = snapshot.original;
         let known = snapshot.known_device.clone();
         let safe = !self.is_busy && !self.scanning_syslog && self.selected_usb_ready()
-            && self.pending_recoveries.is_empty() && self.recovery_status_error.is_none()
+            && !self.pending_recovery_blocks_selected() && self.recovery_status_error.is_none()
             && self.card_cache_rx.is_none() && snapshot.phase.is_ok();
         if self.auto_capture.as_mut().is_some_and(|request|
             request.should_start(self.selected_udid.as_deref(),known.as_deref(),original,safe)) {
@@ -2138,7 +2145,7 @@ impl AirCardApp {
                 ui.columns(2, |actions| {
                     let ui = &mut actions[0];
                     let connected = self.selected_transport_available() && version_warning.is_none()
-                        && self.pending_recoveries.is_empty() && self.recovery_status_error.is_none();
+                        && !self.pending_recovery_blocks_selected() && self.recovery_status_error.is_none();
                     let apply_plan = cached_bank_apply_plan(&selected_intent_phase);
                     let can_apply = connected && !self.is_busy && self.gif_playback.is_none() && self.crop_draft.is_none() && !self.crop_dirty && !self.scanning_syslog && !selected_hash.is_empty() && self.skin.is_some()
                 && self.selected_udid.as_ref().is_some_and(|_| {
@@ -2155,6 +2162,7 @@ impl AirCardApp {
                     if ui.add_enabled(can_apply, apply_button).clicked() { self.flash_card(); }
 
             let can_restore = connected && !self.is_busy && !self.scanning_syslog && !selected_hash.is_empty()
+                && !self.pending_recovery_blocks_selected()
                 && self.snapshot(&selected_hash).is_some_and(|snapshot| snapshot.restore);
                     let restore_button = egui::Button::new(egui::RichText::new(language.text("Restaurar copia original")).strong().color(if can_restore { md3::ON_SECONDARY_CONTAINER } else { md3::ON_SURFACE_VARIANT }))
                         .fill(if can_restore { md3::SECONDARY_CONTAINER } else { md3::SURFACE_CONTAINER_HIGH }).corner_radius(14).min_size(egui::vec2(ui.available_width(), 44.0));
@@ -2177,7 +2185,7 @@ impl AirCardApp {
                     ui.label(egui::RichText::new(message).size(11.0).color(md3::ON_SURFACE_VARIANT));
                     ui.label(egui::RichText::new("La captura puede mover originales temporalmente y comprueba su devolución. Cierra Wallet y Libros; mantén el iPhone desbloqueado y el USB conectado.").size(10.5).color(md3::ON_SURFACE_VARIANT));
                     if self.auto_capture.as_ref().is_some_and(|capture|capture.phase == CapturePhase::Failed)
-                        && ui.add_enabled(!self.is_busy && self.selected_usb_ready() && self.pending_recoveries.is_empty()
+                        && ui.add_enabled(!self.is_busy && self.selected_usb_ready() && !self.pending_recovery_blocks_selected()
                             && self.recovery_status_error.is_none(),egui::Button::new("Reintentar guardar original")).clicked() {
                         if let Some(capture) = &mut self.auto_capture { capture.retry(); }
                         self.invalidate_card_cache();
@@ -2190,7 +2198,16 @@ impl AirCardApp {
                         .color(if checking { md3::ON_SURFACE_VARIANT } else { md3::ERROR }));
                 }
                 if !self.pending_recoveries.is_empty() {
-                    ui.label(egui::RichText::new("Hay una recuperación pendiente. Conserva las copias y conecta el mismo iPhone.").color(md3::ERROR));
+                    if self.pending_recovery_blocks_selected() {
+                        let message = if self.selected_udid.is_some() {
+                            "Hay una recuperación pendiente de este iPhone. Bloquea todas sus tarjetas hasta resolverla; conserva las copias."
+                        } else { "Hay una recuperación pendiente. Selecciona el iPhone correspondiente y conserva las copias." };
+                        ui.label(egui::RichText::new(message).color(md3::ERROR));
+                    }
+                    if self.selected_udid.as_ref().is_some_and(|selected|
+                        self.pending_recoveries.iter().any(|entry| !selected.eq_ignore_ascii_case(&entry.udid))) {
+                        ui.label("Hay una recuperación pendiente de otro iPhone. Se conserva y no bloquea al seleccionado; conecta aquel dispositivo para revisar su recuperación.");
+                    }
                     let pending = self.pending_recoveries.iter().find(|entry|
                         self.selected_udid.as_ref().is_some_and(|udid| udid.eq_ignore_ascii_case(&entry.udid))
                         && entry.original_path.is_some()).cloned();

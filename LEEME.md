@@ -1,5 +1,5 @@
-# Wallet Studio 0.5.3
+# Wallet Studio 0.5.4
 
-Recorte de imágenes y guardado automático de diseños. Validación nativa pendiente en esta propuesta.
+Corrige el bloqueo por recuperaciones de otro iPhone y mantiene las copias originales vinculadas al dispositivo seleccionado. Los registros pendientes se conservan. Las recuperaciones del mismo iPhone y los registros inválidos siguen bloqueando transferencias.
 
-La animación en Apple Wallet sigue sin demostrarse. Consulta NOVEDADES-0.5.3.md.
+Consulta NOVEDADES-0.5.4.md. La animación en Apple Wallet sigue sin demostrarse.
