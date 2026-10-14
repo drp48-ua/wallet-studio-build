@@ -15,7 +15,15 @@ Rama: `codex/customer-ready-storage-updates-ui-2026-10-14`. Parte de la correcci
 
 Las pruebas usan exclusivamente cuentas, imágenes, teléfonos simulados y carpetas temporales sintéticas. El servidor tiene siete pruebas. La suite Windows excluye únicamente cuatro pruebas de hardware/catálogo privado. La integración adicional ejecuta el cliente real WinHTTP/DPAPI contra el servicio local: dos cuentas, dos perfiles, importación inmutable, recuperación de archivo perdido, conflicto sin sobrescritura y rechazo del cambio de propietario.
 
-La revisión visual anterior comprobó la app nativa en demo aislada a 960 y 1180 px, desplazamiento, originales pequeños sin marco y vistas alineadas. El nuevo logo y la galería abierta añadidos después todavía requieren revisión visual de la compilación final; no se ha aprobado una entrega 0.6.0. No afirmar que los tests sintéticos equivalen a una prueba física de transferencias. No se realizaron escrituras al iPhone durante este trabajo.
+La compilación final 0.6.0 para Windows se completó el 15/10/2026. La revisión nativa en demo aislada comprobó el nuevo logo, paleta, galería abierta de dos/tres columnas, selección, desplazamiento, originales pequeños sin marco y acciones fijas a 960/1180 px y maximizada. La vista vacía muestra instrucciones y mantiene las transferencias bloqueadas. No afirmar que los tests sintéticos equivalen a una prueba física de transferencias. No se realizaron escrituras al iPhone durante este trabajo.
+
+### Entrega local de prueba, 15/10/2026
+
+- ZIP Windows 0.6.0: 684 entradas, 6.568.355 bytes. CRC de todos los archivos y coincidencia exacta del ejecutable comprobados. No contiene originales, sesiones, diarios ni claves privadas.
+- SHA-256 ZIP: `1dc93973b8a9853db459ef3bb7f4c9b6c944543444eede9acba01f51571cf5dd`.
+- SHA-256 EXE: `6558f7dae5c0c0ea30c25af4b222aa2cde664081653dc5b660a58253bc28a913`.
+- Recurso Windows FileVersion/ProductVersion 0.6.0. Sin firma Authenticode; compilación local de prueba, no publicación comercial general.
+- El servicio de nube y el canal de actualización todavía necesitan despliegue/configuración según CLIENTES-Y-NUBE.md. Main del colaborador se conserva. Las versiones antiguas requieren primera instalación manual.
 
 ### Checkpoint por cuota, 14/10/2026
 
@@ -24,7 +32,7 @@ La revisión visual anterior comprobó la app nativa en demo aislada a 960 y 118
 - Se corrigió WINHTTP_DISABLE_REDIRECTS a 0x2 (0x8 desactiva keep-alive). E2E incluye una redirección controlada que debe rechazarse sin reenviar la cabecera de sesión.
 - Último rerun E2E PASÓ tras la corrección de rutas largas: recuperación de archivo perdido, conservación/bloqueo del archivo alterado, separación de cuentas y rechazo de redirección con sesión. Registro local `work/wallet-0.6.0-final-cloud-test.log`, fuera del repositorio.
 - Rerun estrecho customer_: 15 pruebas PASARON, incluida ruta >260, autenticación obligatoria antes de capturar original ausente, receipts/historial y separación de conflictos. E2E ignorado en ese rerun porque se ejecutó por separado. Registro local `work/wallet-0.6.0-final-customer-tests.log`.
-- Código/recursos finales congelados; falta compilar el ejecutable con recurso 0.6.0, revisar logo/galería/vista vacía y generar/verificar el ZIP. No entregar un ejecutable anterior como esta versión.
+- Este checkpoint histórico quedó superado por la compilación, revisión visual y ZIP verificado del 15/10/2026, descritos arriba.
 - Demo mediante flag --wallet-studio-ui-demo o copias de binario con nombres cortos WSDEMO96.exe, WSDEMO11.exe, WSDEMOEM.exe. Nombres largos pueden llegar abreviados por el lanzador Windows. Demo tiene botón Vista vacía/Cargar ejemplos y nunca consulta USB/nube/updates. El usuario ha autorizado dejar la ventana libre para revisar.
 
 ## Antes de distribuir a clientes
