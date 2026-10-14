@@ -49,9 +49,28 @@ struct AssetRecord {
 }
 
 fn intent_root() -> PathBuf {
-    PathBuf::from(std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string()))
-        .join("AirCard").join("bank-change-intents")
+    crate::storage::root().join("bank-change-intents")
+}
+
+pub(crate) fn cloud_operation_dirs(root:&Path,udid:&str,hash:&str)->Result<Vec<PathBuf>> {
+    let states=matching_states_at(root,udid,hash,false)?;
+    anyhow::ensure!(states.iter().all(|(_,state)| matches!(state.phase.as_str(),"applied"|"restored")),"uncertain intent needs local recovery before cloud export");
+    Ok(states.into_iter().map(|(path,_)|path).collect())
+}
+
+pub(crate) fn validate_cloud_chain(root:&Path,udid:&str,hash:&str)->Result<()> {
+    for path in state_paths(root,false)? { let state=latest_state(&path)?;
+        anyhow::ensure!(state.udid==udid && state.card_hash==hash,"cloud intent identity mixed");
+        for entry in fs::read_dir(&path)? { let file=entry?.path(); let name=file.file_name().unwrap().to_string_lossy();
+            if name.starts_with("state-") && name.ends_with(".json") {
+                let meta=fs::symlink_metadata(&file)?; anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=MAX_STATE_BYTES,"unsafe historical intent");
+                let historical:IntentState=serde_json::from_slice(&fs::read(&file)?)?; validate_state(&path,&historical)?;
+                anyhow::ensure!(historical.udid==udid && historical.card_hash==hash && historical.revision<=state.revision,"historical intent identity mismatch");
+                anyhow::ensure!(name==format!("state-{:04}-{}.json",historical.revision,historical.phase),"historical intent filename mismatch");
+            }
+        }
+    }
+    cloud_operation_dirs(root,udid,hash)?; Ok(())
 }
 
 fn identity_key(udid: &str, card_hash: &str) -> Result<String> {

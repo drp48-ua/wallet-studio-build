@@ -72,6 +72,7 @@ pub fn generate_token() -> String {
 }
 
 fn preflight_wallet_write(udid: &str) -> Result<()> {
+    crate::storage::ensure_ready()?;
     crate::device::ensure_wallet_version_supported(udid)?;
     let pending = crate::wallet_export::pending_recovery_operations()?;
     anyhow::ensure!(pending.iter().all(|operation| !operation.udid.eq_ignore_ascii_case(udid)),

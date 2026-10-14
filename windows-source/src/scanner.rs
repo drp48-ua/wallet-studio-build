@@ -29,9 +29,7 @@ pub struct SavedCard {
 }
 
 pub fn get_cards_storage_path() -> PathBuf {
-    let local_app_data = std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string());
-    let dir = PathBuf::from(local_app_data).join("AirCard");
+    let dir = crate::storage::root();
     let _ = fs::create_dir_all(&dir);
     dir.join("cards.json")
 }

@@ -6,6 +6,9 @@ mod animated_artwork;
 mod design_library;
 mod crop_editor;
 mod update_info;
+mod auto_update;
+mod storage;
+mod cloud_sync;
 mod airlift;
 mod airtraffic;
 mod card_gallery;
@@ -47,6 +50,16 @@ fn main() -> eframe::Result<()> {
             eprintln!("CAPTURA_ERROR: {error:#}");
             std::process::exit(2);
         }
+        return Ok(());
+    }
+    let demo = std::env::args().any(|a| a == "--wallet-studio-ui-demo");
+    if demo {
+        let path = std::env::temp_dir().join(format!("wallet-studio-demo-{}", flasher::generate_token()));
+        if let Err(error) = storage::initialize_demo(&path) {
+            eprintln!("No se pudo preparar la vista de demostración: {error}");
+            std::process::exit(2);
+        }
+    } else if auto_update::redirect_if_ready().unwrap_or(false) {
         return Ok(());
     }
     let window_icon = image::load_from_memory(include_bytes!("../assets/wallet-studio.png"))

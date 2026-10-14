@@ -56,9 +56,16 @@ enum LocalAssetRecord {
 }
 
 fn baseline_root() -> PathBuf {
-    PathBuf::from(std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string()))
-        .join("AirCard").join("bank-backups")
+    crate::storage::root().join("bank-backups")
+}
+
+pub(crate) fn validate_bundle_directory(directory:&Path)->Result<Baseline> {
+    let metadata=fs::symlink_metadata(directory.join("baseline.json"))?;
+    anyhow::ensure!(metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len()<=64*1024,"unsafe baseline metadata");
+    let manifest:DiskManifest=serde_json::from_slice(&fs::read(directory.join("baseline.json"))?)?;
+    let root=directory.parent().context("baseline parent missing")?;
+    anyhow::ensure!(bundle_path(root,&manifest.udid,&manifest.card_hash)?==directory,"baseline identity directory mismatch");
+    load_baseline_at(root,&manifest.udid,&manifest.card_hash)?.context("baseline missing")
 }
 
 fn identity_key(udid: &str, card_hash: &str) -> Result<String> {
@@ -336,7 +343,7 @@ fn digest(bytes: &[u8], algorithm_name: &str, output: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
-fn sha256(bytes: &[u8]) -> Result<String> {
+pub(crate) fn sha256(bytes: &[u8]) -> Result<String> {
     let mut output = [0u8; 32];
     digest(bytes, "SHA256", &mut output)?;
     Ok(output.iter().map(|byte| format!("{byte:02x}")).collect())

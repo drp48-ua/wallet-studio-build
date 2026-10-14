@@ -1,11 +1,11 @@
-param([string]$Version = '0.5.4', [switch]$RequireSigned)
+param([string]$Version = '0.6.0', [switch]$RequireSigned)
 $ErrorActionPreference = 'Stop'
-if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'VersiÃ³n no vÃ¡lida' }
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'VersiÃƒÂ³n no vÃƒÂ¡lida' }
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $binary = Join-Path $projectRoot 'windows/Wallet Studio.exe'
-if ((Get-Item -LiteralPath $binary).VersionInfo.FileVersion -ne $Version) { throw 'La versiÃ³n del ejecutable no coincide' }
+if ((Get-Item -LiteralPath $binary).VersionInfo.FileVersion -ne $Version) { throw 'La versiÃƒÂ³n del ejecutable no coincide' }
 $signature = Get-AuthenticodeSignature -LiteralPath $binary
-if ($RequireSigned -and $signature.Status -ne 'Valid') { throw 'La distribuciÃ³n requiere una firma Authenticode vÃ¡lida' }
+if ($RequireSigned -and $signature.Status -ne 'Valid') { throw 'La distribuciÃƒÂ³n requiere una firma Authenticode vÃƒÂ¡lida' }
 $outputRoot = Join-Path $projectRoot 'dist'
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 $staging = Join-Path $outputRoot ('stage-' + [Guid]::NewGuid().ToString('N'))

@@ -83,7 +83,9 @@ enum AppTab {
     Wallet,
     Passcode,
     Help,
+    Account,
 }
+struct CloudMessage { storage_ready:bool,configured:bool,synced:bool,server:String,status:&'static str }
 
 enum BackgroundTaskMessage {
     Progress { step: usize, total: usize, message: String },
@@ -146,6 +148,10 @@ fn current_timestamp() -> String {
 }
 
 pub struct AirCardApp {
+    cloud_rx:Option<Receiver<CloudMessage>>,
+    storage_ready:bool,cloud_configured:bool,cloud_synced:bool,
+    cloud_status:String,account_server:String,account_email:String,account_password:String,
+    update_rx:Option<Receiver<String>>,update_status:String,
     brand_texture: egui::TextureHandle,
     current_tab: AppTab,
     language: Language,
@@ -211,6 +217,67 @@ pub struct AirCardApp {
 }
 
 impl AirCardApp {
+    fn start_cloud_startup(&mut self,ctx:egui::Context) {
+        let (tx,rx)=channel(); self.cloud_rx=Some(rx);
+        thread::spawn(move || {
+            let mut message=CloudMessage { storage_ready:false,configured:false,synced:false,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación." };
+            if crate::storage::migrate_legacy().is_ok() {
+                message.storage_ready=true;
+                match crate::cloud_sync::load_session() {
+                    Ok(Some(session))=> { message.configured=true; message.server=session.server.clone();
+                        if crate::cloud_sync::synchronize(&session).is_ok() { message.synced=true; message.status="Originales e historial bancario sincronizados"; }
+                        else { message.status="Nube sin verificar. Los originales válidos siguen disponibles; no se capturará un original ausente."; }
+                    }
+                    Ok(None)=>message.status=if crate::storage::is_demo() {"Vista de demostración · sin teléfono ni datos privados"} else {"Almacenamiento local listo · vincula tu cuenta para sincronizar"},
+                    Err(_)=> { message.configured=true; message.status="La sesión no se pudo verificar. Inicia sesión de nuevo; no se capturará un original ausente."; }
+                }
+            }
+            let _=tx.send(message); ctx.request_repaint();
+        });
+    }
+    fn tick_cloud(&mut self,ctx:&egui::Context) {
+        if let Some(message)=self.cloud_rx.as_ref().and_then(|rx|rx.try_recv().ok()) {
+            self.cloud_rx=None; self.storage_ready=message.storage_ready; self.cloud_configured=message.configured;
+            self.cloud_synced=message.synced; self.cloud_status=message.status.into();
+            if !message.server.is_empty() { self.account_server=message.server; }
+            self.saved_cards=load_saved_cards(); self.invalidate_card_cache();
+        }
+        if let Some(rx)=&self.update_rx { while let Ok(message)=rx.try_recv() { self.update_status=message; } }
+        if self.cloud_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(150)); }
+    }
+    fn show_account_tab(&mut self,ui:&mut egui::Ui,ctx:&egui::Context) {
+        m3_card(ui,|ui| {
+            ui.heading("Tu cuenta y tus originales"); ui.label(&self.cloud_status);
+            ui.label("La cuenta conserva originales bancarios e historial por iPhone y tarjeta. Los diarios inciertos permanecen en este equipo y bloquean sus operaciones.");
+            ui.add_space(12.0); ui.label("Servicio de sincronización (HTTPS)");
+            ui.add(egui::TextEdit::singleline(&mut self.account_server).hint_text("https://tu-servicio.example").desired_width(ui.available_width()));
+            ui.label("Correo electrónico"); ui.add(egui::TextEdit::singleline(&mut self.account_email).desired_width(ui.available_width()));
+            ui.label("Contraseña"); ui.add(egui::TextEdit::singleline(&mut self.account_password).password(true).desired_width(ui.available_width()));
+            let available=self.storage_ready && self.cloud_rx.is_none() && !self.is_busy && !self.scanning_syslog && !crate::storage::is_demo();
+            let mut action=None;
+            ui.columns(2,|columns| {
+                if studio_button(&mut columns[0],"Iniciar sesión",available,true) { action=Some(false); }
+                if studio_button(&mut columns[1],"Crear cuenta",available,false) { action=Some(true); }
+            });
+            if let Some(register)=action {
+                let server=self.account_server.clone(); let email=self.account_email.clone(); let password=std::mem::take(&mut self.account_password);
+                let old_configured=self.cloud_configured; let (tx,rx)=channel(); self.cloud_rx=Some(rx); self.cloud_synced=false; self.storage_ready=false;
+                self.cloud_status="Verificando cuenta y originales…".into(); let ctx=ctx.clone();
+                thread::spawn(move || {
+                    let mut message=CloudMessage { storage_ready:true,configured:old_configured,synced:false,server:server.clone(),status:"No se pudo vincular la cuenta. Revisa servicio, conexión y datos." };
+                    if let Ok(session)=crate::cloud_sync::login(&server,&email,&password,register) {
+                        message.configured=true;
+                        if crate::cloud_sync::synchronize(&session).is_ok() { message.synced=true; message.status="Cuenta vinculada · originales sincronizados"; }
+                        else { message.status="Cuenta vinculada; sincronización incompleta. No se capturará un original ausente."; }
+                    }
+                    let _=tx.send(message); ctx.request_repaint();
+                });
+            }
+            if studio_button(ui,"Sincronizar ahora",available && self.cloud_configured,false) { self.storage_ready=false; self.start_cloud_startup(ctx.clone()); }
+            ui.add_space(12.0); ui.label("Si falta un original después de sincronizar, la captura queda bloqueada. Recupera una copia verificable; la imagen personalizada actual no se certifica como original.");
+            ui.separator(); ui.label("Actualizaciones"); ui.label(&self.update_status);
+        });
+    }
     fn current_crop(&self) -> CardCrop {
         CardCrop { focus: self.crop_focus, zoom: self.crop_zoom, edges: self.crop_edges }
     }
@@ -289,6 +356,9 @@ impl AirCardApp {
         let saved_cards = load_saved_cards();
         let offline_baseline_device = HashMap::new();
         let mut app = Self {
+            cloud_rx:None,storage_ready:false,cloud_configured:false,cloud_synced:false,
+            cloud_status:"Preparando almacenamiento seguro…".into(),account_server:String::new(),account_email:String::new(),account_password:String::new(),
+            update_rx:None,update_status:"Actualizaciones automáticas".into(),
             brand_texture,
             current_tab: AppTab::Wallet,
             language,
@@ -353,7 +423,9 @@ impl AirCardApp {
         app.add_log(format!("Apple Support Runtime: {}", if app.apple_ready { "Loaded and operational" } else { "Not found (iTunes required)" }));
         app.add_log(format!("Loaded {} saved card(s) from database", app.saved_cards.len()));
 
-        if app.apple_ready {
+        if !crate::storage::is_demo() { app.update_rx=Some(crate::auto_update::start_background_check()); }
+        app.start_cloud_startup(cc.egui_ctx.clone());
+        if app.apple_ready && !crate::storage::is_demo() {
             app.refresh_devices();
         }
         app.refresh_recovery_status();
@@ -393,6 +465,7 @@ impl AirCardApp {
     }
 
     fn refresh_devices(&mut self) {
+        if crate::storage::is_demo() { return; }
         self.add_log("Scanning for connected iOS devices via usbmuxd...");
         match list_connected_devices() {
             Ok(devs) => {
@@ -921,6 +994,7 @@ impl AirCardApp {
     }
 
     fn capture_original_backup(&mut self) {
+        if !self.storage_ready || crate::storage::is_demo() || !crate::cloud_sync::missing_original_capture_allowed(self.cloud_configured,self.cloud_synced) { return; }
         if self.is_busy || self.scanning_syslog || self.pending_recovery_blocks_selected()
             || self.recovery_status_error.is_some() || !self.selected_usb_ready() {
             return;
@@ -1441,6 +1515,7 @@ fn m3_tab(ui: &mut egui::Ui, current: &mut AppTab, target: AppTab, label: &str) 
 
 impl eframe::App for AirCardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.tick_cloud(ctx);
         self.handle_messages();
         self.tick_card_cache(ctx);
         self.tick_auto_capture();
@@ -1476,6 +1551,7 @@ impl eframe::App for AirCardApp {
                     m3_tab(ui, &mut self.current_tab, AppTab::Wallet, language.text("Wallet"));
                     m3_tab(ui, &mut self.current_tab, AppTab::Passcode, language.text("Passcode"));
                     m3_tab(ui, &mut self.current_tab, AppTab::Help, language.text("Help"));
+                    m3_tab(ui, &mut self.current_tab, AppTab::Account, "Cuenta");
                 });
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -1655,6 +1731,7 @@ impl eframe::App for AirCardApp {
                         AppTab::Wallet => self.show_wallet_tab(ctx, ui),
                         AppTab::Passcode => self.show_passcode_tab(ctx, ui),
                         AppTab::Help => self.show_help_tab(ui),
+                        AppTab::Account => self.show_account_tab(ui,ctx),
                     }
                 });
             });
@@ -1800,6 +1877,7 @@ impl AirCardApp {
     }
 
     fn pending_recovery_blocks_selected(&self) -> bool {
+        if !self.storage_ready { return true; }
         let pending = if self.recovery_status_error.is_some() { Err(()) } else { Ok(self.pending_recoveries.as_slice()) };
         crate::wallet_export::pending_recovery_blocks_device(pending,self.selected_udid.as_deref())
     }
@@ -1857,6 +1935,7 @@ impl AirCardApp {
     }
 
     fn tick_auto_capture(&mut self) {
+        if crate::storage::is_demo() || !self.storage_ready || !crate::cloud_sync::missing_original_capture_allowed(self.cloud_configured,self.cloud_synced) { return; }
         let Some(request) = self.auto_capture.as_ref() else { return; };
         if request.hash != self.card_hash { return; }
         let Some(snapshot) = self.snapshot(&request.hash) else { return; };

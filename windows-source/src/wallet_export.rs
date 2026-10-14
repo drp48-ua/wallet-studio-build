@@ -57,9 +57,7 @@ struct Journal {
 }
 
 fn journal_root() -> PathBuf {
-    PathBuf::from(std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string()))
-        .join("AirCard").join("wallet-export-recovery")
+    crate::storage::root().join("wallet-export-recovery")
 }
 
 fn create_operation_dir(root: &Path, token: &str) -> Result<PathBuf> {
