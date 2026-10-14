@@ -52,7 +52,10 @@ fn main() -> eframe::Result<()> {
         }
         return Ok(());
     }
-    let demo = std::env::args().any(|a| a == "--wallet-studio-ui-demo");
+    // A separate copy with this reserved name lets native GUI review launch a
+    // fully isolated demo without command-line interaction with other apps.
+    let demo_name=std::env::current_exe().ok().and_then(|p|p.file_stem().map(|s|s.to_string_lossy().into_owned())).filter(|s|s.starts_with("Wallet Studio Demo ")||s.to_ascii_uppercase().starts_with("WSDEMO"));
+    let demo = demo_name.is_some() || std::env::args().any(|a| a == "--wallet-studio-ui-demo");
     if demo {
         let path = std::env::temp_dir().join(format!("wallet-studio-demo-{}", flasher::generate_token()));
         if let Err(error) = storage::initialize_demo(&path) {
@@ -71,9 +74,15 @@ fn main() -> eframe::Result<()> {
         width: icon_width,
         height: icon_height,
     };
+    let demo_size = if demo {
+        std::env::args().find_map(|arg| arg.strip_prefix("--demo-size=").and_then(|s| s.split_once('x')).and_then(|(w,h)| Some([w.parse::<f32>().ok()?,h.parse::<f32>().ok()?])))
+            .or_else(||demo_name.as_deref().and_then(|s|s.strip_prefix("Wallet Studio Demo ")).and_then(|s|s.split_once('x')).and_then(|(w,h)|Some([w.parse::<f32>().ok()?,h.parse::<f32>().ok()?])))
+            .or_else(||demo_name.as_deref().and_then(|s|match s.to_ascii_uppercase().as_str(){"WSDEMO96"=>Some([960.0,640.0]),"WSDEMO11"=>Some([1180.0,760.0]),_=>None}))
+            .filter(|s| s[0]>=960.0&&s[1]>=640.0&&s[0]<=2560.0&&s[1]<=1440.0)
+    } else { None };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1180.0, 760.0])
+            .with_inner_size(demo_size.unwrap_or([1180.0, 760.0]))
             .with_min_inner_size([960.0, 640.0])
             .with_title("Wallet Studio")
             .with_icon(std::sync::Arc::new(icon_data)),

@@ -1,39 +1,42 @@
-# Continuación: copias, nube, actualizaciones e interfaz
+# Wallet Studio 0.6.0: continuación y publicación
 
-Rama: codex/customer-ready-storage-updates-ui-2026-10-14. Parte del arreglo 0.5.4 (b00e9e2). Main y el trabajo del colaborador no se han sobrescrito.
+Repositorio: https://github.com/drp48-ua/wallet-studio-build
+Rama: `codex/customer-ready-storage-updates-ui-2026-10-14`. Parte de la corrección 0.5.4. No se ha sobrescrito main ni el trabajo del colaborador.
 
-## Petición
+## Estado del proyecto
 
-Conservar originales sin interferencias entre instalaciones/versiones, sincronización automática con cuentas y nube, actualizaciones sin pulsar un botón al publicar cambios en main, e interfaz profesional para clientes. El usuario no tiene servidor y autorizó preparar una solución desplegable. Las versiones antiguas necesitan actualización manual inicial; no contienen estos mecanismos de forma retroactiva.
+- Originales inmutables vinculados al iPhone y referencia exacta de tarjeta; almacenamiento fuera del directorio del ejecutable y migración sin reemplazos. Alias existentes se reutilizan. Conflictos conocidos se conservan y bloquean solo su tarjeta; identidad desconocida o raíz insegura bloquea el almacén.
+- Captura automática tras seleccionar tarjeta, con prueba de procedencia de cada recurso presente. Un diseño personalizado no se convierte en original. La captura antigua sin procedencia se ha cerrado; originales antiguos completos siguen disponibles localmente.
+- Nube preparada: servicio Python/SQLite con cuentas administradas, objetos inmutables aislados por propietario, sesiones protegidas con DPAPI en Windows y vinculación de cuenta/servidor del almacén. Sincronización al iniciar, tras operaciones y cada 60 s en reposo. El caché comprueba los archivos locales actuales; vuelve a importar los ausentes y conserva/confina conflictos.
+- Actualización preparada: workflow de main prueba, compila, empaqueta y firma manifiestos RSA-PSS/SHA-256. Descarga en segundo plano, comprobación de firma, hashes, rutas y versión; activación del paquete preparado en la siguiente apertura. Binarios y originales separados. Las versiones antiguas necesitan instalación manual inicial.
+- Nuevo logo del propietario convertido sin cambiar sus píxeles a PNG e iconos; metadata externa eliminada. Paleta grafito/plata con cian/lila. Galería abierta de todas las tarjetas con último diseño local verificado y original pequeño. Vistas de editor alineadas, acciones fijas de 44 px y renderizado sin I/O de originales por frame. Las referencias visuales de otro iPhone no autorizan transferencias.
 
-## Implementado en la propuesta
+## Validación
 
-- storage.rs centraliza la raíz de datos, migración create-only, conflictos y demo aislada. Los módulos de persistencia se han adaptado a esa raíz.
-- cloud_sync.rs prepara paquetes deterministas de baseline bancario e historial verificable, importa sin reemplazar evidencia y usa sesiones protegidas con DPAPI. La app integra cuenta y tareas de fondo.
-- server/app.py ofrece acceso de cuentas y objetos inmutables separados por propietario. SQLite y blobs privados; registro público desactivado por defecto. Dockerfile y compose incluyen el servicio local detrás de un proxy HTTPS pendiente de configurar.
-- auto_update.rs consulta un canal fijo de GitHub Releases, valida tamaño/SHA-256/origen/rutas, prepara ejecutables fuera de los datos privados y activa la versión preparada al abrir de nuevo.
-- desktop-release.yml propone probar, compilar y publicar paquetes en cada push a main, con número de build incluso si la versión numérica no cambia.
-- Interfaz en revisión: cuenta, estado de almacenamiento/sincronización/actualización y refinamientos visuales. Requiere aceptación visual real.
+Las pruebas usan exclusivamente cuentas, imágenes, teléfonos simulados y carpetas temporales sintéticas. El servidor tiene siete pruebas. La suite Windows excluye únicamente cuatro pruebas de hardware/catálogo privado. La integración adicional ejecuta el cliente real WinHTTP/DPAPI contra el servicio local: dos cuentas, dos perfiles, importación inmutable, recuperación de archivo perdido, conflicto sin sobrescritura y rechazo del cambio de propietario.
 
-## Validación y límites
+La revisión visual anterior comprobó la app nativa en demo aislada a 960 y 1180 px, desplazamiento, originales pequeños sin marco y vistas alineadas. El nuevo logo y la galería abierta añadidos después todavía requieren revisión visual de la compilación final; no se ha aprobado una entrega 0.6.0. No afirmar que los tests sintéticos equivalen a una prueba física de transferencias. No se realizaron escrituras al iPhone durante este trabajo.
 
-Cuatro pruebas del servidor PASARON: aislamiento de propietarios y repetición idempotente, rechazo de accesos/digests incorrectos, rechazo de ZIP con escape de ruta y registro público desactivado. Se corrigieron cierre de SQLite y soporte de rutas largas Windows.
+### Checkpoint por cuota, 14/10/2026
 
-El checkpoint se prepara por cuota compartida baja. Debe comprobarse el resultado final de los tests Windows y revisarse toda la propuesta antes de entregar un ejecutable 0.6.0. La última versión entregada y confirmada por el usuario continúa siendo 0.5.4. No reemplazarla por una compilación parcial.
+- Suite completa: 130 tests unitarios y 1 de motor PASARON; 4 de USB/catálogo privado excluidos y E2E ignorado para ejecución independiente. Siete tests del servidor PASARON.
+- E2E anterior PASÓ, pero el E2E ampliado detectó una ruta >260 caracteres al guardar receipts de nube con MoveFileExW. storage::wide_path corrige DOS/UNC con UTF-16 exacto y se reutiliza en el updater. Nueva prueba de ruta larga añadida.
+- Se corrigió WINHTTP_DISABLE_REDIRECTS a 0x2 (0x8 desactiva keep-alive). E2E incluye una redirección controlada que debe rechazarse sin reenviar la cabecera de sesión.
+- Último rerun E2E en curso al preparar checkpoint: consultar `work/wallet-0.6.0-final-cloud-test.log` fuera del repositorio. No marcar pasado sin comprobar resultado. También quedan por ejecutar los tests `customer_atomic_metadata_replace_supports_long_windows_paths` y `customer_missing_original_waits_for_auth_when_service_or_owner_is_known`.
+- Código/recursos finales congelados; falta compilar el ejecutable con recurso 0.6.0, revisar logo/galería/vista vacía y generar/verificar el ZIP. No entregar un ejecutable anterior como esta versión.
+- Demo mediante flag --wallet-studio-ui-demo o copias de binario con nombres cortos WSDEMO96.exe, WSDEMO11.exe, WSDEMOEM.exe. Nombres largos pueden llegar abreviados por el lanzador Windows. Demo tiene botón Vista vacía/Cargar ejemplos y nunca consulta USB/nube/updates. El usuario ha autorizado dejar la ventana libre para revisar.
 
-Pendientes obligatorios:
+## Antes de distribuir a clientes
 
-1. Revisar cambios del worker y ejecutar la suite Windows completa, compilación con recurso de versión 0.6.0 y empaquetado; excluir los cuatro tests de hardware/catálogo privado según AGENTS.md.
-2. Probar migración idempotente, duplicados idénticos, conflictos, symlinks y Windows no administrador. Las pruebas deben usar fixtures, nunca originales privados.
-3. Probar cliente real contra servidor local con datos sintéticos, dos cuentas y dos perfiles; comprobar que los datos de un usuario nunca se suben a otro y que se importan los originales antes de plantear captura.
-4. Cerrar la primera captura de una tarjeta sin copia histórica sincronizada: una respuesta de nube vacía no acredita que el diseño actual sea original. La captura inicial requiere procedencia comprobada y no debe certificar un diseño personalizado.
-5. Validar restauración del historial importado y compatibilidad de los esquemas; recuperaciones inciertas permanecen locales y bloqueadas.
-6. Añadir/verificar pruebas de actualización completa, ZIP traversal/bombas/duplicados, rechazos de downgrade, caché alterada y relanzamiento. La confianza actual del canal es HTTPS + repositorio fijo + hashes, no firma Authenticode del fabricante.
-7. Revisar la app real a 960 y 1180 px, estados vacío/desconectado/conectado y controles habilitados/deshabilitados. El modo --wallet-studio-ui-demo debe aislar datos y evitar USB/nube/actualizaciones.
-8. Desplegar servidor HTTPS, volumen cifrado y backup externo; provisionar cuentas. Falta automatizar altas de compradores de Shopify. No hay servicio online activo.
-9. Revisar el workflow, proteger main y configurar firma de código antes del lanzamiento general. La publicación está bloqueada hasta configurar la variable de repositorio WALLET_STUDIO_RELEASE_APPROVED=true, después de la aceptación. Integrar solo después de revisión, sin force-push ni sobrescribir main del colaborador.
-10. Portar y validar macOS; no afirmar paridad de plataformas.
+1. Revisar/integrar la rama conservando main del colaborador. No usar force-push.
+2. Desplegar el servicio detrás de HTTPS, volumen privado cifrado y backup externo. No hay servidor online configurado todavía. Consultar CLIENTES-Y-NUBE.md.
+3. Crear cuentas de clientes administrativamente; las altas automáticas por compras de Shopify siguen pendientes.
+4. Configurar la URL pública como variable WALLET_STUDIO_CLOUD_URL y la clave privada del editor como secreto WALLET_STUDIO_UPDATE_SIGNING_KEY. La clave privada se conserva fuera del repositorio y nunca va en el ZIP de clientes; hacer backup privado cifrado antes de cambiar de PC.
+5. Validar en equipos Windows limpios y con el teléfono antes de habilitar WALLET_STUDIO_RELEASE_APPROVED=true. Configurar Authenticode y protección de main. El workflow permanece gated mientras no se habilite.
+6. Portar y validar macOS. Los iconos de marca están preparados; no hay binario Mac probado de esta versión.
+7. La nube actual admite originales bancarios e historial completo validado; respaldos de pases legacy se conservan localmente, pero su sincronización remota sigue pendiente. No se ofrece cifrado de extremo a extremo.
+8. GIF en el editor y extracción de fotogramas funcionan; la prueba física anterior de Apple Pay mostró imagen fija. No anunciar animación funcional en el teléfono.
 
 ## Privacidad y cuota
 
-No subir AppData, originales, manifiestos personales, datos bancarios, identificadores, sesiones DPAPI, credenciales ni archivos de runtime del servidor. Los tests son sintéticos. Consultar límites al inicio y en checkpoints; con ≤3 % empezar a guardar, con ≤1 % detener investigación/implementación/tests y cerrar. No gastar el crédito de reinicio sin autorización.
+Nunca subir AppData, originales, diarios personales, manifiestos bancarios, identificadores, sesiones, tokens, claves privadas ni datos del servidor a GitHub. La clave pública y fixtures sintéticas sí pertenecen al código. Consultar cuota al inicio y en checkpoints; ≤3 % guardar, ≤1 % detener investigación/implementación/tests y cerrar. No consumir crédito de reinicio sin autorización.

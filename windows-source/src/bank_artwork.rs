@@ -243,7 +243,7 @@ fn winhttp_get(url: &ParsedUrl, deadline: Instant) -> Result<Vec<u8>> {
     const NO_PROXY: u32 = 1;
     const SECURE: u32 = 0x0080_0000;
     const DISABLE_FEATURE: u32 = 63;
-    const DISABLE_REDIRECTS: u32 = 0x0000_0008;
+    const DISABLE_REDIRECTS: u32 = 0x0000_0002;
     const QUERY_STATUS_CODE: u32 = 19 | 0x2000_0000;
     let agent: Vec<u16> = "Wallet Studio Artwork\0".encode_utf16().collect();
     let host: Vec<u16> = format!("{}\0", url.host).encode_utf16().collect();

@@ -280,7 +280,11 @@ fn validate_journal(journal: &Journal) -> Result<()> {
 }
 
 fn validate_operation_dir(operation_dir: &Path, journal: &Journal) -> Result<()> {
-    anyhow::ensure!(operation_dir.parent() == Some(journal_root().as_path())
+    validate_operation_dir_at(operation_dir,journal,&journal_root())
+}
+fn validate_operation_dir_at(operation_dir:&Path,journal:&Journal,root:&Path)->Result<()> {
+    crate::storage::safe_chain(operation_dir)?;
+    anyhow::ensure!(operation_dir.parent() == Some(root)
         && operation_dir.file_name().and_then(|name| name.to_str()) == Some(journal.token.as_str()),
         "Recovery directory does not match the journal token");
     anyhow::ensure!(!fs::symlink_metadata(operation_dir)?.file_type().is_symlink(),
@@ -289,7 +293,10 @@ fn validate_operation_dir(operation_dir: &Path, journal: &Journal) -> Result<()>
 }
 
 pub fn pending_recovery_operations() -> Result<Vec<PendingRecovery>> {
-    let root = journal_root();
+    pending_recovery_operations_at(&journal_root())
+}
+pub(crate) fn pending_recovery_operations_at(root:&Path)->Result<Vec<PendingRecovery>> {
+    crate::storage::safe_chain(root)?;
     if !root.exists() { return Ok(Vec::new()); }
     let mut pending = Vec::new();
     for item in fs::read_dir(root)? {
@@ -302,7 +309,7 @@ pub fn pending_recovery_operations() -> Result<Vec<PendingRecovery>> {
                 || entry.file_name().to_string_lossy().ends_with(".original"));
         if !has_state { continue; }
         let journal = latest_journal(&path)?;
-        validate_operation_dir(&path, &journal)?;
+        validate_operation_dir_at(&path, &journal,root)?;
         if journal.phase == "complete" { continue; }
         let mut original_path = None;
         if let Some(expected) = journal.original_sha256.as_deref() {
@@ -354,6 +361,7 @@ fn verified_original_in(operation_dir: &Path, journal: &Journal) -> Result<Vec<u
 pub fn resume_pending_return<L>(operation_dir: &Path, udid: &str, mode: ConnectionMode,
     mut log: L) -> Result<()>
 where L: FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;
     let mut journal = latest_journal(operation_dir)?;
     validate_operation_dir(operation_dir, &journal)?;
     anyhow::ensure!(journal.udid.eq_ignore_ascii_case(udid), "Recovery journal belongs to another device");
@@ -539,6 +547,7 @@ where L: FnMut(&str) {
 pub fn capture_verified_original_asset<L>(udid: &str, mode: ConnectionMode,
     card_hash: &str, leaf: &str, mut log: L) -> Result<Vec<u8>>
 where L: FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;
     anyhow::ensure!(is_exact_card_hash(card_hash), "Invalid Wallet card identifier");
     anyhow::ensure!(valid_leaf(leaf), "Artwork name must be a single file name");
     crate::device::ensure_wallet_version_supported(udid)?;
@@ -637,6 +646,7 @@ where L: FnMut(&str) {
 pub fn inspect_bank_overrides<L>(udid: &str, mode: ConnectionMode, card_hash: &str,
     returned_manifest: &[u8], mut log: L) -> Result<BTreeMap<String, MetadataState>>
 where L: FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;
     inspect_bank_overrides_inner(udid, mode, card_hash, returned_manifest, None, &mut log)
 }
 

@@ -32,4 +32,14 @@ class ServiceTests(unittest.TestCase):
   self.store.allow_registration=False
   try:self.assertEqual(self.call('/v1/auth/register','POST',{'email':'disabled@example.test','password':'fixture-only-password'})[0],403)
   finally:self.store.allow_registration=True
+ def test_non_object_auth_body_is_rejected(self):
+  self.assertEqual(self.call('/v1/auth/login','POST',b'[]')[0],400)
+ def test_expired_session_is_rejected(self):
+  token=self.account('expired')
+  with self.store.connect() as db:db.execute('UPDATE sessions SET expires=0 WHERE digest=?',(hashlib.sha256(token.encode()).hexdigest(),))
+  self.assertEqual(self.call('/v1/bundles',token=token)[0],401)
+ def test_server_does_not_return_corrupted_object(self):
+  token=self.account('corrupt');ident,data=self.bundle();self.assertEqual(self.call('/v1/bundles/'+ident,'PUT',data,token)[0],201)
+  subject=self.store.subject(token);(self.store.blobs/subject/ident).write_bytes(b'corrupt fixture')
+  self.assertEqual(self.call('/v1/bundles/'+ident,token=token)[0],503)
 if __name__=='__main__':unittest.main()

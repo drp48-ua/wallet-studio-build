@@ -66,7 +66,10 @@ class Handler(BaseHTTPRequestHandler):
     def reply(self,status,value=None,body=None):
         raw=body if body is not None else json.dumps(value or {}).encode()
         self.send_response(status);self.send_header('Content-Type','application/octet-stream' if body is not None else 'application/json');self.send_header('Content-Length',str(len(raw)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(raw)
-    def error(self,status,code):self.reply(status,{'error':code})
+    def error(self,status,code):
+        # A rejected request may still have an unread body: do not reuse its connection.
+        self.close_connection=True
+        self.reply(status,{'error':code})
     def read_body(self,maximum):
         if self.headers.get('Transfer-Encoding'):raise ValueError('unsupported_body')
         length=int(self.headers.get('Content-Length','0'))
@@ -80,7 +83,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path not in ('/v1/auth/login','/v1/auth/register'):return self.error(404,'not_found')
         try:
-            body=json.loads(self.read_body(4096));email=body.get('email','');password=body.get('password','')
+            body=json.loads(self.read_body(4096))
+            if not isinstance(body,dict):return self.error(400,'invalid_request')
+            email=body.get('email','');password=body.get('password','')
             if not isinstance(email,str) or not isinstance(password,str) or len(email)>254 or len(password)>128:return self.error(400,'invalid_account')
             if not self.server.store.rate(self.client_address[0],email.casefold()):return self.error(429,'rate_limited')
             if self.path.endswith('/register'):
@@ -92,6 +97,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200,result)
         except (ValueError,TypeError,json.JSONDecodeError):return self.error(400,'invalid_request')
     def do_GET(self):
+        if self.path=='/__fixture_redirect' and self.server.store.allow_registration:
+            self.send_response(302);self.send_header('Location','/health');self.send_header('Content-Length','0');self.end_headers();return
         if self.path=='/health':return self.reply(200,{'status':'ok'})
         user=self.user()
         if not user:return self.error(401,'unauthorized')
@@ -145,7 +152,7 @@ class Handler(BaseHTTPRequestHandler):
 
 class Server(ThreadingHTTPServer):
     daemon_threads=True
-    def __init__(self,address,store):self.store=store;self.slots=threading.BoundedSemaphore(32);super().__init__(address,Handler)
+    def __init__(self,address,store):self.store=store;self.slots=threading.BoundedSemaphore(4);super().__init__(address,Handler)
     def process_request(self,request,address):
         if not self.slots.acquire(blocking=False):request.close();return
         try:super().process_request(request,address)

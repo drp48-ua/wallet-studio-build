@@ -1,17 +1,112 @@
 //! Account-scoped immutable original bundles. No network until an account is linked.
 use anyhow::{Context,Result};
 use serde::{Deserialize,Serialize};
-use std::{collections::BTreeMap,fs,io::{Cursor,Read,Write},path::{Path,PathBuf}};
+use std::{collections::BTreeMap,fs,io::{Cursor,Read,Write},path::Path};
 const LIMIT:usize=100*1024*1024;
 const MAX_FILES:usize=512;
 #[derive(Clone,Serialize,Deserialize)] pub struct Session { pub server:String, pub access_token:String, pub user_id:String }
-#[derive(Serialize,Deserialize)] struct Record { size:usize,sha256:String }
-#[derive(Serialize,Deserialize)] struct Manifest { schema:u32,udid:String,card_hash:String,files:BTreeMap<String,Record> }
+#[derive(Debug,Clone,Serialize,Deserialize,PartialEq,Eq)]
+#[serde(deny_unknown_fields)]
+struct VaultOwner { version:u32,server:String,user_id:String }
+#[derive(Debug)] pub struct DifferentVaultOwner;
+impl std::fmt::Display for DifferentVaultOwner { fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { f.write_str("vault_owner_mismatch") } }
+impl std::error::Error for DifferentVaultOwner {}
+pub fn account_failure_message(error:&anyhow::Error)->&'static str {
+    if error.downcast_ref::<DifferentVaultOwner>().is_some() { "Este archivo pertenece a otra cuenta o servicio. No se modificó tu sesión ni se subieron copias; utiliza un perfil Windows separado." }
+    else { "No se pudo vincular la cuenta. Revisa servicio, conexión y datos; la sesión anterior se conserva." }
+}
+#[derive(Serialize,Deserialize)] #[serde(deny_unknown_fields)] struct Record { size:usize,sha256:String }
+#[derive(Serialize,Deserialize)] #[serde(deny_unknown_fields)] struct Manifest { schema:u32,udid:String,card_hash:String,files:BTreeMap<String,Record> }
+#[derive(Serialize,Deserialize)] #[serde(deny_unknown_fields)] struct Receipt { version:u32,bundle_id:String,manifest:Manifest }
 
-pub fn valid_server(url:&str)->bool {
-    !url.contains(['@','?','#','\\']) && !url.chars().any(char::is_whitespace) &&
-        ((url.starts_with("https://") && url.split('/').nth(2).is_some_and(|host| !host.is_empty())) || url=="http://127.0.0.1" ||
-            url.strip_prefix("http://127.0.0.1:").is_some_and(|port|port.parse::<u16>().is_ok_and(|n|n>0)))
+fn normalized_server(value:&str)->Result<String> {
+    anyhow::ensure!(value.is_ascii() && value.len()<=2048 && !value.contains(['@','?','#','\\']) && !value.bytes().any(|b|b<=0x20 || b==0x7f),"invalid cloud service URL");
+    let (scheme,rest)=value.split_once("://").context("cloud URL scheme missing")?;
+    anyhow::ensure!(matches!(scheme,"https"|"http"),"cloud service needs HTTPS");
+    let (authority,path)=rest.split_once('/').map(|(host,path)|(host,format!("/{path}"))).unwrap_or((rest,String::new()));
+    let (host,port)=authority.split_once(':').map(|(host,port)|(host,Some(port))).unwrap_or((authority,None));
+    let host=host.to_ascii_lowercase();
+    anyhow::ensure!(!host.is_empty() && host.len()<=253 && host.split('.').all(|label|!label.is_empty() && label.len()<=63 && !label.starts_with('-') && !label.ends_with('-') && label.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-')),"cloud host invalid");
+    anyhow::ensure!(scheme=="https" || host=="127.0.0.1","only localhost may use HTTP");
+    let port=port.map(|text|text.parse::<u16>().context("cloud port invalid")).transpose()?;
+    anyhow::ensure!(port.is_none_or(|p|p>0) && path.split('/').all(|part|part!="." && part!=".." && part.bytes().all(|b|b.is_ascii_alphanumeric() || matches!(b,b'-'|b'_'|b'.'))),"cloud URL path invalid");
+    let port=port.filter(|p|*p!=if scheme=="https" {443} else {80});
+    Ok(format!("{scheme}://{host}{}{}",port.map(|p|format!(":{p}")).unwrap_or_default(),path.trim_end_matches('/')))
+}
+pub fn valid_server(url:&str)->bool { normalized_server(url).is_ok() }
+
+fn owner_for(session:&Session)->Result<VaultOwner> {
+    anyhow::ensure!(!session.user_id.is_empty() && session.user_id.len()<=64 && session.user_id.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-'),"cloud owner identity invalid");
+    Ok(VaultOwner { version:1,server:normalized_server(&session.server)?,user_id:session.user_id.clone() })
+}
+fn load_owner_at(root:&Path)->Result<Option<VaultOwner>> {
+    let path=root.join("vault-owner.json"); crate::storage::safe_chain(&path)?;
+    let metadata=match fs::symlink_metadata(&path) { Err(error) if error.kind()==std::io::ErrorKind::NotFound=>return Ok(None),result=>result? };
+    anyhow::ensure!(metadata.is_file() && metadata.len()<=4096,"vault owner metadata invalid");
+    let owner:VaultOwner=serde_json::from_slice(&fs::read(&path)?)?;
+    anyhow::ensure!(owner.version==1 && owner.server==normalized_server(&owner.server)? && !owner.user_id.is_empty() && owner.user_id.len()<=64 && owner.user_id.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-'),"vault owner invalid"); Ok(Some(owner))
+}
+fn require_owner_at(root:&Path,session:&Session)->Result<VaultOwner> {
+    let expected=owner_for(session)?;
+    anyhow::ensure!(load_owner_at(root)?.as_ref()==Some(&expected),"Esta instalación pertenece a otra cuenta o requiere vinculación explícita; no se sincronizarán copias"); Ok(expected)
+}
+fn bind_owner_at(root:&Path,session:&Session,initial_link_consent:bool)->Result<()> {
+    let expected=owner_for(session)?; crate::storage::safe_chain(root)?; fs::create_dir_all(root)?;
+    let lock=root.join(".owner-link.lock"); let handle=fs::OpenOptions::new().write(true).create_new(true).open(&lock).context("Otra cuenta se está vinculando o necesita revisión")?;
+    let result=(|| { match load_owner_at(root)? {
+        Some(owner)=>if owner!=expected { return Err(DifferentVaultOwner.into()); },
+        None=> { anyhow::ensure!(initial_link_consent,"Confirma la vinculación de todas las copias locales antes de iniciar sesión"); crate::storage::write_new(&root.join("vault-owner.json"),&serde_json::to_vec(&expected)?)?; }
+    } Ok(()) })();
+    drop(handle); if result.is_ok() || load_owner_at(root).is_ok() { fs::remove_file(lock)?; } result
+}
+fn seen_directory(root:&Path,owner:&VaultOwner)->Result<std::path::PathBuf> {
+    Ok(root.join("cloud-seen").join(crate::bank_backup::sha256(&serde_json::to_vec(owner)?)?))
+}
+fn local_manifest_matches(root:&Path,manifest:&Manifest)->Result<bool> {
+    if manifest.schema!=1 || manifest.udid.is_empty() || manifest.udid.len()>256 || !crate::wallet_export::is_exact_card_hash(&manifest.card_hash)
+        || manifest.files.is_empty() || manifest.files.len()>MAX_FILES {return Ok(false);}
+    let mut bank_key=None;let mut total=0usize;
+    for (name,record) in &manifest.files {
+        if !safe_name(name) || !evidence_name(name) || record.size>32*1024*1024 || record.sha256.len()!=64 || !record.sha256.bytes().all(|b|b.is_ascii_hexdigit()) {return Ok(false);}
+        total=total.checked_add(record.size).context("receipt size overflow")?;if total>LIMIT {return Ok(false);}
+        let (prefix,tail)=name.split_once('/').context("receipt path invalid")?;
+        if prefix=="bank" {
+            let key=tail.split('/').next().unwrap();
+            if bank_key.as_ref().is_some_and(|previous:&String|previous!=key) {return Ok(false);}bank_key=Some(key.to_string());
+        }
+        let path=root.join(if prefix=="bank" {"bank-backups"} else {"bank-change-intents"}).join(tail);
+        if crate::storage::safe_chain(&path).is_err() {return Ok(false);}
+        let metadata=match fs::symlink_metadata(&path) {Ok(metadata)=>metadata,Err(_)=>return Ok(false)};
+        if !metadata.is_file() || metadata.len()!=record.size as u64 {return Ok(false);}
+        if crate::bank_backup::sha256(&fs::read(&path)?)?!=record.sha256 {return Ok(false);}
+    }
+    let Some(key)=bank_key else {return Ok(false);};
+    if !["baseline.json","manifest.urls","remote-artwork.bin"].iter().all(|leaf|manifest.files.contains_key(&format!("bank/{key}/{leaf}"))) {return Ok(false);}
+    let baseline=match crate::bank_backup::validate_bundle_directory(&root.join("bank-backups").join(key)) {Ok(baseline)=>baseline,Err(_)=>return Ok(false)};
+    if baseline.udid!=manifest.udid || baseline.card_hash!=manifest.card_hash || crate::storage::ensure_card_ready_at(root,&manifest.udid,&manifest.card_hash).is_err() {return Ok(false);}
+    // Extra immutable revisions are allowed, but the current complete chain
+    // and every revision declared by this older snapshot must still be intact.
+    Ok(crate::bank_changes::cloud_operation_dirs(&root.join("bank-change-intents"),&manifest.udid,&manifest.card_hash).is_ok())
+}
+fn verified_seen(root:&Path,path:&Path,id:&str)->Result<bool> {
+    let _lease=crate::storage::operation_lease_for_import(root)?;
+    crate::storage::safe_chain(path)?;
+    let metadata=match fs::symlink_metadata(path) {Err(error) if error.kind()==std::io::ErrorKind::NotFound=>return Ok(false),result=>result?};
+    anyhow::ensure!(metadata.is_file(),"cloud receipt invalid");if metadata.len()>1024*1024 {return Ok(false);}
+    let bytes=fs::read(path)?;
+    // v0 receipts attest only a past download, never today's local files.
+    if bytes==b"verified" {return Ok(false);}
+    let receipt:Receipt=match serde_json::from_slice(&bytes) {Ok(receipt)=>receipt,Err(_)=>return Ok(false)};
+    if receipt.version!=1 || receipt.bundle_id!=id {return Ok(false);}
+    local_manifest_matches(root,&receipt.manifest)
+}
+fn write_seen(root:&Path,path:&Path,id:&str,manifest:Manifest)->Result<()> {
+    let _lease=crate::storage::operation_lease_for_import(root)?;
+    anyhow::ensure!(local_manifest_matches(root,&manifest)?,"local evidence changed before recording cloud receipt");
+    let bytes=serde_json::to_vec(&Receipt {version:1,bundle_id:id.into(),manifest})?;
+    anyhow::ensure!(bytes.len()<=1024*1024,"cloud receipt too large");
+    // Receipt metadata is mutable cache; original/history files stay create-only.
+    crate::storage::write_mutable(path,&bytes)
 }
 fn safe_name(name:&str)->bool {
     !name.is_empty() && name.len()<256 && !name.contains(['\\',':']) && !name.starts_with('/') &&
@@ -25,6 +120,7 @@ fn evidence_name(name:&str)->bool {
 }
 fn files_in(directory:&Path,prefix:&str,files:&mut BTreeMap<String,Vec<u8>>)->Result<()> {
     for entry in fs::read_dir(directory)? { let path=entry?.path(); let meta=fs::symlink_metadata(&path)?;
+        crate::storage::safe_chain(&path)?;
         anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=32*1024*1024,"unsafe cloud evidence file");
         let name=format!("{prefix}/{}",path.file_name().context("missing leaf")?.to_string_lossy());
         anyhow::ensure!(safe_name(&name) && evidence_name(&name) && files.len()<MAX_FILES,"cloud evidence name/count invalid");
@@ -33,8 +129,10 @@ fn files_in(directory:&Path,prefix:&str,files:&mut BTreeMap<String,Vec<u8>>)->Re
 }
 
 pub fn export_bundle(root:&Path,baseline_directory:&Path)->Result<Vec<u8>> {
+    let _lease=crate::storage::operation_lease_for_import(root)?;
     let baseline=crate::bank_backup::validate_bundle_directory(baseline_directory)?;
-    let pending=crate::wallet_export::pending_recovery_operations()?;
+    crate::storage::ensure_card_ready_at(root,&baseline.udid,&baseline.card_hash)?;
+    let pending=crate::wallet_export::pending_recovery_operations_at(&root.join("wallet-export-recovery"))?;
     anyhow::ensure!(!crate::wallet_export::pending_recovery_blocks_device(Ok(&pending),Some(&baseline.udid)),"pending recovery must remain local before sync");
     let key=baseline_directory.file_name().context("missing identity key")?.to_string_lossy();
     let mut files=BTreeMap::new(); files_in(baseline_directory,&format!("bank/{key}"),&mut files)?;
@@ -75,27 +173,30 @@ fn parse_bundle(bytes:&[u8])->Result<(Manifest,BTreeMap<String,Vec<u8>>)> {
 }
 
 pub fn import_bundle(root:&Path,bytes:&[u8])->Result<()> {
+    let _lease=crate::storage::operation_lease_for_import(root)?;
     let digest=crate::bank_backup::sha256(bytes)?;
     let (manifest,files)=parse_bundle(bytes)?;
     crate::storage::safe_chain(root)?; fs::create_dir_all(root)?;
     let lock=root.join(".cloud-import.lock");
     let handle=fs::OpenOptions::new().write(true).create_new(true).open(&lock).context("cloud import needs recovery or another process owns it")?;
-    let stage=root.join("cloud-staging").join(&digest); fs::create_dir_all(&stage)?;
+    let stage=root.join("cloud-staging").join(&digest); crate::storage::safe_chain(&stage)?; fs::create_dir_all(&stage)?;
+    let mut verified_identity=None;
     let result=(|| {
         let mut bank_key=None;
         for (name,data) in &files {
             let parts:Vec<_>=name.split('/').collect(); anyhow::ensure!(parts.len()==3,"cloud path depth invalid");
             if parts[0]=="bank" { if let Some(key)=bank_key.as_ref() { anyhow::ensure!(key==parts[1],"mixed baseline identities"); } else { bank_key=Some(parts[1].to_string()); } }
-            let staged=stage.join(name); if staged.exists() { anyhow::ensure!(fs::read(&staged)?==*data,"staging evidence conflict"); } else { crate::storage::write_new(&staged,data)?; }
+            let staged=stage.join(name); crate::storage::safe_chain(&staged)?; if staged.exists() { anyhow::ensure!(fs::read(&staged)?==*data,"staging evidence conflict"); } else { crate::storage::write_new(&staged,data)?; }
         }
         let key=bank_key.context("cloud original missing")?;
         let baseline=crate::bank_backup::validate_bundle_directory(&stage.join("bank").join(&key))?;
         anyhow::ensure!(baseline.udid==manifest.udid && baseline.card_hash==manifest.card_hash,"cloud baseline identity mismatch");
+        verified_identity=Some((baseline.udid.clone(),baseline.card_hash.clone()));
         let staged_intents=stage.join("intents"); fs::create_dir_all(&staged_intents)?;
         let mut merged_bytes=files.values().map(Vec::len).sum::<usize>(); let mut merged_files=files.len();
         for existing in crate::bank_changes::cloud_operation_dirs(&root.join("bank-change-intents"),&manifest.udid,&manifest.card_hash)? {
             let name=existing.file_name().unwrap().to_string_lossy(); let mut existing_files=BTreeMap::new(); files_in(&existing,&format!("intents/{name}"),&mut existing_files)?;
-            for (relative,data) in existing_files { let target=stage.join(relative);
+            for (relative,data) in existing_files { let target=stage.join(relative);crate::storage::safe_chain(&target)?;
                 if target.exists() { anyhow::ensure!(fs::read(&target)?==data,"conflicting cloud/local intent"); }
                 else { merged_bytes=merged_bytes.checked_add(data.len()).context("merged size overflow")?; merged_files+=1;
                     anyhow::ensure!(merged_bytes<=LIMIT && merged_files<=MAX_FILES,"merged history too large; preserve local evidence");
@@ -117,7 +218,10 @@ pub fn import_bundle(root:&Path,bytes:&[u8])->Result<()> {
     })();
     drop(handle);
     if result.is_ok() { fs::remove_file(lock)?; }
-    else { let quarantine=root.join("quarantine").join(format!("{digest}.zip")); if !quarantine.exists() { crate::storage::write_new(&quarantine,bytes)?; } crate::storage::block(root)?; }
+    else { let quarantine=root.join("quarantine").join(format!("{digest}.zip")); if !quarantine.exists() { crate::storage::write_new(&quarantine,bytes)?; }
+        if let Some((udid,hash))=verified_identity {crate::storage::block_card_at(root,&udid,&hash)?;fs::remove_file(lock)?;}
+        else {crate::storage::block(root)?;}
+    }
     result
 }
 
@@ -140,58 +244,195 @@ pub fn import_bundle(root:&Path,bytes:&[u8])->Result<()> {
 
 pub fn load_session()->Result<Option<Session>> {
     if crate::storage::is_demo() { return Ok(None); }
-    let path=crate::storage::root().join("cloud-session.dpapi"); if !path.exists() { return Ok(None); }
+    let path=crate::storage::root().join("cloud-session.dpapi"); crate::storage::safe_chain(&path)?; if !path.exists() { return Ok(None); }
     let meta=fs::symlink_metadata(&path)?; anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=65536,"saved session unsafe");
     let session:Session=serde_json::from_slice(&protect(&fs::read(path)?,true)?)?;
     anyhow::ensure!(valid_server(&session.server) && !session.user_id.is_empty() && session.user_id.len()<=64 &&
         session.user_id.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-') &&
         !session.access_token.is_empty() && session.access_token.len()<=8192 && session.access_token.bytes().all(|b|(0x21..=0x7e).contains(&b)),"saved cloud service invalid"); Ok(Some(session))
 }
-pub fn login(server:&str,email:&str,password:&str,register:bool)->Result<Session> {
+pub fn login(server:&str,email:&str,password:&str,register:bool,initial_link_consent:bool)->Result<Session> {
     anyhow::ensure!(valid_server(server) && email.len()<=254 && password.len()<=1024,"account inputs invalid");
     anyhow::ensure!(!crate::storage::is_demo(),"demo has no account network");
+    let server=normalized_server(server)?; let root=crate::storage::root();
+    if let Some(owner)=load_owner_at(&root)? { if owner.server!=server { return Err(DifferentVaultOwner.into()); } }
+    else { anyhow::ensure!(initial_link_consent,"Confirma la vinculación de todas las copias locales"); }
     let body=serde_json::to_vec(&serde_json::json!({"email":email,"password":password}))?;
-    let bytes=crate::auto_update::http_request("POST",&format!("{}/v1/auth/{}",server.trim_end_matches('/'),if register {"register"} else {"login"}),&[("Content-Type".into(),"application/json".into())],&body,65536)?;
+    let bytes=crate::auto_update::http_request("POST",&format!("{server}/v1/auth/{}",if register {"register"} else {"login"}),&[("Content-Type".into(),"application/json".into())],&body,65536)?;
     #[derive(Deserialize)] struct Reply { access_token:String,user_id:String }
     let reply:Reply=serde_json::from_slice(&bytes)?;
     anyhow::ensure!(!reply.access_token.is_empty() && reply.access_token.len()<=8192 && reply.access_token.bytes().all(|b|(0x21..=0x7e).contains(&b)) &&
         !reply.user_id.is_empty() && reply.user_id.len()<=64 && reply.user_id.bytes().all(|b| b.is_ascii_alphanumeric() || b==b'-'),"invalid account response");
-    let session=Session { server:server.trim_end_matches('/').into(),access_token:reply.access_token,user_id:reply.user_id };
+    let session=Session { server,access_token:reply.access_token,user_id:reply.user_id };
+    bind_owner_at(&root,&session,initial_link_consent)?;
     let encrypted=protect(&serde_json::to_vec(&session)?,false)?;
-    let root=crate::storage::root(); fs::create_dir_all(&root)?; let path=root.join("cloud-session.dpapi"); let temporary=root.join(format!(".session-{}",crate::flasher::generate_token()));
-    crate::storage::write_new(&temporary,&encrypted)?; if path.exists() { fs::remove_file(&path)?; } fs::rename(temporary,path)?; Ok(session)
+    let path=root.join("cloud-session.dpapi"); crate::storage::write_mutable(&path,&encrypted)?; Ok(session)
 }
 pub fn synchronize(session:&Session)->Result<()> {
     anyhow::ensure!(!crate::storage::is_demo() && valid_server(&session.server),"cloud service unavailable"); crate::storage::ensure_ready()?;
+    let root=crate::storage::root(); let owner=require_owner_at(&root,session)?;
     let headers=vec![("Authorization".into(),format!("Bearer {}",session.access_token))];
     let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/bundles",session.server),&headers,&[],1024*1024)?;
     #[derive(Deserialize)] struct Entry { id:String,sha256:String,size:usize }
     #[derive(Deserialize)] struct Listing { bundles:Vec<Entry> }
     let listing:Listing=serde_json::from_slice(&bytes)?; anyhow::ensure!(listing.bundles.len()<=1000,"cloud inventory too large");
-    let root=crate::storage::root(); let seen=root.join("cloud-seen").join(&session.user_id); crate::storage::safe_chain(&seen)?; fs::create_dir_all(&seen)?;
+    let seen=seen_directory(&root,&owner)?; crate::storage::safe_chain(&seen)?; fs::create_dir_all(&seen)?;
     for entry in listing.bundles {
         anyhow::ensure!(entry.id.len()==64 && entry.id.bytes().all(|b|b.is_ascii_hexdigit()) && entry.id==entry.sha256 && entry.size<=LIMIT,"invalid cloud inventory");
-        if seen.join(&entry.id).exists() { continue; }
+        if verified_seen(&root,&seen.join(&entry.id),&entry.id)? { continue; }
         let bundle=crate::auto_update::http_request("GET",&format!("{}/v1/bundles/{}",session.server,entry.id),&headers,&[],LIMIT)?;
         anyhow::ensure!(bundle.len()==entry.size && crate::bank_backup::sha256(&bundle)?==entry.sha256,"cloud download checksum mismatch");
-        import_bundle(&root,&bundle)?; crate::storage::write_new(&seen.join(&entry.id),b"verified")?;
+        import_bundle(&root,&bundle)?;let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&entry.id),&entry.id,manifest)?;
     }
     let banks=root.join("bank-backups"); if banks.is_dir() { for entry in fs::read_dir(banks)? {
         let bundle=export_bundle(&root,&entry?.path())?; let id=crate::bank_backup::sha256(&bundle)?;
-        if seen.join(&id).exists() { continue; }
+        if verified_seen(&root,&seen.join(&id),&id)? { continue; }
         let mut upload_headers=headers.clone(); upload_headers.push(("Content-Type".into(),"application/zip".into())); upload_headers.push(("X-Content-SHA256".into(),id.clone()));
         crate::auto_update::http_request("PUT",&format!("{}/v1/bundles/{id}",session.server),&upload_headers,&bundle,65536)?;
-        crate::storage::write_new(&seen.join(id),b"verified")?;
+        let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&id),&id,manifest)?;
     }} Ok(())
 }
 
-pub fn missing_original_capture_allowed(configured:bool,_synced:bool)->bool { !configured }
+pub fn missing_original_capture_allowed(configured:bool,synced:bool)->bool { !configured || synced }
+pub fn account_expected_without_session(endpoint:&str)->bool { account_expected_at(&crate::storage::root(),endpoint) }
+fn account_expected_at(root:&Path,endpoint:&str)->bool {
+    if valid_server(endpoint) {return true;}
+    let path=root.join("vault-owner.json");if crate::storage::safe_chain(&path).is_err() {return true;}
+    // Missing/invalid credentials do not turn an already-linked vault into a
+    // standalone profile. Even damaged owner evidence requires authentication.
+    !matches!(fs::symlink_metadata(path),Err(error) if error.kind()==std::io::ErrorKind::NotFound)
+}
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn customer_missing_original_waits_for_auth_when_service_or_owner_is_known() {
+        let root=fixture_root();
+        assert!(missing_original_capture_allowed(account_expected_at(&root,""),false));
+        assert!(!missing_original_capture_allowed(account_expected_at(&root,"https://sync.example.com"),false));
+        crate::storage::write_new(&root.join("vault-owner.json"),b"damaged owner evidence").unwrap();
+        assert!(!missing_original_capture_allowed(account_expected_at(&root,""),false));
+        assert!(missing_original_capture_allowed(account_expected_at(&root,""),true));fs::remove_dir_all(root).unwrap();
+    }
+    fn fixture_root()->std::path::PathBuf { std::env::temp_dir().join(format!("ws-cloud-fixture-{}",crate::flasher::generate_token())) }
+    fn fixture_baseline()->crate::bank_backup::Baseline {
+        let mut png=Vec::new(); image::DynamicImage::new_rgb8(4,4).write_to(&mut Cursor::new(&mut png),image::ImageFormat::Png).unwrap();
+        let sha1=crate::bank_backup::sha1(&png).unwrap(); let leaf="cardBackgroundCombined@2x.png";
+        crate::bank_backup::Baseline { udid:"synthetic-device-A".into(),card_hash:"OM6NYhwXMZrAw0sRUjR62wmF4ZQ=".into(),
+            manifest_bytes:serde_json::to_vec(&serde_json::json!({leaf:{"url":"https://a.apple.com/fixture","size":png.len(),"sha1":sha1}})).unwrap(),
+            artwork_name:leaf.into(),remote_size:png.len(),remote_sha1:sha1,remote_artwork_bytes:png.clone(),
+            local_assets:crate::wallet_backup::CARD_ARTWORK_ASSETS.iter().map(|name|(name.to_string(),if *name==leaf {crate::bank_backup::LocalAssetState::Present {bytes:png.clone()}} else {crate::bank_backup::LocalAssetState::Absent})).collect() }
+    }
+    fn repack(manifest:Manifest,files:BTreeMap<String,Vec<u8>>)->Vec<u8> {
+        let mut writer=zip::ZipWriter::new(Cursor::new(Vec::new())); let options=zip::write::SimpleFileOptions::default();
+        writer.start_file("bundle.json",options).unwrap(); writer.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        for (name,data) in files {writer.start_file(name,options).unwrap();writer.write_all(&data).unwrap();} writer.finish().unwrap().into_inner()
+    }
+    #[test] fn customer_owner_binding_requires_consent_and_denies_account_or_server_switch() {
+        let root=fixture_root(); let a=Session {server:"https://EXAMPLE.com:443/".into(),user_id:"account-a".into(),access_token:"fixture-token".into()};
+        assert!(bind_owner_at(&root,&a,false).is_err()); bind_owner_at(&root,&a,true).unwrap();
+        let owner=fs::read(root.join("vault-owner.json")).unwrap();
+        let b=Session {user_id:"account-b".into(),..a.clone()}; assert!(bind_owner_at(&root,&b,true).is_err()); assert!(require_owner_at(&root,&b).is_err());
+        let c=Session {server:"https://other.example.com".into(),..a.clone()}; assert!(bind_owner_at(&root,&c,true).is_err());
+        assert_ne!(seen_directory(&root,&owner_for(&a).unwrap()).unwrap(),seen_directory(&root,&owner_for(&c).unwrap()).unwrap());
+        assert_eq!(fs::read(root.join("vault-owner.json")).unwrap(),owner); fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn customer_cloud_roundtrip_is_immutable_and_conflict_preserves_both() {
+        let source=fixture_root(); let destination=fixture_root(); let input=fixture_baseline();
+        let path=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),&input).unwrap();
+        let bytes=export_bundle(&source,&path).unwrap(); assert_eq!(bytes,export_bundle(&source,&path).unwrap());
+        import_bundle(&destination,&bytes).unwrap(); import_bundle(&destination,&bytes).unwrap();
+        let imported=destination.join("bank-backups").join(path.file_name().unwrap()); assert_eq!(crate::bank_backup::validate_bundle_directory(&imported).unwrap(),input);
+        fs::write(imported.join("manifest.urls"),b"local evidence retained").unwrap(); assert!(import_bundle(&destination,&bytes).is_err());
+        assert_eq!(fs::read(imported.join("manifest.urls")).unwrap(),b"local evidence retained"); assert!(!destination.join("storage-blocked.json").exists());
+        assert!(crate::storage::ensure_card_ready_at(&destination,&input.udid,&input.card_hash).is_err());
+        assert!(crate::storage::ensure_card_ready_at(&destination,"other-synthetic-device",&input.card_hash).is_ok());
+        assert!(destination.join("quarantine").join(format!("{}.zip",crate::bank_backup::sha256(&bytes).unwrap())).is_file());
+        fs::remove_dir_all(source).unwrap();fs::remove_dir_all(destination).unwrap();
+    }
+    #[test] fn customer_cloud_rejects_body_hash_unknown_slots_and_cross_identity() {
+        let source=fixture_root(); let input=fixture_baseline(); let path=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),&input).unwrap();
+        let bytes=export_bundle(&source,&path).unwrap(); let (manifest,mut files)=parse_bundle(&bytes).unwrap();
+        files.values_mut().next().unwrap().push(1); assert!(parse_bundle(&repack(manifest,files)).is_err());
+        let (mut manifest,mut files)=parse_bundle(&bytes).unwrap(); let name="bank/identity/credentials.json".to_string(); let data=b"fixture".to_vec();
+        manifest.files.insert(name.clone(),Record {size:data.len(),sha256:crate::bank_backup::sha256(&data).unwrap()}); files.insert(name,data);
+        assert!(parse_bundle(&repack(manifest,files)).is_err());
+        let (mut manifest,files)=parse_bundle(&bytes).unwrap(); manifest.udid="synthetic-device-other".into(); let target=fixture_root();
+        assert!(import_bundle(&target,&repack(manifest,files)).is_err()); assert!(!target.join("bank-backups").exists());
+        fs::remove_dir_all(source).unwrap(); fs::remove_dir_all(target).unwrap();
+    }
+    #[test] fn customer_cloud_applied_and_restored_snapshots_merge_in_either_order() {
+        let source=fixture_root();let input=fixture_baseline();let path=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),&input).unwrap();
+        let png=input.remote_artwork_bytes.clone();let pairs=crate::wallet_backup::CARD_ARTWORK_ASSETS.iter().map(|name|(name.to_string(),if name.ends_with(".pdf") {b"%PDF-1.7\n%%EOF".to_vec()} else {png.clone()})).collect::<Vec<_>>();
+        let operation=crate::bank_changes::save_fixture_applied_at(&source.join("bank-change-intents"),&input.udid,&input.card_hash,&pairs).unwrap();
+        let applied=export_bundle(&source,&path).unwrap();crate::bank_changes::restore_fixture_at(&operation).unwrap();let restored=export_bundle(&source,&path).unwrap();assert_ne!(applied,restored);
+        for snapshots in [[&applied,&restored],[&restored,&applied]] {
+            let target=fixture_root();for snapshot in snapshots {import_bundle(&target,snapshot).unwrap();}
+            let directory=target.join("bank-change-intents").join(operation.file_name().unwrap());assert!(directory.join("state-0004-restored.json").is_file());
+            assert_eq!(fs::read(directory.join("state-0002-applied.json")).unwrap(),fs::read(operation.join("state-0002-applied.json")).unwrap());
+            crate::bank_changes::validate_cloud_chain(&target.join("bank-change-intents"),&input.udid,&input.card_hash).unwrap();
+            assert!(crate::storage::ensure_card_ready_at(&target,&input.udid,&input.card_hash).is_ok());fs::remove_dir_all(target).unwrap();
+        }fs::remove_dir_all(source).unwrap();
+    }
+    #[test] fn customer_cloud_receipts_verify_current_files_and_upgrade_legacy_markers() {
+        let source=fixture_root();let target=fixture_root();let input=fixture_baseline();
+        let source_path=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),&input).unwrap();let bundle=export_bundle(&source,&source_path).unwrap();
+        let id=crate::bank_backup::sha256(&bundle).unwrap();import_bundle(&target,&bundle).unwrap();let receipt=target.join("cloud-seen/fixture").join(&id);
+        crate::storage::write_new(&receipt,b"verified").unwrap();assert!(!verified_seen(&target,&receipt,&id).unwrap());
+        write_seen(&target,&receipt,&id,parse_bundle(&bundle).unwrap().0).unwrap();assert!(verified_seen(&target,&receipt,&id).unwrap());
+        let imported=target.join("bank-backups").join(source_path.file_name().unwrap());fs::remove_file(imported.join("remote-artwork.bin")).unwrap();
+        assert!(!verified_seen(&target,&receipt,&id).unwrap());import_bundle(&target,&bundle).unwrap();assert!(verified_seen(&target,&receipt,&id).unwrap());
+        fs::write(imported.join("remote-artwork.bin"),b"tampered fixture retained").unwrap();assert!(!verified_seen(&target,&receipt,&id).unwrap());
+        assert!(import_bundle(&target,&bundle).is_err());assert_eq!(fs::read(imported.join("remote-artwork.bin")).unwrap(),b"tampered fixture retained");
+        assert!(!verified_seen(&target,&receipt,&id).unwrap());assert!(crate::storage::ensure_card_ready_at(&target,&input.udid,&input.card_hash).is_err());
+        fs::remove_dir_all(source).unwrap();fs::remove_dir_all(target).unwrap();
+    }
+    #[test] fn customer_cloud_older_receipt_allows_new_revisions_but_not_missing_history() {
+        let source=fixture_root();let target=fixture_root();let input=fixture_baseline();let path=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),&input).unwrap();
+        let pairs=crate::wallet_backup::CARD_ARTWORK_ASSETS.iter().map(|name|(name.to_string(),if name.ends_with(".pdf") {b"%PDF-1.7\n%%EOF".to_vec()} else {input.remote_artwork_bytes.clone()})).collect::<Vec<_>>();
+        let operation=crate::bank_changes::save_fixture_applied_at(&source.join("bank-change-intents"),&input.udid,&input.card_hash,&pairs).unwrap();let applied=export_bundle(&source,&path).unwrap();
+        import_bundle(&target,&applied).unwrap();let id=crate::bank_backup::sha256(&applied).unwrap();let receipt=target.join("cloud-seen/fixture").join(&id);
+        write_seen(&target,&receipt,&id,parse_bundle(&applied).unwrap().0).unwrap();
+        crate::bank_changes::restore_fixture_at(&operation).unwrap();import_bundle(&target,&export_bundle(&source,&path).unwrap()).unwrap();assert!(verified_seen(&target,&receipt,&id).unwrap());
+        let historical=target.join("bank-change-intents").join(operation.file_name().unwrap()).join("state-0002-applied.json");fs::remove_file(&historical).unwrap();
+        assert!(!verified_seen(&target,&receipt,&id).unwrap());import_bundle(&target,&applied).unwrap();assert!(historical.is_file());assert!(verified_seen(&target,&receipt,&id).unwrap());
+        fs::remove_dir_all(source).unwrap();fs::remove_dir_all(target).unwrap();
+    }
+    #[test] fn customer_cloud_expansion_and_entry_count_are_bounded_before_import() {
+        let mut writer=zip::ZipWriter::new(Cursor::new(Vec::new()));let options=zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        writer.start_file("bundle.json",options).unwrap();writer.write_all(b"{}").unwrap();writer.start_file("bank/fixture/remote-artwork.bin",options).unwrap();
+        let chunk=[0u8;8192];for _ in 0..4097 {writer.write_all(&chunk).unwrap();}
+        assert!(parse_bundle(&writer.finish().unwrap().into_inner()).is_err());
+        let mut writer=zip::ZipWriter::new(Cursor::new(Vec::new()));let options=zip::write::SimpleFileOptions::default();
+        for index in 0..MAX_FILES+2 {writer.start_file(format!("entry-{index}"),options).unwrap();}
+        assert!(parse_bundle(&writer.finish().unwrap().into_inner()).is_err());
+    }
+    /// Only run against the lead's disposable localhost server, in a separate single-threaded test process.
+    #[test] #[ignore="requires explicit localhost synthetic backend fixture"]
+    fn customer_cloud_server_e2e() {
+        assert_eq!(std::env::var("WALLET_STUDIO_TEST_FIXTURE").as_deref(),Ok("1"));
+        let server=std::env::var("WALLET_STUDIO_INTEGRATION_URL").expect("fixture server required");
+        assert!(server.starts_with("http://127.0.0.1:") && valid_server(&server));
+        assert!(crate::auto_update::http_request("GET",&format!("{server}/__fixture_redirect"),&[("Authorization".into(),"Bearer synthetic-redirect-probe".into())],&[],65536).is_err(),"redirects must not forward account headers to the health endpoint");
+        let base=fixture_root(); let a=base.join("a");let b=base.join("b");let c=base.join("c");
+        fn set_root(path:&Path) { unsafe {std::env::set_var("WALLET_STUDIO_TEST_STORAGE_ROOT",path);} }
+        set_root(&a); let input=fixture_baseline(); let path=crate::bank_backup::save_fixture_at(&a.join("bank-backups"),&input).unwrap();
+        let suffix=crate::flasher::generate_token(); let email_a=format!("fixture-a-{suffix}@example.invalid");let email_b=format!("fixture-b-{suffix}@example.invalid");let password="Synthetic-Fixture-Password-2026";
+        let session_a=login(&server,&email_a,password,true,true).unwrap(); synchronize(&session_a).unwrap();
+        set_root(&b); let session_b=login(&server,&email_a,password,false,true).unwrap();synchronize(&session_b).unwrap();
+        let imported=b.join("bank-backups").join(path.file_name().unwrap());assert_eq!(crate::bank_backup::validate_bundle_directory(&imported).unwrap(),input);
+        let original_bytes=fs::read(imported.join("baseline.json")).unwrap();synchronize(&session_b).unwrap();assert_eq!(fs::read(imported.join("baseline.json")).unwrap(),original_bytes);
+        fs::remove_file(imported.join("remote-artwork.bin")).unwrap();synchronize(&session_b).unwrap();
+        assert_eq!(crate::bank_backup::validate_bundle_directory(&imported).unwrap(),input);
+        fs::write(imported.join("remote-artwork.bin"),b"tampered existing fixture").unwrap();assert!(synchronize(&session_b).is_err());
+        assert_eq!(fs::read(imported.join("remote-artwork.bin")).unwrap(),b"tampered existing fixture");assert!(crate::storage::ensure_card_ready_at(&b,&input.udid,&input.card_hash).is_err());
+        set_root(&c);let other=login(&server,&email_b,password,true,true).unwrap();synchronize(&other).unwrap();assert!(!c.join("bank-backups").exists());
+        set_root(&a); let previous=fs::read(a.join("cloud-session.dpapi")).unwrap();assert!(login(&server,&email_b,password,false,true).is_err());
+        assert_eq!(fs::read(a.join("cloud-session.dpapi")).unwrap(),previous);assert_eq!(load_session().unwrap().unwrap().user_id,session_a.user_id);
+        unsafe {std::env::remove_var("WALLET_STUDIO_TEST_STORAGE_ROOT");} assert!(base.is_absolute() && base.starts_with(std::env::temp_dir())); fs::remove_dir_all(base).unwrap();
+    }
     #[test] fn service_and_offline_capture_rules_are_conservative() {
         assert!(valid_server("https://sync.example.com")); assert!(valid_server("http://127.0.0.1:8080"));
         assert!(!valid_server("http://example.com")); assert!(!valid_server("https://user@host"));
-        assert!(!missing_original_capture_allowed(true,false)); assert!(!missing_original_capture_allowed(true,true)); assert!(missing_original_capture_allowed(false,false));
+        assert!(!missing_original_capture_allowed(true,false)); assert!(missing_original_capture_allowed(true,true)); assert!(missing_original_capture_allowed(false,false));
     }
     #[test] fn malformed_and_traversal_archives_are_rejected_before_import() {
         assert!(parse_bundle(b"not a zip").is_err()); assert!(!safe_name("bank/../baseline.json")); assert!(!safe_name("C:/x")); assert!(!safe_name("bank//x"));
