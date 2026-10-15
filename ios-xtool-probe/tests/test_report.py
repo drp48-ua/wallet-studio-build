@@ -85,6 +85,20 @@ class ReportTests(unittest.TestCase):
     def test_v13_unknown(self):
         self.v13_code(); self.report['constructor_probe'].update(status='unknown',reason='method_unavailable',image_origin_verified=False,code_hex='')
         validate(self.report)
+    def v14_code(self):
+        self.v13_code(); self.report['revision']='shader_resources_v14'
+        self.report['constructor_probe'].update(code_hex='00'*4096,selector_calls=[{'offset':4,'selector':'liveRenderType'}])
+    def test_v14_bounded_code(self):
+        self.v14_code(); validate(self.report)
+    def test_v14_rejects_call_path(self):
+        self.v14_code(); self.report['constructor_probe']['selector_calls'][0]['selector']='/private/card'
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v14_rejects_duplicate_offset(self):
+        self.v14_code(); self.report['constructor_probe']['selector_calls']*=2
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v14_rejects_excess_code(self):
+        self.v14_code(); self.report['constructor_probe']['code_hex']+='00'
+        with self.assertRaises(ValueError): validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

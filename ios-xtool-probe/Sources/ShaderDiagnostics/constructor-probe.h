@@ -3,9 +3,47 @@
 #import <mach/mach.h>
 #import <ptrauth.h>
 
+static BOOL ReadOwnCode(const void *source, void *destination, vm_size_t length) {
+    vm_size_t read=0;
+    return vm_read_overwrite(mach_task_self(),(vm_address_t)(uintptr_t)source,length,
+        (vm_address_t)(uintptr_t)destination,&read)==KERN_SUCCESS && read==length;
+}
+
+// Resolve only standard ARM64 Objective-C selector stubs reached by direct BL.
+// Selector names are runtime code metadata, never arguments or pass properties.
+static NSArray *OwnSelectorCalls(const void *code, const unsigned char *bytes, NSUInteger length) {
+    NSMutableArray *calls=[NSMutableArray array];
+    for(NSUInteger offset=0;offset+4<=length && calls.count<128;offset+=4) {
+        uint32_t word=0; memcpy(&word,bytes+offset,4);
+        if((word&0xfc000000)!=0x94000000) continue;
+        int64_t delta=word&0x03ffffff;
+        if(delta&(1<<25)) delta-=1LL<<26;
+        uintptr_t target=(uintptr_t)code+offset+delta*4;
+        Dl_info image={0};
+        if(!dladdr((const void*)target,&image) || !image.dli_fname ||
+           strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI")) continue;
+        uint32_t stub[2]={0};
+        if(!ReadOwnCode((const void*)target,stub,sizeof(stub))) continue;
+        if((stub[0]&0x9f00001f)!=0x90000001 || (stub[1]&0xffc003ff)!=0xf9400021) continue;
+        int64_t pageDelta=((stub[0]>>5)&0x7ffff)*4+((stub[0]>>29)&3);
+        if(pageDelta&(1<<20)) pageDelta-=1LL<<21;
+        uintptr_t slot=(target&~(uintptr_t)0xfff)+pageDelta*4096+((stub[1]>>10)&0xfff)*8;
+        SEL selector=NULL;
+        if(!ReadOwnCode((const void*)slot,&selector,sizeof(selector)) || !sel_isMapped(selector)) continue;
+        const char *name=sel_getName(selector);
+        size_t count=name?strnlen(name,129):0;
+        if(!count || count>128) continue;
+        BOOL safe=YES;
+        for(size_t i=0;i<count;++i) if(!((name[i]>='A'&&name[i]<='Z') ||
+            (name[i]>='a'&&name[i]<='z') || (name[i]>='0'&&name[i]<='9') || name[i]=='_' || name[i]==':')) safe=NO;
+        if(safe) [calls addObject:@{@"offset":@(offset),@"selector":@(name)}];
+    }
+    return calls;
+}
+
 static NSDictionary *ProbeOwnConstructor(void) {
     NSMutableDictionary *result=[@{@"status":@"unknown",@"reason":@"method_unavailable",
-        @"image_origin_verified":@NO,@"code_hex":@""} mutableCopy];
+        @"image_origin_verified":@NO,@"code_hex":@"",@"selector_calls":@[]} mutableCopy];
     Class cls=NSClassFromString(@"PKLiveRenderedCardFaceView");
     Method method=class_getInstanceMethod(cls,@selector(initWithFrame:pass:));
     if(!method || method_getNumberOfArguments(method)!=4) return result;
@@ -21,15 +59,14 @@ static NSDictionary *ProbeOwnConstructor(void) {
         result[@"reason"]=@"image_origin_unverified"; return result;
     }
     result[@"image_origin_verified"]=@YES;
-    unsigned char bytes[512]={0}; vm_size_t read=0;
-    kern_return_t status=vm_read_overwrite(mach_task_self(),(vm_address_t)(uintptr_t)code,
-        sizeof(bytes),(vm_address_t)(uintptr_t)bytes,&read);
-    if(status!=KERN_SUCCESS || read!=sizeof(bytes)) {
+    unsigned char bytes[4096]={0};
+    if(!ReadOwnCode(code,bytes,sizeof(bytes))) {
         result[@"reason"]=@"own_code_read_unavailable"; return result;
     }
     NSMutableString *hex=[NSMutableString stringWithCapacity:sizeof(bytes)*2];
     for(NSUInteger i=0;i<sizeof(bytes);++i) [hex appendFormat:@"%02x",bytes[i]];
     result[@"status"]=@"observed"; result[@"reason"]=@"own_constructor_code_observed";
     result[@"code_hex"]=hex;
+    result[@"selector_calls"]=OwnSelectorCalls(code,bytes,sizeof(bytes));
     return result;
 }

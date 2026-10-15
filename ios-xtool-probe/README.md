@@ -7,7 +7,8 @@ Esta app separada mide la ruta de shaders y el perfil de visualización usando o
 - La revisión v11 compiló con xtool y se ejecutó en un dispositivo físico. Su informe pasó el validador estricto: fuente del shader conservada, controles sintéticos correctos y vista nativa rechazada. La traza registró `liveRenderType`, `displayProfile` y `liveRenderedImageSet`. Esto justifica medir el perfil; no demuestra que su ausencia cause el rechazo.
 - La revisión v12 compila con código 0 desde Ubuntu 24.04 en WSL2, Swift 6.4.0, xtool 1.22.2 y SDK iPhoneOS 27.0 extraído de Xcode 27. Su validador pasa 26 pruebas. Ejecución física v12 pendiente.
 - La revisión v12 observa si existe un perfil, compara perfiles construidos con los mismos metadatos públicos sintéticos y verifica las firmas del runtime. Si el perfil inicial está ausente y los controles coinciden, vincula un perfil propio, comprueba su lectura posterior y repite el intento de crear la vista. No asigna estilos ni enums bancarios supuestos.
-- La revisi�n v13 verifica la firma y el m�dulo del constructor `PKLiveRenderedCardFaceView initWithFrame:pass:`. Lee exactamente 512 bytes de ese c�digo usando `vm_read_overwrite(mach_task_self(), ...)`, sin obtener puertos de otros procesos ni modificar instrucciones. No exporta direcciones ni rutas. La captura no equivale a una vista creada ni a ejecuci�n de shaders.
+- La revisi�n v13 se ejecut�: captura acotada del constructor aceptada por el validador; contiene ramas seg�n el tipo derivado del pase, pero 512 bytes no cubren la rama usada. La vista sigue devolviendo nil.
+- La revisi�n v14 verifica la firma y el m�dulo del constructor `PKLiveRenderedCardFaceView initWithFrame:pass:`. Lee exactamente 4.096 bytes de ese c�digo usando `vm_read_overwrite(mach_task_self(), ...)`, sin obtener puertos de otros procesos ni modificar instrucciones. Reconoce �nicamente stubs ARM64 est�ndar de selectores Objective-C y exporta como m�ximo 128 nombres con sus desplazamientos dentro de la ventana de c�digo. Comprueba que los nombres son selectores registrados. No exporta direcciones ni rutas. La captura no equivale a una vista creada ni a ejecuci�n de shaders.
 - `source-parity.json` documenta los hashes de los siete archivos Objective-C de la revisión preparada. `Probe.m` conserva los bytes de su `main.m`, renombrado para evitar que SwiftPM lo trate como un objetivo ejecutable.
 
 ## Preparar el SDK y compilar
@@ -25,9 +26,9 @@ python3 -m unittest discover -s tests -v
 
 No añadir `--sign`: esta compilación no necesita credenciales de Apple en xtool. El propietario puede firmar e instalar con Sideloadly, introduciendo personalmente sus credenciales cuando corresponda.
 
-## Paquete v13
+## Paquete v14
 
-`xtool/ShaderDiagnostics.ipa` sin firma: 140.207 bytes, SHA-256 `678fdb55b4db190ac4f37205dbc869b31c44dc340392e441fdc6b7a21bea4755`. ZIP íntegro, ejecutable Mach-O arm64, mínimo iOS 17.0, versión 1.12 (12), identificador `local.walletstudio.shaderdiagnostics`. La firma posterior cambia el hash y puede cambiar el identificador.
+`xtool/ShaderDiagnostics.ipa` sin firma: 140.607 bytes, SHA-256 `6f4df255ed04978381ab2702b80a8df925ac24f14d670338e06528d8a5ee6b03`. ZIP íntegro, ejecutable Mach-O arm64, mínimo iOS 17.0, versión 1.12 (12), identificador `local.walletstudio.shaderdiagnostics`. La firma posterior cambia el hash y puede cambiar el identificador.
 
 Abrir la app, esperar a «Shaders v12 · diagnóstico guardado» y recuperar su propio `Documents/shader-report.json`. Validar el informe antes de extraer conclusiones. Una vista o shader en esta app no prueba animación dentro de Apple Wallet. No publicar informes del dispositivo ni identificadores de firma.
 
