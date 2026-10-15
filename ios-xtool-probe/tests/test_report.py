@@ -198,6 +198,15 @@ class ReportTests(unittest.TestCase):
     def test_v23_gpu_control_can_succeed_without_wallet_animation(self):
         self.v23_gpu();self.report['gpu_capture_control'].update(setup=True,command_completed=True,presentation_observed=True,readback_red=True,captured_red=True,readback_rgb=[255,0,0],capture_rgb=[255,0,0])
         validate(self.report)
+    def v24_model(self):
+        self.v23_gpu();self.report['revision']='shader_resources_v24'
+        self.report['model_inventory']=copy.deepcopy(self.report['engine_inventory'])
+        for item,name in zip(self.report['model_inventory'],('PKPassLiveRender','PKLiveRenderedShaderSet','PKPassDisplayProfile')):item['class_name']=name
+    def test_v24_model(self):
+        self.v24_model();validate(self.report)
+    def test_v24_wrong_model_rejected(self):
+        self.v24_model();self.report['model_inventory'][0]['class_name']='OtherClass'
+        with self.assertRaises(ValueError):validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

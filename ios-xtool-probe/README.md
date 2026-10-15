@@ -22,7 +22,9 @@ v21 se ejecutó y localizó PassKitUIFoundation como módulo del propio renderiz
 
 v22 se ejecutó y validó los getters genuinos antes y después de las muestras: vista encontrada, firmas correctas, pausa desactivada y movimiento desactivado. No cambió esas propiedades. Las seis muestras UIKit siguen grises; esto no demuestra qué contenido muestra la capa GPU.
 
-v23 añade un control mediante API pública Metal: limpia un drawable propio en rojo, copia un píxel a un buffer compartido y espera los eventos de finalización y presentación. Compara esa lectura directa con una captura UIKit de la misma vista roja. No cambia el renderizador privado ni acepta capturas de este como prueba GPU sin calibración. Compila y pasan 62 pruebas; la ejecución física está pendiente. El código Apple capturado y los reportes físicos permanecen locales.
+v23 se ejecutó y validó un control mediante API pública Metal: drawable rojo, lectura directa GPU (255,0,0), comando completado, presentación observada y captura UIKit (255,0,0). El control certifica esa ruta de captura de Metal; no demuestra todos los modos posibles de otras capas. La vista de tarjeta sigue aceptada, sin pausa y con seis muestras grises. El fragmento candidato no produjo fases temporales en este experimento.
+
+v24 añade inventarios de métodos de tres clases concretas: `PKPassLiveRender`, `PKLiveRenderedShaderSet` y `PKPassDisplayProfile`. No construye objetos nuevos ni llama a sus getters. Busca el contrato del descriptor antes de proponer otra entrada gráfica. Compila y pasan 64 pruebas; la ejecución física está pendiente. El código Apple capturado y los reportes físicos permanecen locales.
 
 La lectura usa `vm_read_overwrite(mach_task_self(), ...)`, únicamente para implementaciones concretas de PassKitUI, PassKitCore o el módulo del propio renderizador cargado en esta app. Nunca obtiene puertos de otros procesos, modifica instrucciones ni exporta direcciones o rutas. Reconoce stubs ARM64 estándar y limita la salida a 4.096 bytes por implementación y 128 selectores con desplazamientos. El inventario no contiene valores de propiedades de pases.
 

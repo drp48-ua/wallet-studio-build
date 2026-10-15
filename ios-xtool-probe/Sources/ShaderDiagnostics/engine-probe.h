@@ -34,12 +34,19 @@ static NSDictionary *OwnEngineMethods(Class cls) {
     free(methods);return @{@"names":[[names allObjects] sortedArrayUsingSelector:@selector(compare:)],@"truncated":@(truncated)};
 }
 
-static NSArray *OwnEngineInventory(void) {
+static NSArray *OwnClassInventory(NSArray *classNames) {
     NSMutableArray *items=[NSMutableArray array];
-    for(NSString *name in @[@"PKTexturedCardRenderer",@"PKTextureLoader",@"PKMetalRenderLoop"]) {
+    for(NSString *name in classNames) {
         Class cls=NSClassFromString(name);
         [items addObject:@{@"class_name":name,@"available":@((BOOL)(cls!=Nil)),
             @"instance_methods":OwnEngineMethods(cls),@"class_methods":OwnEngineMethods(object_getClass(cls))}];
     }
     return items;
+}
+
+static NSArray *OwnEngineInventory(void) {
+    return OwnClassInventory(@[@"PKTexturedCardRenderer",@"PKTextureLoader",@"PKMetalRenderLoop"]);
+}
+static NSArray *OwnModelInventory(void) {
+    return OwnClassInventory(@[@"PKPassLiveRender",@"PKLiveRenderedShaderSet",@"PKPassDisplayProfile"]);
 }
