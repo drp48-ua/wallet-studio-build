@@ -3,6 +3,21 @@
 #import <mach/mach.h>
 #import <ptrauth.h>
 
+static NSString *OwnTextureImage(void) {
+    const char *name=class_getImageName(NSClassFromString(@"PKTexturedCardView"));
+    if(!name) return nil;
+    NSString *image=@(name);
+    if(image.length>512 || ![image hasPrefix:@"/System/Library/"]) return nil;
+    return image;
+}
+static BOOL OwnRenderImageAllowed(const char *path) {
+    if(!path) return NO;
+    if(!strcmp(path,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI") ||
+       !strcmp(path,"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore")) return YES;
+    NSString *textureImage=OwnTextureImage();
+    return textureImage && !strcmp(path,textureImage.UTF8String);
+}
+
 static BOOL ReadOwnCode(const void *source, void *destination, vm_size_t length) {
     vm_size_t read=0;
     return vm_read_overwrite(mach_task_self(),(vm_address_t)(uintptr_t)source,length,
@@ -20,8 +35,7 @@ static NSArray *OwnSelectorCalls(const void *code, const unsigned char *bytes, N
         if(delta&(1<<25)) delta-=1LL<<26;
         uintptr_t target=(uintptr_t)code+offset+delta*4;
         Dl_info image={0};
-        if(!dladdr((const void*)target,&image) || !image.dli_fname ||
-           (strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI") && strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore"))) continue;
+        if(!dladdr((const void*)target,&image) || !OwnRenderImageAllowed(image.dli_fname)) continue;
         uint32_t stub[2]={0};
         if(!ReadOwnCode((const void*)target,stub,sizeof(stub))) continue;
         if((stub[0]&0x9f00001f)!=0x90000001 || (stub[1]&0xffc003ff)!=0xf9400021) continue;
@@ -47,8 +61,7 @@ static NSDictionary *ProbeOwnCodeForMethod(Method method) {
     if(!method) return result;
     const void *code=(const void*)ptrauth_strip(method_getImplementation(method),ptrauth_key_function_pointer);
     Dl_info image={0};
-    if(!dladdr(code,&image) || !image.dli_fname ||
-       (strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI") && strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore"))) {
+    if(!dladdr(code,&image) || !OwnRenderImageAllowed(image.dli_fname)) {
         result[@"reason"]=@"image_origin_unverified"; return result;
     }
     result[@"image_origin_verified"]=@YES;
@@ -76,8 +89,10 @@ static NSDictionary *ProbeOwnConstructor(void) {
 
 static NSArray *OwnPassKitClassNames(BOOL *truncated) {
     NSMutableArray *result=[NSMutableArray array];
-    for(NSString *image in @[@"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI",
-                            @"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore"]) {
+    NSMutableSet *images=[NSMutableSet setWithArray:@[@"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI",
+                            @"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore"]];
+    NSString *textureImage=OwnTextureImage();if(textureImage) [images addObject:textureImage];
+    for(NSString *image in [[images allObjects] sortedArrayUsingSelector:@selector(compare:)]) {
         unsigned int count=0;const char **names=objc_copyClassNamesForImage(image.UTF8String,&count);
         if(count>10000) { *truncated=YES;free(names);continue; }
         for(unsigned int i=0;i<count;++i) if(names[i]) [result addObject:@(names[i])];
@@ -86,8 +101,8 @@ static NSArray *OwnPassKitClassNames(BOOL *truncated) {
     return [result sortedArrayUsingSelector:@selector(compare:)];
 }
 
-static Class OwnMaterialConstructorClass(void) {
-    BOOL truncated=NO;NSArray *names=OwnPassKitClassNames(&truncated);Class found=Nil;
+static Class OwnMaterialConstructorClass(NSMutableArray *candidates) {
+    BOOL truncated=NO;NSArray *names=OwnPassKitClassNames(&truncated);Class found=Nil;unsigned int matches=0;
     if(truncated) return Nil;
     SEL selector=NSSelectorFromString(@"initWithDiffuse:metalness:normal:");
     for(NSString *name in names) {
@@ -96,9 +111,9 @@ static Class OwnMaterialConstructorClass(void) {
         unsigned int amount=0;Method *methods=class_copyMethodList(cls,&amount);BOOL own=NO;
         for(unsigned int j=0;j<amount;++j) if(method_getName(methods[j])==selector) own=YES;
         free(methods);
-        if(own) { if(found) return Nil;found=cls; }
+        if(own) { ++matches;found=cls;if(candidates.count<8) [candidates addObject:name]; }
     }
-    return found;
+    return matches==1?found:Nil;
 }
 
 static NSDictionary *OwnRendererCatalog(void) {
@@ -110,6 +125,7 @@ static NSDictionary *OwnRendererCatalog(void) {
         Class cls=objc_lookUpClass(name.UTF8String);
         if(!cls || !name.length || name.length>128 || [name rangeOfCharacterFromSet:classAllowed.invertedSet].location!=NSNotFound) continue;
         NSString *lower=name.lowercaseString;BOOL related=NO;
+        if([lower containsString:@"keymaterial"]) continue;
         for(NSString *word in @[@"shader",@"scenekit",@"textur",@"material",@"metal",@"liverender"]) if([lower containsString:word]) related=YES;
         if(!related) continue;
         if(catalog.count>=16) { truncated=YES;continue; }
@@ -131,7 +147,8 @@ static NSDictionary *OwnRendererCatalog(void) {
 }
 
 static NSDictionary *ProbeOwnTextureConstructor(void) {
-    Class cls=OwnMaterialConstructorClass();
+    NSMutableArray *candidates=[NSMutableArray array];
+    Class cls=OwnMaterialConstructorClass(candidates);
     Method method=class_getInstanceMethod(cls,NSSelectorFromString(@"initWithDiffuse:metalness:normal:"));
     BOOL valid=method && method_getNumberOfArguments(method)==5;
     if(valid) {
@@ -155,5 +172,9 @@ static NSDictionary *ProbeOwnTextureConstructor(void) {
     result[@"method_names"]=[[names allObjects] sortedArrayUsingSelector:@selector(compare:)];
     result[@"inventory_truncated"]=@(truncated);
     result[@"class_name"]=cls?@(class_getName(cls)):@"";
+    result[@"constructor_candidates"]=candidates;
+    NSString *image=OwnTextureImage();NSString *leaf=image.lastPathComponent;
+    NSCharacterSet *imageAllowed=[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_."];
+    result[@"class_image"]=(leaf.length && leaf.length<=128 && [leaf rangeOfCharacterFromSet:imageAllowed.invertedSet].location==NSNotFound)?leaf:@"";
     return result;
 }

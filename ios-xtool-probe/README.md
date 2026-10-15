@@ -16,9 +16,11 @@ v18 mantiene la prueba de materiales y se ejecutó: vuelve a crear la vista, con
 
 v19 repitió la vista estática, pero detuvo el catálogo al superar el límite preventivo de clases del proceso. Ese catálogo vacío no acredita ausencia de clases gráficas.
 
-v20 usa `objc_copyClassNamesForImage` para consultar directamente PassKitUI y PassKitCore. Busca la clase propietaria del constructor observado, comprobando la firma antes de capturar su código. Añade un catálogo de hasta 16 clases relacionadas con renderizado, con hasta ocho métodos relevantes por clase y banderas de truncamiento. Solo consulta metadatos del runtime; no instancia servicios ni modelos de tarjetas. Compila y pasan 53 pruebas; su ejecución física está pendiente.
+v20 usa `objc_copyClassNamesForImage` para consultar directamente PassKitUI y PassKitCore. Su ejecución física validada vuelve a crear la vista estática. El catálogo de siete clases no incluye `PKTexturedCardView` ni resuelve el propietario del constructor observado. No se interpreta como ausencia de otra ruta gráfica.
 
-La lectura usa `vm_read_overwrite(mach_task_self(), ...)`, únicamente para implementaciones concretas de PassKitUI o PassKitCore cargadas en esta app. Nunca obtiene puertos de otros procesos, modifica instrucciones ni exporta direcciones. Reconoce stubs ARM64 estándar y limita la salida a 4.096 bytes por implementación y 128 selectores con desplazamientos. El inventario no contiene valores de propiedades de pases.
+v21 añade el nombre del módulo del propio `PKTexturedCardView`, obtenido mediante el runtime y aceptado solo bajo `/System/Library/`. Consulta también las clases de ese módulo, con límite de 10.000 clases por imagen, catálogo de 16 clases y ocho métodos relevantes por clase. Informa de hasta ocho candidatos al constructor. No instancia servicios ni modelos de tarjetas. Compila y pasan 55 pruebas; la ejecución física está pendiente.
+
+La lectura usa `vm_read_overwrite(mach_task_self(), ...)`, únicamente para implementaciones concretas de PassKitUI, PassKitCore o el módulo del propio renderizador cargado en esta app. Nunca obtiene puertos de otros procesos, modifica instrucciones ni exporta direcciones o rutas. Reconoce stubs ARM64 estándar y limita la salida a 4.096 bytes por implementación y 128 selectores con desplazamientos. El inventario no contiene valores de propiedades de pases.
 
 ## Compilación
 

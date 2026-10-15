@@ -164,6 +164,14 @@ class ReportTests(unittest.TestCase):
         self.v19_catalog(); self.report['revision']='shader_resources_v20'
         self.report['renderer_catalog']['classes']*=17
         with self.assertRaises(ValueError): validate(self.report)
+    def v21_catalog(self):
+        self.v19_catalog(); self.report['revision']='shader_resources_v21'
+        self.report['texture_probe'].update(constructor_candidates=[],class_image='SyntheticRenderer')
+    def test_v21_catalog(self):
+        self.v21_catalog(); validate(self.report)
+    def test_v21_image_path_rejected(self):
+        self.v21_catalog(); self.report['texture_probe']['class_image']='/private/user/card'
+        with self.assertRaises(ValueError): validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)
