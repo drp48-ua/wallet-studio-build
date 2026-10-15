@@ -13,6 +13,7 @@ mod airlift;
 mod airtraffic;
 mod card_gallery;
 mod app;
+mod auth_ui;
 mod apple;
 mod device;
 mod flasher;

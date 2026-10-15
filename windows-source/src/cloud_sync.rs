@@ -340,30 +340,75 @@ fn finish_login(server:&str,body:serde_json::Value,operation:&str,initial_link_c
     let encrypted=protect(&serde_json::to_vec(&session)?,false)?;
     let path=root.join("cloud-session.dpapi"); crate::storage::write_mutable(&path,&encrypted)?; Ok(session)
 }
+#[derive(Clone,Debug,Default)]
+pub struct SyncReport { pub downloaded:usize,pub uploaded:usize,pub verified:usize,pub local_pending:usize }
+impl SyncReport {
+    pub fn complete(&self)->bool { self.local_pending==0 }
+    pub fn message(&self)->String {
+        if self.downloaded+self.uploaded+self.verified+self.local_pending==0 {
+            return "Cuenta conectada. No hay copias bancarias verificadas en este perfil ni en la nube. Abre la app con esta cuenta en el PC que conserva los originales para sincronizarlos.".into();
+        }
+        let summary=format!("Copias: {} descargadas · {} subidas · {} verificadas",self.downloaded,self.uploaded,self.verified);
+        if self.local_pending==0 {summary} else {format!("{summary}. {} copias locales requieren revisión; se conservan sin subir. No se capturará un original ausente.",self.local_pending)}
+    }
+}
+#[derive(Debug)]
+enum SyncFailure {Session,Storage,Inventory,Download,Import,Export,Upload,Receipt}
+impl std::fmt::Display for SyncFailure {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { f.write_str(match self {
+        Self::Session=>"No se pudo verificar la sesión. Comprueba tu conexión o vuelve a iniciar sesión.",
+        Self::Storage=>"El archivo local necesita revisión o está en uso por otra instancia. Las copias se conservan.",
+        Self::Inventory=>"No se pudo consultar el inventario de la nube. Pulsa Sincronizar ahora para reintentar.",
+        Self::Download=>"No se pudo descargar y verificar una copia de la nube. Las copias locales se conservan.",
+        Self::Import=>"Una copia descargada requiere revisión. No se sobrescribió el original local.",
+        Self::Export=>"Hay copias locales que requieren revisión antes de sincronizar.",
+        Self::Upload=>"La nube no confirmó la subida. Comprueba la conexión o la capacidad del servicio y reintenta.",
+        Self::Receipt=>"No se pudo verificar el resultado de la sincronización. No se confirmó la copia.",
+    }) }
+}
+impl std::error::Error for SyncFailure {}
+pub fn sync_failure_message(error:&anyhow::Error)->String {
+    error.downcast_ref::<SyncFailure>().map(ToString::to_string)
+        .unwrap_or_else(||"Sincronización incompleta. Tus copias se conservan; comprueba conexión y almacenamiento.".into())
+}
 pub fn synchronize(session:&Session)->Result<()> {
-    validate_session(session)?;
-    anyhow::ensure!(!crate::storage::is_demo() && valid_server(&session.server),"cloud service unavailable"); crate::storage::ensure_ready()?;
+    let report=synchronize_report(session)?;
+    anyhow::ensure!(report.complete(),SyncFailure::Export);Ok(())
+}
+pub fn synchronize_report(session:&Session)->Result<SyncReport> {
+    let mut report=SyncReport::default();
+    validate_session(session).context(SyncFailure::Session)?;
+    anyhow::ensure!(!crate::storage::is_demo() && valid_server(&session.server),"cloud service unavailable"); crate::storage::ensure_ready().context(SyncFailure::Storage)?;
     let root=crate::storage::root(); let owner=require_owner_at(&root,session)?;
     let headers=vec![("Authorization".into(),format!("Bearer {}",session.access_token))];
-    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/bundles",session.server),&headers,&[],1024*1024)?;
+    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/bundles",session.server),&headers,&[],1024*1024).context(SyncFailure::Inventory)?;
     #[derive(Deserialize)] struct Entry { id:String,sha256:String,size:usize }
     #[derive(Deserialize)] struct Listing { bundles:Vec<Entry> }
     let listing:Listing=serde_json::from_slice(&bytes)?; anyhow::ensure!(listing.bundles.len()<=1000,"cloud inventory too large");
+    let mut remote_ids=std::collections::BTreeSet::new();
     let seen=seen_directory(&root,&owner)?; crate::storage::safe_chain(&seen)?; fs::create_dir_all(&seen)?;
     for entry in listing.bundles {
+        remote_ids.insert(entry.id.clone());
         anyhow::ensure!(entry.id.len()==64 && entry.id.bytes().all(|b|b.is_ascii_hexdigit()) && entry.id==entry.sha256 && entry.size<=LIMIT,"invalid cloud inventory");
-        if verified_seen(&root,&seen.join(&entry.id),&entry.id)? { continue; }
-        let bundle=crate::auto_update::http_request("GET",&format!("{}/v1/bundles/{}",session.server,entry.id),&headers,&[],LIMIT)?;
+        if verified_seen(&root,&seen.join(&entry.id),&entry.id)? {report.verified+=1;continue;}
+        let bundle=crate::auto_update::http_request("GET",&format!("{}/v1/bundles/{}",session.server,entry.id),&headers,&[],LIMIT).context(SyncFailure::Download)?;
         anyhow::ensure!(bundle.len()==entry.size && crate::bank_backup::sha256(&bundle)?==entry.sha256,"cloud download checksum mismatch");
-        import_bundle(&root,&bundle)?;let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&entry.id),&entry.id,manifest)?;
+        import_bundle(&root,&bundle).context(SyncFailure::Import)?;let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&entry.id),&entry.id,manifest).context(SyncFailure::Receipt)?;report.downloaded+=1;
     }
     let banks=root.join("bank-backups"); if banks.is_dir() { for entry in fs::read_dir(banks)? {
-        let bundle=export_bundle(&root,&entry?.path())?; let id=crate::bank_backup::sha256(&bundle)?;
-        if verified_seen(&root,&seen.join(&id),&id)? { continue; }
+        // A recovery or incomplete original for one card must not prevent other
+        // verified originals being uploaded. Never upload or alter the failed one.
+        let path=entry?.path();
+        let bundle=match export_bundle(&root,&path) {Ok(bundle)=>bundle,Err(_)=>{report.local_pending+=1;continue;}};
+        let id=crate::bank_backup::sha256(&bundle)?;
+        if remote_ids.contains(&id) && verified_seen(&root,&seen.join(&id),&id)? { continue; }
         let mut upload_headers=headers.clone(); upload_headers.push(("Content-Type".into(),"application/zip".into())); upload_headers.push(("X-Content-SHA256".into(),id.clone()));
-        crate::auto_update::http_request("PUT",&format!("{}/v1/bundles/{id}",session.server),&upload_headers,&bundle,65536)?;
-        let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&id),&id,manifest)?;
-    }} Ok(())
+        let response=crate::auto_update::http_request("PUT",&format!("{}/v1/bundles/{id}",session.server),&upload_headers,&bundle,65536).context(SyncFailure::Upload)?;
+        #[derive(Deserialize)] struct Confirmation {id:String,sha256:String,size:usize}
+        let confirmation:Confirmation=serde_json::from_slice(&response).context(SyncFailure::Receipt)?;
+        anyhow::ensure!(confirmation.id==id && confirmation.sha256==id && confirmation.size==bundle.len(),SyncFailure::Receipt);
+        let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&id),&id,manifest).context(SyncFailure::Receipt)?;report.uploaded+=1;
+    }} Ok(report)
 }
 
 pub fn missing_original_capture_allowed(configured:bool,synced:bool)->bool { !configured || synced }
@@ -491,7 +536,14 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         assert_ne!(fs::read(a.join("computer-id.dpapi")).unwrap(),computer_a.as_bytes());
         let input=fixture_baseline(); let path=crate::bank_backup::save_fixture_at(&a.join("bank-backups"),&input).unwrap();
         let suffix=crate::flasher::generate_token(); let email_a=format!("fixture-a-{suffix}@example.invalid");let email_b=format!("fixture-b-{suffix}@example.invalid");let password="Synthetic-Fixture-Password-2026";
-        let session_a=login(&server,&email_a,password,true,true).unwrap(); synchronize(&session_a).unwrap();
+        let session_a=login(&server,&email_a,password,true,true).unwrap();
+        let incomplete=a.join("bank-backups").join("incomplete-fixture");
+        fs::create_dir_all(&incomplete).unwrap();fs::write(incomplete.join("preserve.txt"),b"unverified local evidence").unwrap();
+        let partial=synchronize_report(&session_a).unwrap();
+        assert_eq!(partial.uploaded,1);assert_eq!(partial.local_pending,1);assert!(!partial.complete());
+        assert_eq!(fs::read(incomplete.join("preserve.txt")).unwrap(),b"unverified local evidence");
+        fs::remove_file(incomplete.join("preserve.txt")).unwrap();fs::remove_dir(incomplete).unwrap();
+        synchronize(&session_a).unwrap();
         set_root(&b);assert_ne!(computer_id().unwrap(),computer_a);let session_b=login(&server,&email_a,password,false,true).unwrap();synchronize(&session_b).unwrap();
         let imported=b.join("bank-backups").join(path.file_name().unwrap());assert_eq!(crate::bank_backup::validate_bundle_directory(&imported).unwrap(),input);
         let original_bytes=fs::read(imported.join("baseline.json")).unwrap();synchronize(&session_b).unwrap();assert_eq!(fs::read(imported.join("baseline.json")).unwrap(),original_bytes);

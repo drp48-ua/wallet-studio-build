@@ -5,6 +5,22 @@ from app import Store,Server
 from accounts import Accounts,AccountError
 
 class AccountTests(unittest.TestCase):
+ def test_resend_waits_one_minute_replaces_previous_code_and_keeps_ten_minute_expiry(self):
+  self.webhook(self.order())
+  now=int(time.time())
+  with patch('accounts.secrets.randbelow',side_effect=[123456,654321]):
+   with patch('accounts.time.time',return_value=now):self.auth.start('buyer@example.test')
+   first=self.mail[-1][1]
+   with patch('accounts.time.time',return_value=now+30):self.auth.start('buyer@example.test')
+   self.assertEqual(len(self.mail),1)
+   with patch('accounts.time.time',return_value=now+61):self.auth.start('buyer@example.test')
+  self.assertEqual(len(self.mail),2)
+  second=self.mail[-1][1]
+  self.assertNotEqual(first,second)
+  with patch('accounts.time.time',return_value=now+62):
+   with self.assertRaises(AccountError):self.auth.activate('buyer@example.test',first,'strong-fixture-password','strong-fixture-password','1'*64,'x')
+  with patch('accounts.time.time',return_value=now+662):
+   with self.assertRaises(AccountError):self.auth.activate('buyer@example.test',second,'strong-fixture-password','strong-fixture-password','1'*64,'x')
  def setUp(self):
   self.environment=patch.dict(os.environ,{'WALLET_STORAGE_MODE':'local','RENDER':''});self.environment.start();self.addCleanup(self.environment.stop)
   self.tmp=tempfile.TemporaryDirectory();self.store=Store(self.tmp.name);self.mail=[]
