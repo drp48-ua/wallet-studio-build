@@ -37,6 +37,22 @@ class StartupTests(unittest.TestCase):
             with self.assertRaises(StartupError) as caught:app.Store('/unused-synthetic')
         self.assertEqual(caught.exception.stage,'configuration')
 
+    def test_libpq_untyped_patterns_only_return_constant_categories(self):
+        patterns=(('password authentication failed','database_authentication'),('Tenant or user not found','database_identity'),('certificate verify failed','tls_verification'),('hostname mismatch','tls_verification'),('server certificate does not match host name','tls_verification'),('could not translate host name','database_dns'),('Connection refused','database_refused'),('timeout expired','timeout'))
+        for message,reason in patterns:
+            with self.subTest(reason=reason,message=message):
+                error=RuntimeError(PRIVATE+'\n'+message+'\n'+PRIVATE)
+                with self.assertRaises(StartupError) as caught:PgDatabase(PRIVATE,Mock(side_effect=error)).open()
+                self.assertEqual(caught.exception.log_line(),'startup_failed stage=database_connect reason='+reason)
+                self.assertNotIn(PRIVATE,caught.exception.log_line())
+        # Reliable protocol/type evidence takes precedence over message text.
+        error=DatabaseFailure('28P01');error.args=('certificate verify failed '+PRIVATE,)
+        with self.assertRaises(StartupError) as caught:PgDatabase(PRIVATE,Mock(side_effect=error)).open()
+        self.assertIn('reason=database_authentication sqlstate=28P01',caught.exception.log_line())
+        error=ssl.SSLCertVerificationError('password authentication failed '+PRIVATE)
+        with self.assertRaises(StartupError) as caught:PgDatabase(PRIVATE,Mock(side_effect=error)).open()
+        self.assertEqual(caught.exception.diagnostic['reason'],'tls_verification')
+
     def test_bucket_http_response_json_and_private_checks(self):
         for response,reason,status in (((401,PRIVATE.encode()),'storage_http',401),((503,PRIVATE.encode()),'storage_http',503),((200,PRIVATE.encode()),'storage_invalid_response',None),((200,b'[]'),'storage_invalid_response',None),((200,b'{"public":true}'),'storage_not_private',None)):
             with self.subTest(reason=reason,status=status):

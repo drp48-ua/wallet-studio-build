@@ -17,7 +17,7 @@ class RemoteError(ValueError):
         self.reason=reason;self.sqlstate=sqlstate;self.http_status=http_status
 
 STARTUP_STAGES=frozenset(('configuration','storage_configuration','database_connect','database_schema','account_schema','database_permissions','storage_bucket','local_storage'))
-SAFE_REASONS=frozenset(('configuration_invalid','dependency_missing','database_authentication','database_connection','database_permission','database_schema','database_error','tls_verification','tls_error','network_error','timeout','storage_http','storage_invalid_response','storage_not_private','unexpected_error'))
+SAFE_REASONS=frozenset(('configuration_invalid','dependency_missing','database_authentication','database_identity','database_dns','database_refused','database_connection','database_permission','database_schema','database_error','tls_verification','tls_error','network_error','timeout','storage_http','storage_invalid_response','storage_not_private','unexpected_error'))
 
 def safe_failure(error):
     """Only fixed categories and bounded protocol codes may reach startup logs."""
@@ -43,6 +43,18 @@ def safe_failure(error):
         elif isinstance(error,ValueError):reason='configuration_invalid'
         else:reason='unexpected_error'
     return {'reason':reason,'sqlstate':state,'http_status':status}
+
+def database_failure(error):
+    diagnostic=safe_failure(error)
+    if diagnostic['sqlstate'] or diagnostic['reason'] not in ('unexpected_error','database_connection','network_error'):
+        return diagnostic
+    # libpq handshake errors often have no SQLSTATE or typed SSL cause. Read
+    # bounded text only to select a fixed category; never retain/return/log it.
+    try:message=str(error)[:8192].casefold()
+    except Exception:message=''
+    patterns=(('password authentication failed','database_authentication'),('tenant or user not found','database_identity'),('certificate verify failed','tls_verification'),('hostname mismatch','tls_verification'),('does not match host name','tls_verification'),('could not translate host name','database_dns'),('connection refused','database_refused'),('timeout expired','timeout'))
+    diagnostic['reason']=next((reason for pattern,reason in patterns if pattern in message),'database_connection')
+    return diagnostic
 
 class StartupError(RemoteError):
     def __init__(self,stage,error):
@@ -137,10 +149,7 @@ class PgDatabase:
                 connector=psycopg.connect
             return connector(self.url,prepare_threshold=None,sslmode='verify-full',sslrootcert=os.environ.get('DATABASE_SSL_ROOT_CERT','/etc/ssl/certs/ca-certificates.crt'),connect_timeout=10)
         except Exception as error:
-            diagnostic=safe_failure(error)
-            # libpq can report transport failures without SQLSTATE or a typed
-            # SSL cause. Do not inspect or print its credential-bearing text.
-            if diagnostic['reason']=='unexpected_error':diagnostic['reason']='database_connection'
+            diagnostic=database_failure(error)
             raise StartupError('database_connect',RemoteError('database_unavailable',**diagnostic)) from None
     @contextlib.contextmanager
     def connect(self):
