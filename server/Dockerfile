@@ -5,6 +5,9 @@ RUN pip install --no-cache-dir -r requirements.txt && test -s /etc/ssl/certs/ca-
 COPY app.py /service/app.py
 COPY accounts.py /service/accounts.py
 COPY remote.py /service/remote.py
+COPY certs/supabase-root-2021.crt /service/certs/supabase-root-2021.crt
+RUN cat /etc/ssl/certs/ca-certificates.crt /service/certs/supabase-root-2021.crt > /service/certs/postgres-trust.pem
+ENV DATABASE_SSL_ROOT_CERT=/service/certs/postgres-trust.pem
 RUN useradd --uid 10001 --create-home wallet && mkdir /data && chown wallet:wallet /data
 USER wallet
 EXPOSE 8766
