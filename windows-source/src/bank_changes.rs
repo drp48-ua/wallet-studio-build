@@ -49,9 +49,73 @@ struct AssetRecord {
 }
 
 fn intent_root() -> PathBuf {
-    PathBuf::from(std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string()))
-        .join("AirCard").join("bank-change-intents")
+    crate::storage::root().join("bank-change-intents")
+}
+
+pub(crate) fn cloud_operation_dirs(root:&Path,udid:&str,hash:&str)->Result<Vec<PathBuf>> {
+    let states=matching_states_at(root,udid,hash,false)?;
+    anyhow::ensure!(states.iter().all(|(_,state)| matches!(state.phase.as_str(),"applied"|"restored")),"uncertain intent needs local recovery before cloud export");
+    Ok(states.into_iter().map(|(path,_)|path).collect())
+}
+
+pub(crate) fn validate_cloud_chain(root:&Path,udid:&str,hash:&str)->Result<()> {
+    for path in state_paths(root,false)? { let state=latest_state(&path)?;
+        anyhow::ensure!(state.udid==udid && state.card_hash==hash,"cloud intent identity mixed");
+        for entry in fs::read_dir(&path)? { let file=entry?.path(); let name=file.file_name().unwrap().to_string_lossy();
+            if name.starts_with("state-") && name.ends_with(".json") {
+                let meta=fs::symlink_metadata(&file)?; anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=MAX_STATE_BYTES,"unsafe historical intent");
+                let historical:IntentState=serde_json::from_slice(&fs::read(&file)?)?; validate_state(&path,&historical)?;
+                anyhow::ensure!(historical.udid==udid && historical.card_hash==hash && historical.revision<=state.revision,"historical intent identity mismatch");
+                anyhow::ensure!(name==format!("state-{:04}-{}.json",historical.revision,historical.phase),"historical intent filename mismatch");
+            }
+        }
+    }
+    cloud_operation_dirs(root,udid,hash)?; Ok(())
+}
+
+pub(crate) fn validate_persistence_store_at(root:&Path)->Result<()> {
+    let mut identities=std::collections::BTreeSet::new();
+    for directory in state_paths(root,false)? { let state=latest_state(&directory)?; identities.insert((state.udid,state.card_hash)); }
+    for (udid,hash) in identities {
+        // Validate every historical revision, including unfinished local intents;
+        // only cloud export additionally requires completed/applicable phases.
+        for (directory,latest) in matching_states_at(root,&udid,&hash,false)? {
+            for entry in fs::read_dir(&directory)? { let file=entry?.path(); let name=file.file_name().unwrap().to_string_lossy();
+                if name.starts_with("state-") && name.ends_with(".json") {
+                    let meta=fs::symlink_metadata(&file)?;
+                    anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=MAX_STATE_BYTES,"historical state unsafe");
+                    let state:IntentState=serde_json::from_slice(&fs::read(&file)?)?; validate_state(&directory,&state)?;
+                    anyhow::ensure!(state.udid==udid && state.card_hash==hash && state.revision<=latest.revision &&
+                        name==format!("state-{:04}-{}.json",state.revision,state.phase),"historical state identity mismatch");
+                }
+            }
+        }
+    } Ok(())
+}
+pub(crate) fn review_persistence_store_at(root:&Path,vault:&Path)->Result<()> {
+    let mut identities=std::collections::BTreeSet::new();
+    for directory in state_paths(root,false)? { identities.insert(operation_identity(&directory)?); }
+    for (udid,hash) in identities {
+        let result=(|| {for (directory,latest) in matching_states_at(root,&udid,&hash,false)? {
+            for entry in fs::read_dir(&directory)? {let file=entry?.path();let name=file.file_name().unwrap().to_string_lossy();
+                if name.starts_with("state-") && name.ends_with(".json") {
+                    crate::storage::safe_chain(&file)?;let meta=fs::symlink_metadata(&file)?;anyhow::ensure!(meta.is_file() && meta.len()<=MAX_STATE_BYTES,"historical state unsafe");
+                    let state:IntentState=serde_json::from_slice(&fs::read(&file)?)?;validate_state(&directory,&state)?;
+                    anyhow::ensure!(state.udid==udid && state.card_hash==hash && state.revision<=latest.revision && name==format!("state-{:04}-{}.json",state.revision,state.phase),"historical identity invalid");
+                }
+            }
+        }Ok::<(),anyhow::Error>(())})();
+        if result.is_err() {crate::storage::block_card_at(vault,&udid,&hash)?;}
+    }Ok(())
+}
+pub(crate) fn operation_identity(directory:&Path)->Result<(String,String)> {
+    let state=latest_metadata(directory)?;Ok((state.udid,state.card_hash))
+}
+#[cfg(test)] pub(crate) fn save_fixture_applied_at(root:&Path,udid:&str,hash:&str,pairs:&[(String,Vec<u8>)])->Result<PathBuf> {
+    let directory=save_intent_at(root,udid,hash,pairs,true)?;append_phase(&directory,"applied")?;Ok(directory)
+}
+#[cfg(test)] pub(crate) fn restore_fixture_at(directory:&Path)->Result<()> {
+    append_phase(directory,"originals_verified")?;append_phase(directory,"restored")
 }
 
 fn identity_key(udid: &str, card_hash: &str) -> Result<String> {
@@ -125,8 +189,9 @@ fn validate_assets(pairs: &[(String, Vec<u8>)]) -> Result<BTreeMap<String, Asset
     Ok(records)
 }
 
-fn latest_state(operation_dir: &Path) -> Result<IntentState> {
-    let mut paths = fs::read_dir(operation_dir)?.filter_map(|item| item.ok())
+fn latest_metadata(operation_dir: &Path) -> Result<IntentState> {
+    crate::storage::safe_chain(operation_dir)?;
+    let mut paths = fs::read_dir(operation_dir)?.collect::<std::io::Result<Vec<_>>>()?.into_iter()
         .map(|item| item.path())
         .filter(|path| path.file_name().and_then(|n| n.to_str())
             .is_some_and(|n| n.starts_with("state-") && n.ends_with(".json")))
@@ -138,9 +203,11 @@ fn latest_state(operation_dir: &Path) -> Result<IntentState> {
         "Write-intent state file is unsafe or too large");
     let state: IntentState = serde_json::from_slice(&fs::read(path)?)
         .context("Write-intent state is corrupt")?;
-    validate_state(operation_dir, &state)?;
+    identity_key(&state.udid,&state.card_hash)?;
+    anyhow::ensure!(valid_operation_id(&state.operation_id) && operation_dir.file_name().and_then(|n|n.to_str())==Some(&state.operation_id),"intent metadata identity invalid");
     Ok(state)
 }
+fn latest_state(operation_dir:&Path)->Result<IntentState> {let state=latest_metadata(operation_dir)?;validate_state(operation_dir,&state)?;Ok(state)}
 
 fn validate_state(operation_dir: &Path, state: &IntentState) -> Result<()> {
     anyhow::ensure!(matches!(state.version, 1 | INTENT_VERSION) && valid_operation_id(&state.operation_id),
@@ -177,6 +244,7 @@ fn read_payload(operation_dir: &Path, leaf: &str, expected_size: usize) -> Resul
 }
 
 fn state_paths(root: &Path, own_creation_lock: bool) -> Result<Vec<PathBuf>> {
+    crate::storage::safe_chain(root)?;
     if !root.exists() { return Ok(Vec::new()); }
     let metadata = fs::symlink_metadata(root)?;
     anyhow::ensure!(metadata.is_dir() && !metadata.file_type().is_symlink(),
@@ -184,6 +252,7 @@ fn state_paths(root: &Path, own_creation_lock: bool) -> Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
+        crate::storage::safe_chain(&path)?;
         if path.file_name().and_then(|n| n.to_str()) == Some(".create.lock") {
             if own_creation_lock { continue; }
             bail!("An interrupted or concurrent bank write-intent creation needs review at {}", path.display());
@@ -206,8 +275,20 @@ fn matching_states_at(root: &Path, udid: &str, card_hash: &str,
     let _ = identity_key(udid, card_hash)?;
     let mut found = Vec::new();
     for directory in state_paths(root, own_creation_lock)? {
-        let state = latest_state(&directory)?;
+        let state = latest_metadata(&directory)?;
+        // Unknown identities/JSON remain global failures; known foreign payloads
+        // are checked only when that exact device/card is requested.
+        for entry in fs::read_dir(&directory)? {let file=entry?.path();let name=file.file_name().unwrap().to_string_lossy();
+            if name.starts_with("state-") && name.ends_with(".json") {
+                crate::storage::safe_chain(&file)?;let metadata=fs::symlink_metadata(&file)?;
+                anyhow::ensure!(metadata.is_file() && metadata.len()<=MAX_STATE_BYTES,"historical state unsafe");
+                let historical:IntentState=serde_json::from_slice(&fs::read(&file)?)?;identity_key(&historical.udid,&historical.card_hash)?;
+                anyhow::ensure!(historical.udid==state.udid && historical.card_hash==state.card_hash && historical.operation_id==state.operation_id,"historical identity unknown");
+                if state.udid==udid && state.card_hash==card_hash {validate_state(&directory,&historical)?;}
+            }
+        }
         if state.udid == udid && state.card_hash == card_hash {
+            validate_state(&directory,&state)?;
             found.push((directory, state));
         }
     }
@@ -423,6 +504,18 @@ mod tests {
         CARD_ARTWORK_ASSETS.iter().map(|leaf| (leaf.to_string(), if leaf.ends_with(".pdf") {
             b"%PDF-1.7\n%%EOF".to_vec()
         } else { png() })).collect()
+    }
+    #[test] fn customer_foreign_payload_corruption_is_scoped_but_unknown_json_blocks() {
+        let root=std::env::temp_dir().join(format!("ws-history-fixture-{}",crate::flasher::generate_token()));
+        let hash="OM6NYhwXMZrAw0sRUjR62wmF4ZQ=";
+        let a=save_intent_at(&root,"synthetic-A",hash,&pairs(),true).unwrap();
+        let b=save_intent_at(&root,"synthetic-B",hash,&pairs(),true).unwrap();
+        fs::write(a.join("cardBackgroundCombined@3x.png"),b"corrupted fixture").unwrap();
+        assert!(load_latest_at(&root,"synthetic-A",hash).is_err());assert!(load_latest_at(&root,"synthetic-B",hash).unwrap().is_some());
+        let vault=std::env::temp_dir().join(format!("ws-review-fixture-{}",crate::flasher::generate_token())); review_persistence_store_at(&root,&vault).unwrap();
+        assert!(crate::storage::ensure_card_ready_at(&vault,"synthetic-A",hash).is_err());assert!(crate::storage::ensure_card_ready_at(&vault,"synthetic-B",hash).is_ok());
+        assert!(b.is_dir());fs::write(a.join("state-0001-prepared.json"),b"not JSON").unwrap();
+        assert!(load_latest_at(&root,"synthetic-B",hash).is_err());fs::remove_dir_all(root).unwrap();fs::remove_dir_all(vault).unwrap();
     }
 
     #[test]

@@ -56,9 +56,22 @@ enum LocalAssetRecord {
 }
 
 fn baseline_root() -> PathBuf {
-    PathBuf::from(std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string()))
-        .join("AirCard").join("bank-backups")
+    crate::storage::root().join("bank-backups")
+}
+
+pub(crate) fn bundle_identity(directory:&Path)->Result<(String,String)> {
+    crate::storage::safe_chain(directory)?;
+    crate::storage::safe_chain(&directory.join("baseline.json"))?;
+    let metadata=fs::symlink_metadata(directory.join("baseline.json"))?;
+    anyhow::ensure!(metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len()<=64*1024,"unsafe baseline metadata");
+    let manifest:DiskManifest=serde_json::from_slice(&fs::read(directory.join("baseline.json"))?)?;
+    let root=directory.parent().context("baseline parent missing")?;
+    anyhow::ensure!(bundle_path(root,&manifest.udid,&manifest.card_hash)?==directory,"baseline identity directory mismatch");
+    Ok((manifest.udid,manifest.card_hash))
+}
+pub(crate) fn validate_bundle_directory(directory:&Path)->Result<Baseline> {
+    let (udid,hash)=bundle_identity(directory)?;
+    load_baseline_at(directory.parent().context("baseline parent missing")?,&udid,&hash)?.context("baseline missing")
 }
 
 fn identity_key(udid: &str, card_hash: &str) -> Result<String> {
@@ -162,7 +175,7 @@ fn validate_remote_format(name: &str, bytes: &[u8]) -> Result<()> {
 
 fn save_baseline_at(root: &Path, baseline: &Baseline) -> Result<PathBuf> {
     let (declaration, disk) = validate_baseline(baseline)?;
-    fs::create_dir_all(root)?;
+    crate::storage::safe_chain(root)?;fs::create_dir_all(root)?;
     let root_meta = fs::symlink_metadata(root)?;
     anyhow::ensure!(root_meta.is_dir() && !root_meta.file_type().is_symlink(),
         "Bank-artwork backup root must be a real directory, not a symlink");
@@ -185,6 +198,7 @@ fn save_baseline_at(root: &Path, baseline: &Baseline) -> Result<PathBuf> {
 
 fn load_baseline_at(root: &Path, udid: &str, card_hash: &str) -> Result<Option<Baseline>> {
     let directory = bundle_path(root, udid, card_hash)?;
+    crate::storage::safe_chain(&directory)?;
     if !directory.exists() { return Ok(None); }
     anyhow::ensure!(!fs::symlink_metadata(&directory)?.file_type().is_symlink(),
         "Baseline directory must not be a symbolic link");
@@ -239,6 +253,7 @@ fn load_baseline_at(root: &Path, udid: &str, card_hash: &str) -> Result<Option<B
 }
 
 fn read_regular(path: &Path) -> Result<Vec<u8>> {
+    crate::storage::safe_chain(path)?;
     let metadata = fs::symlink_metadata(path).with_context(|| format!("Missing baseline file {}", path.display()))?;
     anyhow::ensure!(metadata.is_file() && !metadata.file_type().is_symlink(),
         "Baseline artifact is not a regular file: {}", path.display());
@@ -252,8 +267,11 @@ fn read_regular(path: &Path) -> Result<Vec<u8>> {
 /// Save an immutable, verified baseline. A second save for the same identity
 /// fails instead of replacing the first evidence set.
 pub fn save_baseline(baseline: &Baseline) -> Result<PathBuf> {
+    let _lease=crate::storage::operation_lease()?;
     save_baseline_at(&baseline_root(), baseline)
 }
+
+#[cfg(test)] pub(crate) fn save_fixture_at(root:&Path,baseline:&Baseline)->Result<PathBuf> { save_baseline_at(root,baseline) }
 
 /// Load and fully verify a baseline, returning None only when no bundle exists.
 pub fn load_baseline(udid: &str, card_hash: &str) -> Result<Option<Baseline>> {
@@ -336,13 +354,13 @@ fn digest(bytes: &[u8], algorithm_name: &str, output: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
-fn sha256(bytes: &[u8]) -> Result<String> {
+pub(crate) fn sha256(bytes: &[u8]) -> Result<String> {
     let mut output = [0u8; 32];
     digest(bytes, "SHA256", &mut output)?;
     Ok(output.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn sha1(bytes: &[u8]) -> Result<String> {
+pub(crate) fn sha1(bytes: &[u8]) -> Result<String> {
     let mut output = [0u8; 20];
     digest(bytes, "SHA1", &mut output)?;
     Ok(output.iter().map(|byte| format!("{byte:02x}")).collect())

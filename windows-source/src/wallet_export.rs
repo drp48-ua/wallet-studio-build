@@ -57,9 +57,7 @@ struct Journal {
 }
 
 fn journal_root() -> PathBuf {
-    PathBuf::from(std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string()))
-        .join("AirCard").join("wallet-export-recovery")
+    crate::storage::root().join("wallet-export-recovery")
 }
 
 fn create_operation_dir(root: &Path, token: &str) -> Result<PathBuf> {
@@ -190,6 +188,66 @@ pub struct PendingRecovery {
     pub original_path: Option<PathBuf>,
 }
 
+/// Valid journals are scoped to their phone because Books state is per-device.
+/// An unreadable ledger remains globally blocking; no selected phone is also
+/// conservative. This never changes or completes any recovery evidence.
+pub fn pending_recovery_blocks_device(pending: std::result::Result<&[PendingRecovery], ()>, selected: Option<&str>) -> bool {
+    pending_recovery_blocks_device_except(pending, selected, None)
+}
+
+#[cfg(test)]
+mod pending_device_tests {
+    use super::*;
+    fn pending(udid: &str, card: &str, directory: &str) -> PendingRecovery {
+        PendingRecovery { operation_dir: PathBuf::from(directory), phase: "export-uncertain".into(),
+            udid: udid.into(), card_hash: card.into(), leaf: "cardBackgroundCombined@2x.png".into(), original_path: None }
+    }
+    #[test]
+    fn valid_foreign_pending_does_not_block_current_phone_or_require_an_original_file() {
+        let ledger = vec![pending("phone-A", "card-A", "pending-A")];
+        assert!(!pending_recovery_blocks_device(Ok(&ledger),Some("phone-B")));
+        assert!(pending_recovery_blocks_device(Ok(&ledger),Some("PHONE-a")));
+        assert!(pending_recovery_blocks_device(Ok(&ledger),None));
+        assert!(ledger[0].original_path.is_none());
+    }
+    #[test]
+    fn all_cards_on_current_phone_share_the_books_recovery_block_and_mixed_ledgers_block() {
+        let same_phone_other_card = vec![pending("phone-B", "another-card", "pending-B")];
+        assert!(pending_recovery_blocks_device(Ok(&same_phone_other_card),Some("phone-B")));
+        let mixed = vec![pending("phone-A", "card-A", "pending-A"), pending("phone-B", "another-card", "pending-B")];
+        assert!(pending_recovery_blocks_device(Ok(&mixed),Some("phone-B")));
+        assert!(pending_recovery_blocks_device(Ok(&mixed),None));
+        assert!(!pending_recovery_blocks_device(Ok(&mixed),Some("phone-C")));
+    }
+    #[test]
+    fn unknown_or_corrupt_ledger_is_global_fail_closed_even_without_pending_rows() {
+        for selected in [None,Some("phone-A"),Some("phone-B")] {
+            assert!(pending_recovery_blocks_device(Err(()),selected));
+        }
+        assert!(!pending_recovery_blocks_device(Ok(&[]),None));
+    }
+    #[test]
+    fn allowed_recovery_is_only_an_exact_operation_on_the_same_phone() {
+        let current = pending("phone-B", "card-B", "pending-B");
+        let foreign = pending("phone-A", "card-A", "pending-A");
+        let ledger = vec![foreign,current];
+        assert!(!pending_recovery_blocks_device_except(Ok(&ledger),Some("phone-B"),Some(Path::new("pending-B"))));
+        assert!(pending_recovery_blocks_device_except(Ok(&ledger),Some("phone-B"),Some(Path::new("pending-A"))));
+        assert!(pending_recovery_blocks_device_except(Ok(&ledger),Some("phone-B"),Some(Path::new("pending-B-different"))));
+        assert!(pending_recovery_blocks_device_except(Err(()),Some("phone-B"),Some(Path::new("pending-B"))));
+    }
+}
+
+fn pending_recovery_blocks_device_except(pending: std::result::Result<&[PendingRecovery], ()>,
+    selected: Option<&str>, allowed_operation: Option<&Path>) -> bool {
+    match pending {
+        Err(()) => true,
+        Ok(pending) => pending.iter().any(|operation|
+            selected.is_none_or(|udid| operation.udid.eq_ignore_ascii_case(udid))
+                && allowed_operation != Some(operation.operation_dir.as_path())),
+    }
+}
+
 fn latest_journal(operation_dir: &Path) -> Result<Journal> {
     let mut states = fs::read_dir(operation_dir)?.filter_map(|item| item.ok())
         .map(|item| item.path())
@@ -222,7 +280,11 @@ fn validate_journal(journal: &Journal) -> Result<()> {
 }
 
 fn validate_operation_dir(operation_dir: &Path, journal: &Journal) -> Result<()> {
-    anyhow::ensure!(operation_dir.parent() == Some(journal_root().as_path())
+    validate_operation_dir_at(operation_dir,journal,&journal_root())
+}
+fn validate_operation_dir_at(operation_dir:&Path,journal:&Journal,root:&Path)->Result<()> {
+    crate::storage::safe_chain(operation_dir)?;
+    anyhow::ensure!(operation_dir.parent() == Some(root)
         && operation_dir.file_name().and_then(|name| name.to_str()) == Some(journal.token.as_str()),
         "Recovery directory does not match the journal token");
     anyhow::ensure!(!fs::symlink_metadata(operation_dir)?.file_type().is_symlink(),
@@ -231,7 +293,10 @@ fn validate_operation_dir(operation_dir: &Path, journal: &Journal) -> Result<()>
 }
 
 pub fn pending_recovery_operations() -> Result<Vec<PendingRecovery>> {
-    let root = journal_root();
+    pending_recovery_operations_at(&journal_root())
+}
+pub(crate) fn pending_recovery_operations_at(root:&Path)->Result<Vec<PendingRecovery>> {
+    crate::storage::safe_chain(root)?;
     if !root.exists() { return Ok(Vec::new()); }
     let mut pending = Vec::new();
     for item in fs::read_dir(root)? {
@@ -244,7 +309,7 @@ pub fn pending_recovery_operations() -> Result<Vec<PendingRecovery>> {
                 || entry.file_name().to_string_lossy().ends_with(".original"));
         if !has_state { continue; }
         let journal = latest_journal(&path)?;
-        validate_operation_dir(&path, &journal)?;
+        validate_operation_dir_at(&path, &journal,root)?;
         if journal.phase == "complete" { continue; }
         let mut original_path = None;
         if let Some(expected) = journal.original_sha256.as_deref() {
@@ -296,6 +361,7 @@ fn verified_original_in(operation_dir: &Path, journal: &Journal) -> Result<Vec<u
 pub fn resume_pending_return<L>(operation_dir: &Path, udid: &str, mode: ConnectionMode,
     mut log: L) -> Result<()>
 where L: FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;
     let mut journal = latest_journal(operation_dir)?;
     validate_operation_dir(operation_dir, &journal)?;
     anyhow::ensure!(journal.udid.eq_ignore_ascii_case(udid), "Recovery journal belongs to another device");
@@ -481,11 +547,12 @@ where L: FnMut(&str) {
 pub fn capture_verified_original_asset<L>(udid: &str, mode: ConnectionMode,
     card_hash: &str, leaf: &str, mut log: L) -> Result<Vec<u8>>
 where L: FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;
     anyhow::ensure!(is_exact_card_hash(card_hash), "Invalid Wallet card identifier");
     anyhow::ensure!(valid_leaf(leaf), "Artwork name must be a single file name");
     crate::device::ensure_wallet_version_supported(udid)?;
     let pending = pending_recovery_operations()?;
-    anyhow::ensure!(pending.is_empty(),
+    anyhow::ensure!(!pending_recovery_blocks_device(Ok(&pending), Some(udid)),
         "A previous Wallet artwork operation needs recovery review before another export: {}",
         pending.iter().map(|item| format!("{} ({})", item.operation_dir.display(), item.phase)).collect::<Vec<_>>().join(", "));
     let preimage_session = ActiveDeviceSession::open(Some(udid), mode)?;
@@ -579,6 +646,7 @@ where L: FnMut(&str) {
 pub fn inspect_bank_overrides<L>(udid: &str, mode: ConnectionMode, card_hash: &str,
     returned_manifest: &[u8], mut log: L) -> Result<BTreeMap<String, MetadataState>>
 where L: FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;
     inspect_bank_overrides_inner(udid, mode, card_hash, returned_manifest, None, &mut log)
 }
 
@@ -593,7 +661,7 @@ where L: FnMut(&str) {
     anyhow::ensure!(valid_resource(BANK_MANIFEST, returned_manifest), "No verified returned bank manifest supplied");
     crate::device::ensure_wallet_version_supported(udid)?;
     let pending = pending_recovery_operations()?;
-    anyhow::ensure!(pending.iter().all(|item| allowed_pending == Some(item.operation_dir.as_path())),
+    anyhow::ensure!(!pending_recovery_blocks_device_except(Ok(&pending), Some(udid), allowed_pending),
         "Pending recovery must finish before inspection");
     let session = ActiveDeviceSession::open(Some(udid), mode)?;
     let afc = AfcClient::new(&session)?;
@@ -675,7 +743,7 @@ where L: FnMut(&str) {
         "Invalid scoped AFC inspection target");
     crate::device::ensure_wallet_version_supported(udid)?;
     let pending = pending_recovery_operations()?;
-    anyhow::ensure!(pending.iter().all(|item| allowed_pending == Some(item.operation_dir.as_path())),
+    anyhow::ensure!(!pending_recovery_blocks_device_except(Ok(&pending), Some(udid), allowed_pending),
         "Pending recovery must finish before scoped AFC inspection");
     let session = ActiveDeviceSession::open(Some(udid), mode)?;
     let afc = AfcClient::new(&session)?;
@@ -761,7 +829,7 @@ pub fn remove_verified_cache_leaf<L>(udid: &str, mode: ConnectionMode, card_hash
 where L: FnMut(&str) {
     anyhow::ensure!(matches!(suffix, ".cache" | ".pkcache") && valid_suffix_leaf(suffix, leaf),
         "Invalid cache removal target");
-    anyhow::ensure!(pending_recovery_operations()?.is_empty(),
+    anyhow::ensure!(!pending_recovery_blocks_device(Ok(&pending_recovery_operations()?), Some(udid)),
         "A prior export needs recovery before cache invalidation");
     match inspect_scoped_leaf(udid, mode, card_hash, suffix, leaf, None, &mut log)? {
         MetadataState::Absent => {
@@ -880,7 +948,7 @@ where L: FnMut(&str) {
     anyhow::ensure!(intent.phase != "restored" && intent.assets.get(leaf).is_some_and(|bytes| bytes == expected_own_bytes),
         "Refusing removal: target bytes are not bound to the active Wallet Studio write intent");
     crate::device::ensure_wallet_version_supported(udid)?;
-    anyhow::ensure!(pending_recovery_operations()?.is_empty(),
+    anyhow::ensure!(!pending_recovery_blocks_device(Ok(&pending_recovery_operations()?), Some(udid)),
         "A prior export needs recovery before removing a bank override");
 
     let current = inspect_bank_overrides_inner(udid, mode, card_hash, &baseline.manifest_bytes, None, &mut log)?;
