@@ -172,6 +172,18 @@ class ReportTests(unittest.TestCase):
     def test_v21_image_path_rejected(self):
         self.v21_catalog(); self.report['texture_probe']['class_image']='/private/user/card'
         with self.assertRaises(ValueError): validate(self.report)
+    def v22_engine(self):
+        self.v21_catalog(); self.report['revision']='shader_resources_v22'
+        self.report['engine_inventory']=[{'class_name':name,'available':False,'instance_methods':{'names':[],'truncated':False},'class_methods':{'names':[],'truncated':False}} for name in ('PKTexturedCardRenderer','PKTextureLoader','PKMetalRenderLoop')]
+        for key in ('engine_state_before','engine_state_after'):self.report['renderer_probe'][key]={'found':False,'verified':False,'paused':False,'motion_enabled':False}
+    def test_v22_engine(self):
+        self.v22_engine(); validate(self.report)
+    def test_v22_unverified_state_rejected(self):
+        self.v22_engine(); self.report['renderer_probe']['engine_state_after']['paused']=True
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v22_engine_private_method_rejected(self):
+        self.v22_engine(); self.report['engine_inventory'][0]['instance_methods']['names']=['/private/card']
+        with self.assertRaises(ValueError): validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

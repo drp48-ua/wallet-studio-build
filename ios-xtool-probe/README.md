@@ -18,7 +18,9 @@ v19 repitió la vista estática, pero detuvo el catálogo al superar el límite 
 
 v20 usa `objc_copyClassNamesForImage` para consultar directamente PassKitUI y PassKitCore. Su ejecución física validada vuelve a crear la vista estática. El catálogo de siete clases no incluye `PKTexturedCardView` ni resuelve el propietario del constructor observado. No se interpreta como ausencia de otra ruta gráfica.
 
-v21 añade el nombre del módulo del propio `PKTexturedCardView`, obtenido mediante el runtime y aceptado solo bajo `/System/Library/`. Consulta también las clases de ese módulo, con límite de 10.000 clases por imagen, catálogo de 16 clases y ocho métodos relevantes por clase. Informa de hasta ocho candidatos al constructor. No instancia servicios ni modelos de tarjetas. Compila y pasan 55 pruebas; la ejecución física está pendiente.
+v21 se ejecutó y localizó PassKitUIFoundation como módulo del propio renderizador. El propietario único del constructor de tres mapas es `PKAppleCashCardView`, cuya implementación convierte los CGImage en cargas de textura. El catálogo contiene `PKTexturedCardRenderer`, `PKTextureLoader` y `PKMetalRenderLoop`. La vista sigue aceptada y las muestras UIKit siguen grises. No se identifica esto con una prueba del contenido GPU.
+
+v22 añade inventarios acotados de métodos de esas tres clases concretas y lee los getters genuinos de pausa y movimiento de la vista propia, antes y después de las muestras. No cambia esas propiedades. Compila y pasan 58 pruebas; la ejecución física está pendiente. El código capturado y los reportes físicos permanecen locales.
 
 La lectura usa `vm_read_overwrite(mach_task_self(), ...)`, únicamente para implementaciones concretas de PassKitUI, PassKitCore o el módulo del propio renderizador cargado en esta app. Nunca obtiene puertos de otros procesos, modifica instrucciones ni exporta direcciones o rutas. Reconoce stubs ARM64 estándar y limita la salida a 4.096 bytes por implementación y 128 selectores con desplazamientos. El inventario no contiene valores de propiedades de pases.
 
@@ -33,7 +35,7 @@ xtool dev build --configuration release --ipa
 python3 -m unittest discover -s tests -v
 ```
 
-Compilar en el sistema de archivos Linux. El SDK aparece como `darwin`. El producto biblioteca aporta `main` al ejecutable generado por xtool. `source-parity.json` conserva los hashes de la instantánea local de los ocho archivos Objective-C; `Probe.m` corresponde a `main.m` renombrado para SwiftPM.
+Compilar en el sistema de archivos Linux. El SDK aparece como `darwin`. El producto biblioteca aporta `main` al ejecutable generado por xtool. `source-parity.json` conserva los hashes de la instantánea local de los nueve archivos Objective-C; `Probe.m` corresponde a `main.m` renombrado para SwiftPM.
 
 No añadir `--sign`: la compilación no necesita credenciales Apple en xtool. El propietario firma con Sideloadly e introduce personalmente sus credenciales. La firma cambia el hash y puede cambiar el identificador.
 

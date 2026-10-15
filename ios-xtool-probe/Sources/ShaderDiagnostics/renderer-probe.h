@@ -5,6 +5,7 @@
 #import "admission-probe.h"
 #import "profile-probe.h"
 #import "material-input-probe.h"
+#import "engine-probe.h"
 
 static NSArray *ReadSyntheticCenter(UIView *view, unsigned char *alpha) {
     UIGraphicsImageRenderer *renderer = StandardSyntheticRenderer(view.bounds.size);
@@ -46,6 +47,7 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         @"initializer_names": @[],
         @"admission_probe": @{@"status":@"unknown",@"getter_names":@[],@"trace_truncated":@NO,@"constructor_nil_parity":@NO},
         @"profile_probe": EmptySyntheticProfileResult(),
+        @"engine_state_before":EmptyOwnEngineState(),@"engine_state_after":EmptyOwnEngineState(),
         @"material_inputs": [@{@"baseline_view_nil":@NO,@"complete_material_bound":@NO,@"image_ref_count":@0,@"candidate_view_created":@NO} mutableCopy],
         @"view_kinds": @[], @"samples_rgb": @[], @"three_phases_observed": @NO} mutableCopy];
     NSDictionary *control = passProbe[@"live_reference"];
@@ -174,6 +176,7 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
             char type[32]; method_getReturnType(presentMethod,type,sizeof(type));
             if (type[0]=='v') { void (*didPresent)(id,SEL) = (void *)method_getImplementation(presentMethod); didPresent(view,present); }
         }
+        result[@"engine_state_before"]=OwnEngineState(view,0);
         NSMutableSet *kinds = [NSMutableSet set]; GatherSyntheticViewKinds(view,kinds,0);
         result[@"view_kinds"] = [[kinds allObjects] sortedArrayUsingSelector:@selector(compare:)];
         NSMutableArray *samples = [NSMutableArray array]; result[@"samples_rgb"] = samples;
@@ -183,6 +186,7 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
                     NSArray *rgb = ReadSyntheticCenter(view,NULL);
                     [samples addObject:rgb];
                     if (i==5) {
+                        result[@"engine_state_after"]=OwnEngineState(view,0);
                         BOOL phases[3]={NO,NO,NO};
                         for (NSArray *sample in samples) if (sample.count==3) for (NSUInteger phase=0;phase<3;++phase) {
                             BOOL dominant=[sample[phase] intValue]>200;
