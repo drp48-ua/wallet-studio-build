@@ -110,6 +110,17 @@ class ReportTests(unittest.TestCase):
     def test_v15_rejects_false_view(self):
         self.v15_material(); self.report['renderer_probe']['material_inputs']['candidate_view_created']=True
         with self.assertRaises(ValueError): validate(self.report)
+    def v16_capture(self):
+        self.v15_material(); self.report['revision']='shader_resources_v16'
+        self.report['renderer_probe'].update(capture_control_rgb=[],capture_state={'application_active':True,'host_in_window':True})
+    def test_v16_unknown(self):
+        self.v16_capture(); validate(self.report)
+    def test_v16_false_red_rejected(self):
+        self.v16_capture(); self.report['renderer_probe'].update(capture_control=True,capture_control_rgb=[0,0,0])
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v16_unsafe_rgb_rejected(self):
+        self.v16_capture(); self.report['renderer_probe']['capture_control_rgb']=[255,0,999]
+        with self.assertRaises(ValueError): validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

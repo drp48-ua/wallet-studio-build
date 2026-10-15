@@ -39,6 +39,9 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         @"view_created": @NO, @"shader_source_exact": @NO, @"capture_control": @NO,
         @"synthetic_model": @"PKPaymentPass",
         @"material_bound": @NO, @"native_image_set_type": @0,
+        @"capture_control_rgb": @[],
+        @"capture_state": @{@"application_active":@((BOOL)(UIApplication.sharedApplication.applicationState==UIApplicationStateActive)),
+            @"host_in_window":@((BOOL)(host.window!=nil))},
         @"initializer_names": @[],
         @"admission_probe": @{@"status":@"unknown",@"getter_names":@[],@"trace_truncated":@NO,@"constructor_nil_parity":@NO},
         @"profile_probe": EmptySyntheticProfileResult(),
@@ -77,6 +80,7 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         captureControl.backgroundColor = UIColor.redColor;
         [host addSubview:captureControl]; [captureControl layoutIfNeeded];
         NSArray *controlRGB = ReadSyntheticCenter(captureControl);
+        result[@"capture_control_rgb"]=controlRGB;
         [captureControl removeFromSuperview];
         BOOL captured = controlRGB.count == 3 && [controlRGB[0] intValue]>220 &&
             [controlRGB[1] intValue]<30 && [controlRGB[2] intValue]<30;

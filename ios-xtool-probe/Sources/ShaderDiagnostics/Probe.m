@@ -253,14 +253,14 @@ static NSDictionary *ProbeSyntheticFileLoading(NSDictionary *discovery) {
     view.view.backgroundColor = UIColor.systemBackgroundColor;
     self.window.rootViewController = view; [self.window makeKeyAndVisible];
     UILabel *label = [UILabel new]; label.numberOfLines = 0;
-    label.text = @"Shaders v15 · preparando diagnóstico";
+    label.text = @"Shaders v16 · preparando diagnóstico";
     label.translatesAutoresizingMaskIntoConstraints = NO;
     [view.view addSubview:label];
     [NSLayoutConstraint activateConstraints:@[
         [label.topAnchor constraintEqualToAnchor:view.view.safeAreaLayoutGuide.topAnchor constant:20],
         [label.leadingAnchor constraintEqualToAnchor:view.view.leadingAnchor constant:16],
         [label.trailingAnchor constraintEqualToAnchor:view.view.trailingAnchor constant:-16]]];
-    dispatch_async(dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1*NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         NSString *framework = @"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore";
         BOOL loaded = dlopen(framework.UTF8String, RTLD_NOW | RTLD_LOCAL) != NULL;
         dlopen("/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI", RTLD_NOW | RTLD_LOCAL);
@@ -268,7 +268,7 @@ static NSDictionary *ProbeSyntheticFileLoading(NSDictionary *discovery) {
         NSDictionary *loader = ProbeSyntheticFileLoading(discovery);
         NSDictionary *passProbe = ProbeSyntheticPass(loader);
         NSMutableDictionary *rendererProbe = ProbeSyntheticRenderer(passProbe,view.view);
-        NSDictionary *report = @{@"schema": @1, @"revision": @"shader_resources_v15",
+        NSDictionary *report = @{@"schema": @1, @"revision": @"shader_resources_v16",
             @"scope": @"synthetic_accessors_and_own_files_only", @"Wallet_animation_proven": @NO,
             @"runtime_iOS": UIDevice.currentDevice.systemVersion,
             @"environment": TARGET_OS_SIMULATOR ? @"simulator" : @"device_app_own_sandbox",
@@ -278,7 +278,7 @@ static NSDictionary *ProbeSyntheticFileLoading(NSDictionary *discovery) {
         NSURL *directory = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         NSData *data = [NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
         BOOL saved = [data writeToURL:[directory URLByAppendingPathComponent:@"shader-report.json"] atomically:YES];
-        label.text = saved ? @"Shaders v15 · diagnóstico guardado\nNo acredita animación en Wallet." : @"Shaders v15 · informe no guardado";
+        label.text = saved ? @"Shaders v16 · diagnóstico guardado\nNo acredita animación en Wallet." : @"Shaders v16 · informe no guardado";
         });
     });
     return YES;

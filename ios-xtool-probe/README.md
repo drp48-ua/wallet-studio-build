@@ -11,6 +11,7 @@ Esta app separada mide la ruta de shaders y el perfil de visualizaciÃ³n usando o
 - La revisión v14 verifica la firma y el módulo del constructor `PKLiveRenderedCardFaceView initWithFrame:pass:`. Lee exactamente 4.096 bytes de ese código usando `vm_read_overwrite(mach_task_self(), ...)`, sin obtener puertos de otros procesos ni modificar instrucciones. Reconoce únicamente stubs ARM64 estándar de selectores Objective-C y exporta como máximo 128 nombres con sus desplazamientos dentro de la ventana de código. Comprueba que los nombres son selectores registrados. No exporta direcciones ni rutas. La captura no equivale a una vista creada ni a ejecución de shaders.
 - La revisión v14 se ejecutó y su informe pasó el validador. El código de la rama para el tipo derivado 1 obtiene `diffuseMaterialPropertyImage`, `metalnessMaterialPropertyImage`, `normalMaterialPropertyImage` y sus `imageRef`, y llama a `initWithDiffuse:metalness:normal:`. Los nombres resueltos son referencias estáticas dentro de una ventana de código; no equivalen a una traza de llamadas ejecutadas. La ventana puede incluir código contiguo.
 - La revisión v15 conserva el intento inicial con solo diffuse. Después de un resultado nil, completa únicamente los otros dos mapas con PNG propios (metal negro y normales planas), verifica las firmas, los getters, tres CGImage no vacíos y la identidad del conjunto. Reintenta la vista y conserva las seis muestras de color. Una vista creada con mapas completos no prueba que se consuma el fragment shader ni que exista animación.
+- La revisión v15 se ejecutó dos veces: ambas se detuvieron en `capture_control_failed`, antes del intento con mapas completos. Esas ejecuciones no evalúan la hipótesis de materiales. La revisión v16 mantiene el criterio rojo y añade RGB acotado del control, estado activo de la aplicación y presencia de la ventana. Programa el diagnóstico un segundo después del arranque para observarlo fuera del callback inicial.
 - `source-parity.json` documenta los hashes de los ocho archivos Objective-C de la revisiÃ³n preparada. `Probe.m` conserva los bytes de su `main.m`, renombrado para evitar que SwiftPM lo trate como un objetivo ejecutable.
 
 ## Preparar el SDK y compilar
@@ -28,9 +29,9 @@ python3 -m unittest discover -s tests -v
 
 No aÃ±adir `--sign`: esta compilaciÃ³n no necesita credenciales de Apple en xtool. El propietario puede firmar e instalar con Sideloadly, introduciendo personalmente sus credenciales cuando corresponda.
 
-## Paquete v15
+## Paquete v16
 
-`xtool/ShaderDiagnostics.ipa` sin firma: 141.183 bytes, SHA-256 `0fe0d718e2ca7598e6959dd0abba1e6dbff1b02904aa23b233700b66fa8cdf3b`. ZIP Ã­ntegro, ejecutable Mach-O arm64, mÃ­nimo iOS 17.0, versiÃ³n 1.12 (12), identificador `local.walletstudio.shaderdiagnostics`. La firma posterior cambia el hash y puede cambiar el identificador.
+`xtool/ShaderDiagnostics.ipa` sin firma: 141.391 bytes, SHA-256 `6dc68e1d4573c04995b734d04cbf05f11bd1fa5836d2a8af76e8f20b3872865b`. ZIP Ã­ntegro, ejecutable Mach-O arm64, mÃ­nimo iOS 17.0, versiÃ³n 1.12 (12), identificador `local.walletstudio.shaderdiagnostics`. La firma posterior cambia el hash y puede cambiar el identificador.
 
 Abrir la app, esperar a Â«Shaders v12 Â· diagnÃ³stico guardadoÂ» y recuperar su propio `Documents/shader-report.json`. Validar el informe antes de extraer conclusiones. Una vista o shader en esta app no prueba animaciÃ³n dentro de Apple Wallet. No publicar informes del dispositivo ni identificadores de firma.
 

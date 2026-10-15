@@ -16,17 +16,17 @@ def native(obj):
     if obj['status']=='observed' and (not obj['object_returned'] or obj['exception'] or len(lengths)!=4): raise ValueError('Invalid positive result')
 
 def validate(data):
-    if data.get('revision') not in ('shader_resources_v4','shader_resources_v5','shader_resources_v6','shader_resources_v7','shader_resources_v8','shader_resources_v9','shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15'): raise ValueError('Invalid revision')
-    has_renderer=data['revision'] in ('shader_resources_v7','shader_resources_v8','shader_resources_v9','shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15')
-    exact(data,'schema revision scope Wallet_animation_proven runtime_iOS environment framework_loaded probe file_loader'+(' pass_probe' if data['revision']!='shader_resources_v4' else '')+(' renderer_probe' if has_renderer else '')+(' constructor_probe' if data['revision'] in ('shader_resources_v13','shader_resources_v14','shader_resources_v15') else ''))
+    if data.get('revision') not in ('shader_resources_v4','shader_resources_v5','shader_resources_v6','shader_resources_v7','shader_resources_v8','shader_resources_v9','shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16'): raise ValueError('Invalid revision')
+    has_renderer=data['revision'] in ('shader_resources_v7','shader_resources_v8','shader_resources_v9','shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16')
+    exact(data,'schema revision scope Wallet_animation_proven runtime_iOS environment framework_loaded probe file_loader'+(' pass_probe' if data['revision']!='shader_resources_v4' else '')+(' renderer_probe' if has_renderer else '')+(' constructor_probe' if data['revision'] in ('shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16') else ''))
     if type(data['schema']) is not int or data['schema']!=1: raise ValueError('Invalid schema')
     if data['scope']!='synthetic_accessors_and_own_files_only': raise ValueError('Invalid scope')
     if data['Wallet_animation_proven'] is not False: raise ValueError('Wallet playback unproven')
     if type(data['runtime_iOS']) is not str or not re.fullmatch(r'\d{1,2}(?:\.\d{1,2}){1,2}',data['runtime_iOS']): raise ValueError('Invalid runtime')
     if data['environment'] not in ('simulator','device_app_own_sandbox'): raise ValueError('Invalid environment')
-    if data['revision'] in ('shader_resources_v13','shader_resources_v14','shader_resources_v15'):
-        c=data['constructor_probe']; exact(c,'status reason image_origin_verified code_hex'+(' selector_calls' if data['revision'] in ('shader_resources_v14','shader_resources_v15') else ''))
-        code_length=8192 if data['revision'] in ('shader_resources_v14','shader_resources_v15') else 1024
+    if data['revision'] in ('shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16'):
+        c=data['constructor_probe']; exact(c,'status reason image_origin_verified code_hex'+(' selector_calls' if data['revision'] in ('shader_resources_v14','shader_resources_v15','shader_resources_v16') else ''))
+        code_length=8192 if data['revision'] in ('shader_resources_v14','shader_resources_v15','shader_resources_v16') else 1024
         boolean(c['image_origin_verified'])
         if c['status'] not in ('unknown','observed'): raise ValueError('Invalid constructor status')
         if c['reason'] not in {'method_unavailable','image_origin_unverified','own_code_read_unavailable','own_constructor_code_observed'}: raise ValueError('Invalid constructor reason')
@@ -34,7 +34,7 @@ def validate(data):
         if c['status']=='observed':
             if not c['image_origin_verified'] or c['reason']!='own_constructor_code_observed' or not re.fullmatch(r'[0-9a-f]{'+str(code_length)+'}',c['code_hex']): raise ValueError('Unestablished constructor code')
         elif c['code_hex'] or c['reason']=='own_constructor_code_observed': raise ValueError('Unknown constructor code')
-        if data['revision'] in ('shader_resources_v14','shader_resources_v15'):
+        if data['revision'] in ('shader_resources_v14','shader_resources_v15','shader_resources_v16'):
             calls=c['selector_calls']
             if type(calls) is not list or len(calls)>128: raise ValueError('Unsafe call count')
             previous=-1
@@ -105,17 +105,17 @@ def validate(data):
         elif keys: raise ValueError('Unknown cannot export metadata keys')
     if has_renderer:
         r=data['renderer_probe']
-        has_material=data['revision'] in ('shader_resources_v9','shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15')
-        exact(r,'status reason view_created shader_source_exact capture_control view_kinds samples_rgb three_phases_observed'+(' synthetic_model' if data['revision']!='shader_resources_v7' else '')+(' material_bound native_image_set_type' if has_material else '')+(' initializer_names' if data['revision'] in ('shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15') else '')+(' admission_probe' if data['revision'] in ('shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15') else '')+(' profile_probe' if data['revision'] in ('shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15') else '')+(' material_inputs' if data['revision']=='shader_resources_v15' else ''))
+        has_material=data['revision'] in ('shader_resources_v9','shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16')
+        exact(r,'status reason view_created shader_source_exact capture_control view_kinds samples_rgb three_phases_observed'+(' synthetic_model' if data['revision']!='shader_resources_v7' else '')+(' material_bound native_image_set_type' if has_material else '')+(' initializer_names' if data['revision'] in ('shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16') else '')+(' admission_probe' if data['revision'] in ('shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16') else '')+(' profile_probe' if data['revision'] in ('shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16') else '')+(' material_inputs' if data['revision'] in ('shader_resources_v15','shader_resources_v16') else '')+(' capture_control_rgb capture_state' if data['revision']=='shader_resources_v16' else ''))
         if data['revision']!='shader_resources_v7' and r['synthetic_model']!='PKPaymentPass': raise ValueError('Unexpected synthetic model')
         if has_material:
             boolean(r['material_bound'])
             if type(r['native_image_set_type']) is not int or not 0<=r['native_image_set_type']<=1024: raise ValueError('Invalid native image set type')
             if r['status']=='observed' and not r['material_bound']: raise ValueError('Unestablished material control')
-        if data['revision'] in ('shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15'):
+        if data['revision'] in ('shader_resources_v10','shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16'):
             names=r['initializer_names']
             if type(names) is not list or len(names)>32 or any(type(n) is not str or not re.fullmatch(r'init[A-Za-z0-9_:]{0,124}',n) for n in names): raise ValueError('Unsafe initializer names')
-        if data['revision'] in ('shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15'):
+        if data['revision'] in ('shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16'):
             profile=r['profile_probe']
             exact(profile,'status reason reference_present constructed parity bound metadata_lookup_keys trace_rejected trace_truncated reference_snapshot observer_snapshot')
             if profile['status'] not in ('unknown','observed'): raise ValueError('Invalid profile status')
@@ -135,22 +135,28 @@ def validate(data):
             if profile['bound'] and (profile['status']!='observed' or not profile['parity'] or profile['reference_present'] or profile['reason']!='synthetic_profile_bound'): raise ValueError('False profile binding')
             if profile['bound'] and (not f['source_preserved'] or not r['capture_control'] or not q['live_parity'] or not q['live_reference'].get('shader_source_preserved') or not q['live_reference'].get('live_background') or q['live_reference'].get('live_render_type')!=1): raise ValueError('Unestablished profile pass control')
             if profile['status']=='observed' and not profile['bound']: raise ValueError('Unestablished profile observation')
-        if data['revision'] in ('shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15'):
+        if data['revision'] in ('shader_resources_v11','shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16'):
             a=r['admission_probe']; exact(a,'status getter_names trace_truncated constructor_nil_parity')
             if a['status'] not in ('unknown','observed'): raise ValueError('Invalid admission status')
             boolean(a['trace_truncated']); boolean(a['constructor_nil_parity'])
             allowed_getters={'liveRenderType','homeKeyLiveRenderType','liveRenderedBackground','liveRenderedShaderSet','liveRenderedImageSet','liveRenderedArmedStateImageSet','displayProfile','passType'}
             if type(a['getter_names']) is not list or len(a['getter_names'])>16 or any(n not in allowed_getters for n in a['getter_names']): raise ValueError('Unsafe admission trace')
-            candidate_view=data['revision'] in ('shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15') and r['profile_probe']['bound']
-            candidate_view=candidate_view or (data['revision']=='shader_resources_v15' and r['material_inputs']['candidate_view_created'])
+            candidate_view=data['revision'] in ('shader_resources_v12','shader_resources_v13','shader_resources_v14','shader_resources_v15','shader_resources_v16') and r['profile_probe']['bound']
+            candidate_view=candidate_view or (data['revision'] in ('shader_resources_v15','shader_resources_v16') and r['material_inputs']['candidate_view_created'])
             if a['status']=='observed' and (a['trace_truncated'] or not a['constructor_nil_parity'] or (r['view_created'] and not candidate_view)): raise ValueError('Unestablished admission trace')
             if a['status']=='unknown' and a['getter_names']: raise ValueError('Unknown admission trace')
-        if data['revision']=='shader_resources_v15':
+        if data['revision'] in ('shader_resources_v15','shader_resources_v16'):
             m=r['material_inputs']; exact(m,'baseline_view_nil complete_material_bound image_ref_count candidate_view_created')
             for flag in ('baseline_view_nil','complete_material_bound','candidate_view_created'): boolean(m[flag])
             if type(m['image_ref_count']) is not int or not 0<=m['image_ref_count']<=3: raise ValueError('Invalid material image count')
             if m['complete_material_bound'] and (not m['baseline_view_nil'] or m['image_ref_count']!=3 or not r['material_bound'] or not q['live_parity'] or not r['shader_source_exact']): raise ValueError('Unestablished complete material')
             if m['candidate_view_created'] and (not m['complete_material_bound'] or not r['view_created']): raise ValueError('False material view claim')
+        if data['revision']=='shader_resources_v16':
+            rgb=r['capture_control_rgb']; state=r['capture_state']
+            exact(state,'application_active host_in_window')
+            boolean(state['application_active']); boolean(state['host_in_window'])
+            if type(rgb) is not list or len(rgb) not in (0,3) or any(type(x) is not int or not 0<=x<=255 for x in rgb): raise ValueError('Unsafe control RGB')
+            if r['capture_control'] and (len(rgb)!=3 or not (rgb[0]>220 and rgb[1]<30 and rgb[2]<30)): raise ValueError('False red control')
         if r['status'] not in ('observed','unknown'): raise ValueError('Invalid renderer status')
         reasons={'pass_control_unavailable','renderer_class_unavailable','renderer_signature_unavailable','capture_control_failed','renderer_fixture_unavailable','renderer_view_unavailable','synthetic_renderer_three_phases','synthetic_renderer_no_three_phases','renderer_capture_exception','renderer_exception'}
         if r['reason'] not in reasons: raise ValueError('Invalid renderer reason')
