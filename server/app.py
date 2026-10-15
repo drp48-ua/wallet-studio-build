@@ -1,8 +1,8 @@
 """Private immutable backup service. Python standard library; HTTPS proxy in production."""
-import argparse,contextlib,hashlib,hmac,json,os,pathlib,re,secrets,sqlite3,threading,time,uuid,zipfile,io,getpass
+import argparse,contextlib,hashlib,hmac,json,os,pathlib,re,secrets,sqlite3,threading,time,uuid,zipfile,io,getpass,sys
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from accounts import Accounts,AccountError
-from remote import PgDatabase,SupabaseBlobs,RemoteError,MAX_REMOTE_BUNDLE
+from remote import PgDatabase,SupabaseBlobs,RemoteError,MAX_REMOTE_BUNDLE,StartupError,startup_stage
 
 HEX=re.compile(r'^[0-9a-f]{64}$')
 MAX_BUNDLE=100*1024*1024
@@ -11,16 +11,21 @@ class Store:
     def __init__(self,root,allow_registration=False,session_seconds=86400*7):
         self.remote=os.environ.get('WALLET_STORAGE_MODE')=='remote'
         self.remote_db=None;self.blob_store=None;self.max_bundle=MAX_REMOTE_BUNDLE if self.remote else MAX_BUNDLE
-        if os.environ.get('RENDER') and not self.remote:raise ValueError('Render requires durable remote database and private storage')
+        if os.environ.get('RENDER') and not self.remote:raise StartupError('configuration',ValueError())
         if self.remote:
-            required=('DATABASE_URL','SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','SUPABASE_STORAGE_BUCKET')
-            if not all(os.environ.get(key) for key in required):raise ValueError('remote_storage_configuration_required')
-            if allow_registration:raise ValueError('remote_registration_fixture_forbidden')
-            self.remote_db=PgDatabase(os.environ['DATABASE_URL']);self.lock=self.remote_db.lock
-            self.blob_store=SupabaseBlobs(os.environ['SUPABASE_URL'],os.environ['SUPABASE_SERVICE_ROLE_KEY'],os.environ['SUPABASE_STORAGE_BUCKET'])
-            self.remote_db.initialize();self.blob_store.verify_bucket()
+            with startup_stage('configuration'):
+                required=('DATABASE_URL','SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','SUPABASE_STORAGE_BUCKET')
+                if not all(os.environ.get(key) for key in required):raise ValueError('remote_storage_configuration_required')
+                if allow_registration:raise ValueError('remote_registration_fixture_forbidden')
+                self.remote_db=PgDatabase(os.environ['DATABASE_URL']);self.lock=self.remote_db.lock
+            with startup_stage('storage_configuration'):
+                self.blob_store=SupabaseBlobs(os.environ['SUPABASE_URL'],os.environ['SUPABASE_SERVICE_ROLE_KEY'],os.environ['SUPABASE_STORAGE_BUCKET'])
+            with startup_stage('database_schema'):self.remote_db.initialize()
+            with startup_stage('storage_bucket'):self.blob_store.verify_bucket()
             self.allow_registration=False;self.session_seconds=session_seconds;self.limits={}
-            self.accounts=Accounts(self);self.remote_db.secure_tables();return
+            with startup_stage('account_schema'):self.accounts=Accounts(self)
+            with startup_stage('database_permissions'):self.remote_db.secure_tables()
+            return
         self.root=pathlib.Path(root).absolute()
         if os.name=='nt' and not str(self.root).startswith('\\\\?\\'):
             self.root=pathlib.Path('\\\\?\\'+str(self.root))
@@ -248,7 +253,10 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--data',default=os.environ.get('WALLET_DATA','/data'));p.add_argument('--host',default='127.0.0.1');p.add_argument('--port',type=int,default=8766);p.add_argument('--create-user');args=p.parse_args()
     # Registration fixtures are never enabled through a production environment flag.
     try:store=Store(args.data)
-    except Exception:p.error('No se pudo iniciar el almacenamiento privado. Revisa la configuración y disponibilidad; no se usará un almacén local alternativo.')
+    except Exception as error:
+        failure=error if isinstance(error,StartupError) else StartupError('local_storage',error)
+        print(failure.log_line(),file=sys.stderr,flush=True)
+        p.error('No se pudo iniciar el almacenamiento privado. Revisa la configuración y disponibilidad; no se usará un almacén local alternativo.')
     if args.create_user:store.create_user(args.create_user,getpass.getpass('Contraseña de al menos 12 caracteres: '));print('Cuenta creada');return
     try:server=Server((args.host,args.port),store)
     except ValueError as error:p.error(str(error))

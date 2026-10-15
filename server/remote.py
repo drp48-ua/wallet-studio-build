@@ -11,7 +11,55 @@ TABLES=('users','sessions','bundles','purchase_orders','webhook_events','activat
 SCHEMA='wallet_private'
 LOCK_ID=6299748183224241
 
-class RemoteError(ValueError):pass
+class RemoteError(ValueError):
+    def __init__(self,code,*,reason=None,sqlstate=None,http_status=None):
+        super().__init__(code)
+        self.reason=reason;self.sqlstate=sqlstate;self.http_status=http_status
+
+STARTUP_STAGES=frozenset(('configuration','storage_configuration','database_connect','database_schema','account_schema','database_permissions','storage_bucket','local_storage'))
+SAFE_REASONS=frozenset(('configuration_invalid','dependency_missing','database_authentication','database_connection','database_permission','database_schema','database_error','tls_verification','tls_error','network_error','timeout','storage_http','storage_invalid_response','storage_not_private','unexpected_error'))
+
+def safe_failure(error):
+    """Only fixed categories and bounded protocol codes may reach startup logs."""
+    state=getattr(error,'sqlstate',None)
+    state=state if isinstance(state,str) and re.fullmatch('[0-9A-Z]{5}',state) else None
+    status=getattr(error,'http_status',None)
+    status=status if type(status) is int and 100<=status<=599 else None
+    reason=getattr(error,'reason',None) if isinstance(error,RemoteError) else None
+    if not isinstance(reason,str) or reason not in SAFE_REASONS:
+        if state and state.startswith('28'):reason='database_authentication'
+        elif state=='42501':reason='database_permission'
+        elif state and state.startswith(('3F','42')):reason='database_schema'
+        elif state and state.startswith('08'):reason='database_connection'
+        elif state:reason='database_error'
+        elif isinstance(error,ssl.SSLCertVerificationError):reason='tls_verification'
+        elif isinstance(error,ssl.SSLError):reason='tls_error'
+        elif isinstance(error,TimeoutError):reason='timeout'
+        elif isinstance(error,urllib.error.URLError):
+            nested=error.reason
+            reason=safe_failure(nested)['reason'] if isinstance(nested,BaseException) else 'network_error'
+        elif isinstance(error,OSError):reason='network_error'
+        elif isinstance(error,ImportError):reason='dependency_missing'
+        elif isinstance(error,ValueError):reason='configuration_invalid'
+        else:reason='unexpected_error'
+    return {'reason':reason,'sqlstate':state,'http_status':status}
+
+class StartupError(RemoteError):
+    def __init__(self,stage,error):
+        self.stage=stage if stage in STARTUP_STAGES else 'configuration'
+        self.diagnostic=safe_failure(error)
+        super().__init__('private_storage_startup_failed')
+    def log_line(self):
+        values=['startup_failed','stage='+self.stage,'reason='+self.diagnostic['reason']]
+        for key in ('sqlstate','http_status'):
+            if self.diagnostic[key] is not None:values.append(key+'='+str(self.diagnostic[key]))
+        return ' '.join(values)
+
+@contextlib.contextmanager
+def startup_stage(stage):
+    try:yield
+    except StartupError:raise
+    except Exception as error:raise StartupError(stage,error) from None
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
 
@@ -25,7 +73,7 @@ def https_request(url,method,headers,data=None,maximum=MAX_REMOTE_BUNDLE):
     except urllib.error.HTTPError as error:
         # Do not propagate URLs, keys, response bodies or personal data to logs.
         return error.code,b''
-    except (OSError,ValueError):raise RemoteError('remote_service_unavailable') from None
+    except (OSError,ValueError) as error:raise RemoteError('remote_service_unavailable',**safe_failure(error)) from None
 
 def sql_for_postgres(sql):
     if sql.strip().upper().startswith('PRAGMA') or sql.strip().upper()=='BEGIN IMMEDIATE':return None
@@ -81,13 +129,19 @@ class PgDatabase:
         self.url=url;self.connector=connector;self.lock=PgLock(self)
     def open(self):
         connector=self.connector
-        if connector is None:
-            import psycopg
-            connector=psycopg.connect
         # Debian's CA bundle validates both chain and hostname. No plaintext or
         # sslmode=require fallback is permitted, including URL query overrides.
-        try:return connector(self.url,prepare_threshold=None,sslmode='verify-full',sslrootcert=os.environ.get('DATABASE_SSL_ROOT_CERT','/etc/ssl/certs/ca-certificates.crt'),connect_timeout=10)
-        except Exception:raise RemoteError('database_unavailable') from None
+        try:
+            if connector is None:
+                import psycopg
+                connector=psycopg.connect
+            return connector(self.url,prepare_threshold=None,sslmode='verify-full',sslrootcert=os.environ.get('DATABASE_SSL_ROOT_CERT','/etc/ssl/certs/ca-certificates.crt'),connect_timeout=10)
+        except Exception as error:
+            diagnostic=safe_failure(error)
+            # libpq can report transport failures without SQLSTATE or a typed
+            # SSL cause. Do not inspect or print its credential-bearing text.
+            if diagnostic['reason']=='unexpected_error':diagnostic['reason']='database_connection'
+            raise StartupError('database_connect',RemoteError('database_unavailable',**diagnostic)) from None
     @contextlib.contextmanager
     def connect(self):
         with self.lock:
@@ -125,9 +179,12 @@ class SupabaseBlobs:
         if status==404:
             data=json.dumps({'id':self.bucket,'name':self.bucket,'public':False,'file_size_limit':MAX_REMOTE_BUNDLE,'allowed_mime_types':['application/zip']}).encode()
             status,_=self.request(self.base+'/bucket','POST',dict(self.headers,**{'Content-Type':'application/json'}),data,65536)
-            if status not in (200,201,400,409):raise RemoteError('private_bucket_not_created')
+            if status not in (200,201,400,409):raise RemoteError('private_bucket_not_created',reason='storage_http',http_status=status)
             status,body=self.request(self.base+'/bucket/'+self.bucket,'GET',self.headers,maximum=65536)
-        if status!=200 or json.loads(body).get('public') is not False:raise RemoteError('storage_bucket_must_be_private')
+        if status!=200:raise RemoteError('storage_bucket_unavailable',reason='storage_http',http_status=status)
+        try:private=json.loads(body).get('public') is False
+        except (ValueError,AttributeError):raise RemoteError('storage_invalid_response',reason='storage_invalid_response') from None
+        if not private:raise RemoteError('storage_bucket_must_be_private',reason='storage_not_private')
     def path(self,user,ident):
         if not re.fullmatch('[a-zA-Z0-9-]{1,64}',user) or not re.fullmatch('[0-9a-f]{64}',ident):raise RemoteError('invalid_object_key')
         return self.bucket+'/'+user+'/'+ident
