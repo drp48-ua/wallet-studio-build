@@ -3,6 +3,7 @@
 @end
 
 #import "admission-probe.h"
+#import "profile-probe.h"
 
 static NSArray *ReadSyntheticCenter(UIView *view) {
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:view.bounds.size];
@@ -39,6 +40,7 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         @"material_bound": @NO, @"native_image_set_type": @0,
         @"initializer_names": @[],
         @"admission_probe": @{@"status":@"unknown",@"getter_names":@[],@"trace_truncated":@NO,@"constructor_nil_parity":@NO},
+        @"profile_probe": EmptySyntheticProfileResult(),
         @"view_kinds": @[], @"samples_rgb": @[], @"three_phases_observed": @NO} mutableCopy];
     NSDictionary *control = passProbe[@"live_reference"];
     if (![passProbe[@"live_parity"] boolValue] || ![control[@"shader_source_preserved"] boolValue] ||
@@ -131,7 +133,23 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         if (![result[@"shader_source_exact"] boolValue]) { result[@"reason"] = @"renderer_fixture_unavailable"; return result; }
         if (!BindSyntheticDiffuse(pass,result)) { result[@"reason"]=@"renderer_fixture_unavailable"; return result; }
         UIView *view = (UIView *)[(id<NativeCardViewInitializing>)[viewClass alloc] initWithFrame:CGRectMake(16,100,320,202) pass:pass];
-        if (!view) { result[@"admission_probe"]=ProbeSyntheticAdmission(passClass,viewClass,metadata,directory,accessor,source); result[@"reason"] = @"renderer_view_unavailable"; return result; }
+        if (!view) {
+            result[@"admission_probe"]=ProbeSyntheticAdmission(passClass,viewClass,metadata,directory,accessor,source);
+            NSMutableDictionary *profile=result[@"profile_probe"];
+            if(!BindSyntheticProfile(pass,metadata,directory,profile)) { result[@"reason"]=@"renderer_view_unavailable"; return result; }
+            // A profile setter may invalidate cached assets. Re-establish final controls.
+            shaderSet=getSet(pass,setSelector);
+            if(getType(pass,typeSelector)!=1 || !shaderSet || !ObjectMethod(object_getClass(shaderSet),fragment,0)) {
+                result[@"reason"]=@"renderer_fixture_unavailable"; return result;
+            }
+            getSource=(void*)class_getMethodImplementation(object_getClass(shaderSet),fragment);
+            result[@"shader_source_exact"]=@((BOOL)[getSource(shaderSet,fragment) isEqual:source]);
+            if(![result[@"shader_source_exact"] boolValue] || !BindSyntheticDiffuse(pass,result)) {
+                result[@"reason"]=@"renderer_fixture_unavailable"; return result;
+            }
+            view=(UIView*)[(id<NativeCardViewInitializing>)[viewClass alloc] initWithFrame:CGRectMake(16,100,320,202) pass:pass];
+            if(!view) { result[@"reason"]=@"renderer_view_unavailable"; return result; }
+        }
         [host addSubview:view]; [view layoutIfNeeded];
         result[@"view_created"] = @YES;
         SEL present = NSSelectorFromString(@"didPresent");

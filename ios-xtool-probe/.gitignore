@@ -5,3 +5,6 @@ shader-report*.json
 *.p12
 *.mobileprovision
 *.pem
+
+__pycache__/
+*.pyc

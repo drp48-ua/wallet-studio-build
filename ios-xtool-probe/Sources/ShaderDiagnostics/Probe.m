@@ -252,7 +252,7 @@ static NSDictionary *ProbeSyntheticFileLoading(NSDictionary *discovery) {
     view.view.backgroundColor = UIColor.systemBackgroundColor;
     self.window.rootViewController = view; [self.window makeKeyAndVisible];
     UILabel *label = [UILabel new]; label.numberOfLines = 0;
-    label.text = @"Shaders v11 · preparando diagnóstico";
+    label.text = @"Shaders v12 · preparando diagnóstico";
     label.translatesAutoresizingMaskIntoConstraints = NO;
     [view.view addSubview:label];
     [NSLayoutConstraint activateConstraints:@[
@@ -267,7 +267,7 @@ static NSDictionary *ProbeSyntheticFileLoading(NSDictionary *discovery) {
         NSDictionary *loader = ProbeSyntheticFileLoading(discovery);
         NSDictionary *passProbe = ProbeSyntheticPass(loader);
         NSMutableDictionary *rendererProbe = ProbeSyntheticRenderer(passProbe,view.view);
-        NSDictionary *report = @{@"schema": @1, @"revision": @"shader_resources_v11",
+        NSDictionary *report = @{@"schema": @1, @"revision": @"shader_resources_v12",
             @"scope": @"synthetic_accessors_and_own_files_only", @"Wallet_animation_proven": @NO,
             @"runtime_iOS": UIDevice.currentDevice.systemVersion,
             @"environment": TARGET_OS_SIMULATOR ? @"simulator" : @"device_app_own_sandbox",
@@ -277,7 +277,7 @@ static NSDictionary *ProbeSyntheticFileLoading(NSDictionary *discovery) {
         NSURL *directory = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         NSData *data = [NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
         BOOL saved = [data writeToURL:[directory URLByAppendingPathComponent:@"shader-report.json"] atomically:YES];
-        label.text = saved ? @"Shaders v11 · diagnóstico guardado\nNo acredita animación en Wallet." : @"Shaders v11 · informe no guardado";
+        label.text = saved ? @"Shaders v12 · diagnóstico guardado\nNo acredita animación en Wallet." : @"Shaders v12 · informe no guardado";
         });
     });
     return YES;

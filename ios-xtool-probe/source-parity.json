@@ -2,7 +2,7 @@
   {
     "source": "main.m",
     "target": "Probe.m",
-    "sha256": "451876c87a3511870a36c23c7a20dded5d80e03208584e7bc8435df29f91aa05"
+    "sha256": "7d73c525ef94ff25532958df3029046e1006f427f64b34700197807f99cac1f8"
   },
   {
     "source": "pass-probe.h",
@@ -17,11 +17,16 @@
   {
     "source": "renderer-probe.h",
     "target": "renderer-probe.h",
-    "sha256": "c414939258925d15f1cf6086964f361908890cc53d6c0018ebd6b3c074bf68a3"
+    "sha256": "b72168d9b5b6a7de182c3544634aeaaa17c566a88e3fbd8bf8fa31148415db87"
   },
   {
     "source": "admission-probe.h",
     "target": "admission-probe.h",
     "sha256": "303a94e8ad44f3a6f11fd54e7d115cc0e61f07c561b7e5f93f4c63729b6253a4"
+  },
+  {
+    "source": "profile-probe.h",
+    "target": "profile-probe.h",
+    "sha256": "8687b605a42cf2b749ba6833a38f53bede5d92c1b6b56b50167db4b93d5f86b2"
   }
 ]
