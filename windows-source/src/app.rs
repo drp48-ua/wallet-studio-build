@@ -322,7 +322,7 @@ impl AirCardApp {
         }
     }
     fn start_cloud_sync(&mut self,ctx:egui::Context) {
-        if crate::storage::is_demo() || self.is_busy || self.scanning_syslog || self.cloud_rx.is_some() || !self.storage_ready { return; }
+        if crate::storage::is_demo() || self.is_busy || self.scanning_syslog || self.cloud_rx.is_some() { return; }
         let Some(session)=self.cloud_session.clone() else { return; };
         self.cloud_sync_queued=false; self.last_cloud_sync=Instant::now();
         let (tx,rx)=channel(); self.cloud_rx=Some(rx);
@@ -347,7 +347,7 @@ impl AirCardApp {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(if self.cloud_synced {"Copias verificadas"} else {"Sincronización pendiente"}).strong().color(if self.cloud_synced {md3::SUCCESS} else {md3::PRIMARY}));
                 });
-                if studio_button(ui,if self.cloud_rx.is_some() {"Sincronizando…"} else {"Sincronizar ahora"},idle && self.storage_ready,true) {self.start_cloud_sync(ctx.clone());}
+                if studio_button(ui,if self.cloud_rx.is_some() {"Sincronizando…"} else {"Sincronizar ahora"},idle,true) {self.start_cloud_sync(ctx.clone());}
                 ui.add_space(16.0);
                 let mut revoke=None;
                 for (index,device) in self.account_devices.iter().enumerate() {
@@ -370,6 +370,10 @@ impl AirCardApp {
                 return;
             }
             ui.label("Accede con el correo que utilizaste al comprar Wallet Studio.");
+            if !self.storage_ready && self.cloud_rx.is_none() && !crate::storage::is_demo() {
+                ui.label("Si acabas de cerrar otra versión, puedes volver a comprobar el almacenamiento sin borrar ninguna copia.");
+                if studio_button(ui,"Volver a comprobar mis copias locales",!self.is_busy && self.activation_rx.is_none(),false) {self.start_cloud_startup(ctx.clone());}
+            }
             if self.account_stage==2 { ui.label("Introduce el código que te enviamos a ese correo y elige tu contraseña."); }
             if self.account_server.is_empty() && !self.auth_preview { ui.add_space(8.0); ui.label(egui::RichText::new("El servicio de cuentas aún no está configurado. El acceso estará disponible cuando se active. Tus copias locales se conservan.").color(md3::ON_SURFACE_VARIANT)); }
             #[cfg(debug_assertions)]
