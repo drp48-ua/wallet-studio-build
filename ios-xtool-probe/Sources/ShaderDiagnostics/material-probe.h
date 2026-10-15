@@ -10,7 +10,7 @@ static BOOL BindSyntheticDiffuse(id pass, NSMutableDictionary *result) {
     if(!init || method_getNumberOfArguments(init)!=4) return NO;
     method_getReturnType(init,ret,sizeof(ret)); method_getArgumentType(init,2,dataType,sizeof(dataType)); method_getArgumentType(init,3,scaleType,sizeof(scaleType));
     if(ret[0]!='@' || dataType[0]!='@' || strcmp(scaleType,@encode(double))) return NO;
-    UIGraphicsImageRenderer *canvas=[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(320,202)];
+    UIGraphicsImageRenderer *canvas=StandardSyntheticRenderer(CGSizeMake(320,202));
     UIImage *white=[canvas imageWithActions:^(UIGraphicsImageRendererContext *context){
         [UIColor.whiteColor setFill]; UIRectFill(CGRectMake(0,0,320,202));
     }];

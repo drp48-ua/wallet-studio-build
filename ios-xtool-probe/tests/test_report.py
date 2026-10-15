@@ -121,6 +121,17 @@ class ReportTests(unittest.TestCase):
     def test_v16_unsafe_rgb_rejected(self):
         self.v16_capture(); self.report['renderer_probe']['capture_control_rgb']=[255,0,999]
         with self.assertRaises(ValueError): validate(self.report)
+    def v17_capture(self):
+        self.v16_capture(); self.report['revision']='shader_resources_v17'
+        self.report['renderer_probe']['capture_control_alpha']=0
+    def test_v17_unknown(self):
+        self.v17_capture(); validate(self.report)
+    def test_v17_nonopaque_rejected(self):
+        self.v17_capture(); self.report['renderer_probe'].update(capture_control=True,capture_control_rgb=[255,0,0],capture_control_alpha=163)
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v17_valid_red(self):
+        self.v17_capture(); self.report['renderer_probe'].update(capture_control=True,capture_control_rgb=[255,0,0],capture_control_alpha=255)
+        validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

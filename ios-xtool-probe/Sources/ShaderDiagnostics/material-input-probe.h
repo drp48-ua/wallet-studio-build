@@ -21,7 +21,7 @@ static BOOL CompleteOwnMaterial(id pass, NSMutableDictionary *result) {
         if(![name isEqual:@"diffuseMaterialPropertyImage"]) {
             UIColor *color=[name isEqual:@"metalnessMaterialPropertyImage"]?UIColor.blackColor:
                 [UIColor colorWithRed:0.5 green:0.5 blue:1.0 alpha:1.0];
-            UIGraphicsImageRenderer *canvas=[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(320,202)];
+            UIGraphicsImageRenderer *canvas=StandardSyntheticRenderer(CGSizeMake(320,202));
             UIImage *fixture=[canvas imageWithActions:^(UIGraphicsImageRendererContext *context){
                 [color setFill]; UIRectFill(CGRectMake(0,0,320,202));
             }];

@@ -6,8 +6,8 @@
 #import "profile-probe.h"
 #import "material-input-probe.h"
 
-static NSArray *ReadSyntheticCenter(UIView *view) {
-    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:view.bounds.size];
+static NSArray *ReadSyntheticCenter(UIView *view, unsigned char *alpha) {
+    UIGraphicsImageRenderer *renderer = StandardSyntheticRenderer(view.bounds.size);
     UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
         [view drawViewHierarchyInRect:view.bounds afterScreenUpdates:YES];
     }];
@@ -17,9 +17,10 @@ static NSArray *ReadSyntheticCenter(UIView *view) {
     CGImageRef pixel = CGImageCreateWithImageInRect(cg, center);
     if (!pixel) return @[];
     unsigned char bytes[4] = {0};
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CGContextRef bitmap = CGBitmapContextCreate(bytes, 1, 1, 8, 4, space, kCGImageAlphaPremultipliedLast);
     if (bitmap) CGContextDrawImage(bitmap, CGRectMake(0,0,1,1), pixel);
+    if(alpha) *alpha=bitmap?bytes[3]:0;
     if (bitmap) CGContextRelease(bitmap);
     CGColorSpaceRelease(space); CGImageRelease(pixel);
     return bitmap ? @[@(bytes[0]), @(bytes[1]), @(bytes[2])] : @[];
@@ -39,7 +40,7 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         @"view_created": @NO, @"shader_source_exact": @NO, @"capture_control": @NO,
         @"synthetic_model": @"PKPaymentPass",
         @"material_bound": @NO, @"native_image_set_type": @0,
-        @"capture_control_rgb": @[],
+        @"capture_control_rgb": @[], @"capture_control_alpha":@0,
         @"capture_state": @{@"application_active":@((BOOL)(UIApplication.sharedApplication.applicationState==UIApplicationStateActive)),
             @"host_in_window":@((BOOL)(host.window!=nil))},
         @"initializer_names": @[],
@@ -79,10 +80,11 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         UIView *captureControl = [[UIView alloc] initWithFrame:CGRectMake(0,0,20,20)];
         captureControl.backgroundColor = UIColor.redColor;
         [host addSubview:captureControl]; [captureControl layoutIfNeeded];
-        NSArray *controlRGB = ReadSyntheticCenter(captureControl);
-        result[@"capture_control_rgb"]=controlRGB;
+        unsigned char controlAlpha=0;
+        NSArray *controlRGB = ReadSyntheticCenter(captureControl,&controlAlpha);
+        result[@"capture_control_rgb"]=controlRGB; result[@"capture_control_alpha"]=@(controlAlpha);
         [captureControl removeFromSuperview];
-        BOOL captured = controlRGB.count == 3 && [controlRGB[0] intValue]>220 &&
+        BOOL captured = controlAlpha==255 && controlRGB.count == 3 && [controlRGB[0] intValue]>220 &&
             [controlRGB[1] intValue]<30 && [controlRGB[2] intValue]<30;
         result[@"capture_control"] = @(captured);
         if (!captured) { result[@"reason"] = @"capture_control_failed"; return result; }
@@ -178,7 +180,7 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         for (NSUInteger i=0; i<6; ++i) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)((0.25+0.45*i)*NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 @try {
-                    NSArray *rgb = ReadSyntheticCenter(view);
+                    NSArray *rgb = ReadSyntheticCenter(view,NULL);
                     [samples addObject:rgb];
                     if (i==5) {
                         BOOL phases[3]={NO,NO,NO};
