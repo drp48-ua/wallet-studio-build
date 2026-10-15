@@ -2,6 +2,15 @@
 
 ## Actualización 15/10/2026: 0.6.1, cuentas obligatorias
 
+### Continuación del despliegue gratuito
+
+- La ventana de cuota se renovó; no se consumió crédito de reinicio.
+- Verificación Windows sobre `01f9bec`: integración WinHTTP/DPAPI correcta en 4,08 s; segunda ejecución con primera respuesta POST retrasada 17 segundos correcta en 20,62 s. La nueva espera de recepción está comprobada; aún falta compilar la distribución con endpoint real.
+- El usuario completó la verificación de teléfono de Brevo. El panel mostró una clave API creada. Bajo su autorización previa se transfirió directamente al campo privado `BREVO_API_KEY` de Render, sin guardarla en archivos ni imprimirla. También se transfirió la clave heredada `service_role` de Supabase y se configuró el remitente privado. Los campos están preparados en el formulario, **todavía no existe despliegue**.
+- Se dejó el URI del Transaction pooler de Supabase en `DATABASE_URL`, con el marcador `[YOUR-PASSWORD]`. Se pidió al usuario reemplazarlo personalmente en Render; no desplegar mientras siga el marcador. No solicitar ni registrar la contraseña por chat.
+- `SHOPIFY_WEBHOOK_SECRET` sigue pendiente. Shopify solicitó iniciar sesión de nuevo en el navegador integrado; se pidió al usuario completarlo personalmente. Después configurar los tres webhooks y transferir legítimamente la firma de esos webhooks al servidor. Nunca usar secretos internos del conector.
+- Se conservan las pestañas de Render, Supabase, Brevo y Shopify para continuar. Volver a observarlas; no imprimir valores privados del formulario ni hacer capturas donde se vean claves. Las comprobaciones y pendientes históricos siguientes quedan sujetos a esta actualización.
+
 ### Checkpoint de cuota, 15/10/2026
 
 Se inició el guardado al observar 2 % restante en la ventana corta y 10 % en la semanal. No se utilizó crédito de reinicio. La petición sigue pendiente de despliegue y aceptación reales; no darla por terminada.
