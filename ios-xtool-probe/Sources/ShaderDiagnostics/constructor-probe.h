@@ -126,7 +126,7 @@ static NSDictionary *OwnRendererCatalog(void) {
         if(!cls || !name.length || name.length>128 || [name rangeOfCharacterFromSet:classAllowed.invertedSet].location!=NSNotFound) continue;
         NSString *lower=name.lowercaseString;BOOL related=NO;
         if([lower containsString:@"keymaterial"]) continue;
-        for(NSString *word in @[@"shader",@"scenekit",@"textur",@"material",@"metal",@"liverender"]) if([lower containsString:word]) related=YES;
+        for(NSString *word in @[@"shader",@"scenekit",@"textur",@"material",@"metal",@"liverender",@"dynamiclayer"]) if([lower containsString:word]) related=YES;
         if(!related) continue;
         if(catalog.count>=16) { truncated=YES;continue; }
         unsigned int amount=0;Method *methods=class_copyMethodList(cls,&amount);
@@ -135,7 +135,7 @@ static NSDictionary *OwnRendererCatalog(void) {
             NSString *methodName=NSStringFromSelector(method_getName(methods[j]));NSString *methodLower=methodName.lowercaseString;
             if(!methodName.length || methodName.length>128 || [methodName rangeOfCharacterFromSet:allowed.invertedSet].location!=NSNotFound) continue;
             BOOL relevant=NO;
-            for(NSString *word in @[@"shader",@"scene",@"textur",@"material",@"render",@"diffuse"]) if([methodLower containsString:word]) relevant=YES;
+            for(NSString *word in @[@"shader",@"scene",@"textur",@"material",@"render",@"diffuse",@"layer",@"animation",@"image"]) if([methodLower containsString:word]) relevant=YES;
             if(!relevant) continue;
             if(names.count>=8 && ![names containsObject:methodName]) { methodsTruncated=YES;continue; }
             [names addObject:methodName];
