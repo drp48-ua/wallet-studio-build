@@ -1,8 +1,8 @@
-param([string]$Version = '0.6.1', [switch]$RequireSigned)
+param([string]$Version = '0.6.1', [switch]$RequireSigned, [string]$BinaryPath = '')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version no valida' }
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$binary = Join-Path $projectRoot 'windows/Wallet Studio.exe'
+$binary = if ($BinaryPath) { (Resolve-Path -LiteralPath $BinaryPath).Path } else { Join-Path $projectRoot 'windows/Wallet Studio.exe' }
 if ((Get-Item -LiteralPath $binary).VersionInfo.FileVersion -ne $Version) { throw 'La version del ejecutable no coincide' }
 $signature = Get-AuthenticodeSignature -LiteralPath $binary
 if ($RequireSigned -and $signature.Status -ne 'Valid') { throw 'La distribucion requiere una firma Authenticode valida' }
@@ -11,7 +11,8 @@ New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 $staging = Join-Path $outputRoot ('stage-' + [Guid]::NewGuid().ToString('N'))
 $package = Join-Path $staging ('Wallet-Studio-' + $Version)
 New-Item -ItemType Directory -Path (Join-Path $package 'designs') -Force | Out-Null
-foreach ($relative in @('windows/Wallet Studio.exe', 'windows/ABRIR-WALLET-STUDIO.cmd', 'windows/LICENSE-AirCard-Windows.txt')) {
+Copy-Item -LiteralPath $binary -Destination (Join-Path $package 'Wallet Studio.exe')
+foreach ($relative in @('windows/ABRIR-WALLET-STUDIO.cmd', 'windows/LICENSE-AirCard-Windows.txt')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $relative) -Destination $package
 }
 foreach ($relative in @('LICENSE','LEEME.md','ACTUALIZACIONES.md','CLIENTES-Y-NUBE.md','SEGURIDAD.md','ANIMACION-Y-WALLET.md','PRUEBA-WINDOWS.md',('NOVEDADES-' + $Version + '.md'))) {
