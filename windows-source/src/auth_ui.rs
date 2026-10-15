@@ -55,10 +55,12 @@ pub fn page(ui:&mut egui::Ui,logo:&egui::TextureHandle,form:impl FnOnce(&mut egu
     ui.allocate_ui_with_layout(egui::vec2(width,body_height),egui::Layout::left_to_right(egui::Align::Min),|ui| {
         ui.spacing_mut().item_spacing.x=gap;
         ui.allocate_ui_with_layout(egui::vec2(hero_width,body_height),egui::Layout::top_down(egui::Align::Min),|ui| {
+            ui.spacing_mut().item_spacing.x=8.0;
             ui.set_width(hero_width);ui.set_max_width(hero_width);
             hero(ui,logo,body_height<620.0);
         });
         ui.allocate_ui_with_layout(egui::vec2(form_width,body_height),egui::Layout::top_down(egui::Align::Min),|ui| {
+            ui.spacing_mut().item_spacing.x=8.0;
             ui.set_width(form_width);ui.set_max_width(form_width);
             // Only long forms scroll vertically inside their own panel. The
             // welcome artwork and horizontal benefits never create page scroll.
