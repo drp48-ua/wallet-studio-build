@@ -17,7 +17,9 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("Foundation"),
                 .linkedFramework("UIKit"),
-                .linkedFramework("CoreGraphics")
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("Metal"),
+                .linkedFramework("QuartzCore")
             ]
         )
     ]

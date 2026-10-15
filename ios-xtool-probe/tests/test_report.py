@@ -184,6 +184,20 @@ class ReportTests(unittest.TestCase):
     def test_v22_engine_private_method_rejected(self):
         self.v22_engine(); self.report['engine_inventory'][0]['instance_methods']['names']=['/private/card']
         with self.assertRaises(ValueError): validate(self.report)
+    def v23_gpu(self):
+        self.v22_engine();self.report['revision']='shader_resources_v23'
+        self.report['gpu_capture_control']={'setup':False,'command_completed':False,'presentation_observed':False,'readback_red':False,'captured_red':False,'readback_rgb':[],'capture_rgb':[]}
+    def test_v23_gpu_unknown(self):
+        self.v23_gpu();validate(self.report)
+    def test_v23_false_gpu_pixel_rejected(self):
+        self.v23_gpu();self.report['gpu_capture_control']['readback_red']=True
+        with self.assertRaises(ValueError):validate(self.report)
+    def test_v23_false_presentation_rejected(self):
+        self.v23_gpu();self.report['gpu_capture_control'].update(setup=True,captured_red=True,capture_rgb=[255,0,0])
+        with self.assertRaises(ValueError):validate(self.report)
+    def test_v23_gpu_control_can_succeed_without_wallet_animation(self):
+        self.v23_gpu();self.report['gpu_capture_control'].update(setup=True,command_completed=True,presentation_observed=True,readback_red=True,captured_red=True,readback_rgb=[255,0,0],capture_rgb=[255,0,0])
+        validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

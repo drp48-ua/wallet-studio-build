@@ -2,7 +2,7 @@
   {
     "source": "main.m",
     "target": "Probe.m",
-    "sha256": "8c1ad50b9f300ba415c473eddf84ff7310187aaf25a799b6411fb0025c462d32"
+    "sha256": "0d6ba411df64b7417fbc87e187bb22bd3f41d6d770094c935c4b5a5f04c16752"
   },
   {
     "source": "pass-probe.h",
@@ -43,5 +43,10 @@
     "source": "engine-probe.h",
     "target": "engine-probe.h",
     "sha256": "14d389d4e999fd80dd29a21d36890379b721864f92d7b3989ef7234cad530d76"
+  },
+  {
+    "source": "gpu-control-probe.h",
+    "target": "gpu-control-probe.h",
+    "sha256": "bde4ef0bdf105635007ffe735e6d52ec509b4ac222d4ff4249d82fec3fb67ac7"
   }
 ]
