@@ -1,4 +1,4 @@
-param([string]$Version = '0.6.1', [switch]$RequireSigned, [string]$BinaryPath = '')
+param([string]$Version = '0.6.4', [switch]$RequireSigned, [string]$BinaryPath = '')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version no valida' }
 $projectRoot = Split-Path -Parent $PSScriptRoot

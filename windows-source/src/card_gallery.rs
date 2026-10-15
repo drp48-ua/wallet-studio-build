@@ -4,6 +4,7 @@ use crate::i18n::Language;
 
 pub fn draw_card_tile(
     ui: &mut egui::Ui,
+    width:f32,
     name: &str,
     hash: &str,
     current_design: Option<&egui::TextureHandle>,
@@ -14,7 +15,6 @@ pub fn draw_card_tile(
     language: Language,
 ) -> bool {
     use super::app::md3;
-    let width=ui.available_width().min(320.0);
     let art_width=(width-24.0).max(1.0);let art_height=art_width*969.0/1536.0;
     let (rect,_)=ui.allocate_exact_size(egui::vec2(width,art_height+124.0),egui::Sense::hover());
     // Offscreen tiles reserve layout only. Textures and snapshots are already
@@ -24,6 +24,9 @@ pub fn draw_card_tile(
             egui::Stroke::new(if selected {1.5_f32} else {1.0_f32},if selected {md3::PRIMARY} else {md3::OUTLINE_VARIANT}),egui::StrokeKind::Inside);
         let content=rect.shrink(12.0);
         let mut child=ui.new_child(egui::UiBuilder::new().max_rect(content).layout(egui::Layout::top_down(egui::Align::Min)));
+        // The row's 16-point tile gap must not enlarge the tile's internal
+        // spacing or push its provenance label beyond the fixed frame.
+        child.spacing_mut().item_spacing=egui::vec2(8.0,8.0);
         child.add(egui::Label::new(egui::RichText::new(name).strong().size(14.0).color(md3::ON_SURFACE)).truncate()).on_hover_text(name);
         child.add_space(4.0);
         let size=egui::vec2(art_width,art_height);

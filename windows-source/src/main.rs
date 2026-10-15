@@ -13,6 +13,8 @@ mod airlift;
 mod airtraffic;
 mod card_gallery;
 mod app;
+mod auth_ui;
+mod brand;
 mod apple;
 mod device;
 mod flasher;
@@ -81,7 +83,7 @@ fn main() -> eframe::Result<()> {
     let demo_size = if demo {
         std::env::args().find_map(|arg| arg.strip_prefix("--demo-size=").and_then(|s| s.split_once('x')).and_then(|(w,h)| Some([w.parse::<f32>().ok()?,h.parse::<f32>().ok()?])))
             .or_else(||demo_name.as_deref().and_then(|s|s.strip_prefix("Wallet Studio Demo ")).and_then(|s|s.split_once('x')).and_then(|(w,h)|Some([w.parse::<f32>().ok()?,h.parse::<f32>().ok()?])))
-            .or_else(||demo_name.as_deref().and_then(|s|match s.to_ascii_uppercase().as_str(){"WSDEMO96"=>Some([960.0,640.0]),"WSDEMO11"=>Some([1180.0,760.0]),_=>None}))
+            .or_else(||demo_name.as_deref().and_then(|s|match s.to_ascii_uppercase().as_str(){"WSDEMO96"|"WSDEMOA9"=>Some([960.0,640.0]),"WSDEMO11"=>Some([1180.0,760.0]),"WSDEMO19"|"WSDEMOAF"=>Some([1920.0,1080.0]),_=>None}))
             .filter(|s| s[0]>=960.0&&s[1]>=640.0&&s[0]<=2560.0&&s[1]<=1440.0)
     } else { None };
     let options = eframe::NativeOptions {
