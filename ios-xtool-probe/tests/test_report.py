@@ -207,6 +207,14 @@ class ReportTests(unittest.TestCase):
     def test_v24_wrong_model_rejected(self):
         self.v24_model();self.report['model_inventory'][0]['class_name']='OtherClass'
         with self.assertRaises(ValueError):validate(self.report)
+    def v26_dynamic(self):
+        self.v24_model();self.report['revision']='shader_resources_v26'
+        self.report['dynamic_inventory']=[{'class_name':name,'available':False,'instance_methods':{'names':[],'truncated':False},'class_methods':{'names':[],'truncated':False}} for name in ('PKDynamicLayerConfiguration','PKDynamicLayerCrossDissolveConfiguration','PKDynamicLayerEmitterConfiguration','PKDynamicLayerTransactionEffectConfiguration','PKDynamicLayerView')]
+    def test_v26_dynamic(self):
+        self.v26_dynamic();validate(self.report)
+    def test_v26_unexpected_dynamic_class_rejected(self):
+        self.v26_dynamic();self.report['dynamic_inventory'][0]['class_name']='OtherClass'
+        with self.assertRaises(ValueError):validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

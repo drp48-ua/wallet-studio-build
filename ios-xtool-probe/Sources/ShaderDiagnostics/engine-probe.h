@@ -50,3 +50,8 @@ static NSArray *OwnEngineInventory(void) {
 static NSArray *OwnModelInventory(void) {
     return OwnClassInventory(@[@"PKPassLiveRender",@"PKLiveRenderedShaderSet",@"PKPassDisplayProfile"]);
 }
+
+static NSArray *OwnDynamicInventory(void) {
+    return OwnClassInventory(@[@"PKDynamicLayerConfiguration",@"PKDynamicLayerCrossDissolveConfiguration",
+        @"PKDynamicLayerEmitterConfiguration",@"PKDynamicLayerTransactionEffectConfiguration",@"PKDynamicLayerView"]);
+}
