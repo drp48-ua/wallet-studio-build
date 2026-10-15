@@ -4,6 +4,7 @@ use crate::i18n::Language;
 
 pub fn draw_card_tile(
     ui: &mut egui::Ui,
+    width:f32,
     name: &str,
     hash: &str,
     current_design: Option<&egui::TextureHandle>,
@@ -14,7 +15,6 @@ pub fn draw_card_tile(
     language: Language,
 ) -> bool {
     use super::app::md3;
-    let width=ui.available_width().min(320.0);
     let art_width=(width-24.0).max(1.0);let art_height=art_width*969.0/1536.0;
     let (rect,_)=ui.allocate_exact_size(egui::vec2(width,art_height+124.0),egui::Sense::hover());
     // Offscreen tiles reserve layout only. Textures and snapshots are already

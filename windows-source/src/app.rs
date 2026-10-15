@@ -188,7 +188,7 @@ pub struct AirCardApp {
     storage_ready:bool,cloud_configured:bool,cloud_synced:bool,
     cloud_status:String,account_server:String,account_email:String,account_password:String,account_link_consent:bool,
     update_rx:Option<Receiver<String>>,update_status:String,
-    brand_texture: egui::TextureHandle,
+    brand:crate::brand::BrandLogo,
     current_tab: AppTab,
     language: Language,
     apple_status: String,
@@ -519,15 +519,7 @@ impl AirCardApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
         setup_custom_theme(&cc.egui_ctx);
-        let brand_image = image::load_from_memory(include_bytes!("../assets/wallet-studio.png"))
-            .expect("bundled Wallet Studio logo is a valid image")
-            .thumbnail(256,256).to_rgba8();
-        let brand_size = [brand_image.width() as usize, brand_image.height() as usize];
-        let brand_texture = cc.egui_ctx.load_texture(
-            "wallet-studio-brand",
-            egui::ColorImage::from_rgba_unmultiplied(brand_size, brand_image.as_raw()),
-            egui::TextureOptions::LINEAR,
-        );
+        let brand=crate::brand::BrandLogo::new(&cc.egui_ctx);
 
         let (apple_ready, apple_status) = if crate::storage::is_demo() { (false,"Demostración aislada: sin consultas USB".into()) } else { match apple::verify_support() {
             Ok(msg) => (true, msg),
@@ -541,11 +533,11 @@ impl AirCardApp {
             activation_requested:None,password_visible:false,activation_rx:None,account_stage:0,account_code:String::new(),account_confirmation:String::new(),account_authenticated:false,
             account_devices:Vec::new(),account_devices_rx:None,
             account_recovery:false,account_reset_devices:false,
-            auth_preview:crate::storage::is_demo() && (std::env::args().any(|arg|arg=="--wallet-studio-auth-demo") || std::env::current_exe().ok().and_then(|path|path.file_stem().map(|stem|stem.to_string_lossy().eq_ignore_ascii_case("WSDEMOAU"))).unwrap_or(false)),
+            auth_preview:crate::storage::is_demo() && (std::env::args().any(|arg|arg=="--wallet-studio-auth-demo") || std::env::current_exe().ok().and_then(|path|path.file_stem().map(|stem|matches!(stem.to_string_lossy().to_ascii_uppercase().as_str(),"WSDEMOAU"|"WSDEMOA9"|"WSDEMOAF"))).unwrap_or(false)),
             cloud_rx:None,cloud_session:None,cloud_sync_queued:false,last_cloud_sync:Instant::now(),storage_ready:false,cloud_configured:true,cloud_synced:false,
             cloud_status:"Preparando almacenamiento seguro…".into(),account_server:option_env!("WALLET_STUDIO_CLOUD_URL").unwrap_or("").into(),account_email:String::new(),account_password:String::new(),account_link_consent:false,
             update_rx:None,update_status:"Actualizaciones automáticas".into(),
-            brand_texture,
+            brand,
             current_tab: AppTab::Wallet,
             language,
             apple_status,
@@ -1670,23 +1662,12 @@ impl eframe::App for AirCardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // eframe can restore older saved visual preferences after construction.
         if !ctx.style().visuals.dark_mode {setup_custom_theme(ctx);}
+        self.brand.refresh_scale(ctx);
         self.tick_cloud(ctx);
         if (!crate::storage::is_demo() || self.auth_preview) && !self.account_authenticated {
-            egui::CentralPanel::default().show(ctx,|ui| {
-                egui::ScrollArea::vertical().show(ui,|ui| {
-                    let available=ui.available_width();
-                    let wide=available>=1000.0;
-                    let page_width=available.min(if wide {1080.0} else {540.0});
-                    ui.add_space(if wide {36.0} else {16.0});
-                    ui.horizontal_top(|ui| {
-                        ui.add_space(((available-page_width)*0.5).max(0.0));
-                        if wide {
-                            ui.vertical(|ui| {ui.set_width(page_width*0.45);crate::auth_ui::hero(ui,&self.brand_texture,false);});
-                            ui.add_space(38.0);
-                        }
-                        ui.vertical(|ui| {
-                            ui.set_width(if wide {page_width*0.50} else {page_width});
-                            if !wide {crate::auth_ui::hero(ui,&self.brand_texture,true);ui.add_space(20.0);}
+            let logo=self.brand.hero.clone();
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(md3::SURFACE).inner_margin(egui::Margin::symmetric(28,16))).show(ctx,|ui| {
+                crate::auth_ui::page(ui,&logo,|ui| {
                             if self.auth_preview {ui.label("DEMOSTRACIÓN AISLADA · sin cuentas, correos ni teléfono");ui.horizontal_wrapped(|ui| {
                                 if ui.button("Vista correo").clicked() {self.account_stage=0;}
                                 if ui.button("Vista contraseña").clicked() {self.account_stage=1;}
@@ -1696,9 +1677,6 @@ impl eframe::App for AirCardApp {
                             self.show_account_tab(ui,ctx);
                             ui.add_space(18.0);
                             ui.label(egui::RichText::new("Acceso privado para clientes · hasta 3 equipos por cuenta").size(11.0).color(md3::ON_SURFACE_VARIANT));
-                            ui.add_space(24.0);
-                        });
-                    });
                 });
             });
             return;
@@ -1721,7 +1699,7 @@ impl eframe::App for AirCardApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Image::new((self.brand_texture.id(), egui::vec2(44.0, 44.0))));
+                    ui.add(egui::Image::new((self.brand.header.id(), egui::vec2(44.0, 44.0))));
                     ui.label(
                         egui::RichText::new("Wallet Studio")
                             .strong()
@@ -2215,22 +2193,20 @@ impl AirCardApp {
         if self.saved_cards.is_empty() {
             m3_card(ui,|ui| {ui.label("Aún no tienes tarjetas guardadas. Pulsa Añadir tarjeta con el iPhone conectado para empezar.");});
         } else {
-            let count=(ui.available_width()/300.0).floor().clamp(1.0,3.0) as usize;
+            let tile_width=ui.available_width().min(320.0);
             let cards=self.saved_cards.clone();
-            for row in cards.chunks(count) {
-                ui.columns(count,|columns| {
-                    for (index,card) in row.iter().enumerate() {
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing=egui::vec2(16.0,16.0);
+                ui.horizontal_wrapped(|ui| {
+                    for card in &cards {
                         let current=self.applied_thumbnail(ctx,&card.hash);let original=self.original_thumbnail(ctx,&card.hash);
                         let verified=self.original_verified(&card.hash);let foreign=self.snapshot(&card.hash).is_some_and(|snapshot|snapshot.reference_device.is_some());
-                        columns[index].with_layout(egui::Layout::top_down(egui::Align::Center),|ui| {
-                            if card_gallery::draw_card_tile(ui,&card.name,&card.hash,current.as_ref(),original.as_ref(),verified,foreign,self.card_hash==card.hash,language) && !self.is_busy {
+                            if card_gallery::draw_card_tile(ui,tile_width,&card.name,&card.hash,current.as_ref(),original.as_ref(),verified,foreign,self.card_hash==card.hash,language) && !self.is_busy {
                                 self.select_saved_card(&card.hash);ctx.request_repaint();
                             }
-                        });
                     }
                 });
-                ui.add_space(12.0);
-            }
+            });
         }
         ui.add_space(12.0);
         ui.columns(2,|columns| {
