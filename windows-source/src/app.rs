@@ -397,7 +397,7 @@ impl AirCardApp {
                     let now=Instant::now();
                     let cooldown=crate::auth_ui::remaining(self.activation_requested,now,crate::auth_ui::RESEND_COOLDOWN);
                     let lifetime=crate::auth_ui::remaining(self.activation_requested,now,crate::auth_ui::CODE_LIFETIME);
-                    ui.label(egui::RichText::new(if self.activation_requested.is_none() {"El código caduca 10 minutos después de enviarse.".into()} else if lifetime==0 {"El código ha caducado. Solicita uno nuevo.".into()} else {format!("Código válido durante {:02}:{:02} · utiliza el más reciente",lifetime/60,lifetime%60)}).size(12.0).color(md3::PRIMARY));
+                    ui.label(egui::RichText::new(if self.activation_requested.is_none() {"El código caduca 10 minutos después de enviarse.".into()} else if lifetime==0 {"Han pasado 10 min desde la solicitud. Si el código no funciona, solicita uno nuevo.".into()} else {format!("Quedan aprox. {:02}:{:02} desde la solicitud · utiliza el más reciente",lifetime/60,lifetime%60)}).size(12.0).color(md3::PRIMARY));
                     let label=if cooldown>0 {format!("Reenviar código en {cooldown} s")} else {"Reenviar código de activación".into()};
                     if studio_button(ui,&label,available && cooldown==0,false) {
                         self.account_code.clear();self.activation_requested=Some(now);
@@ -1530,6 +1530,8 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 }
 
 fn setup_custom_theme(ctx: &egui::Context) {
+    // Keep the branded palette independent of the Windows light/dark setting.
+    ctx.set_theme(egui::ThemePreference::Dark);
     let mut visuals = egui::Visuals::dark();
 
     visuals.panel_fill = md3::SURFACE;
@@ -1657,6 +1659,8 @@ fn m3_tab(ui: &mut egui::Ui, current: &mut AppTab, target: AppTab, label: &str) 
 
 impl eframe::App for AirCardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // eframe can restore older saved visual preferences after construction.
+        if !ctx.style().visuals.dark_mode {setup_custom_theme(ctx);}
         self.tick_cloud(ctx);
         if (!crate::storage::is_demo() || self.auth_preview) && !self.account_authenticated {
             egui::CentralPanel::default().show(ctx,|ui| {
@@ -2681,6 +2685,16 @@ impl AirCardApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn branded_login_palette_overrides_a_restored_light_theme() {
+        let ctx=egui::Context::default();
+        ctx.set_theme(egui::ThemePreference::Light);
+        assert!(!ctx.style().visuals.dark_mode);
+        setup_custom_theme(&ctx);
+        assert!(ctx.style().visuals.dark_mode);
+        assert_eq!(ctx.style().visuals.panel_fill,md3::SURFACE);
+        assert_eq!(ctx.style().visuals.widgets.inactive.fg_stroke.color,md3::ON_SURFACE_VARIANT);
+    }
     #[test] fn foreign_reference_art_never_replaces_selected_device_authorization() {
         let mut selected=CardSnapshot {udid:Some("synthetic-B".into()),known_device:Some("synthetic-A".into()),reference_device:None,original:OriginalState::Missing,restore:false,phase:Ok(None),original_image:None,applied_image:None};
         let reference=CardSnapshot {udid:Some("synthetic-A".into()),known_device:Some("synthetic-A".into()),reference_device:None,original:OriginalState::Verified,restore:true,phase:Ok(Some("applied".into())),original_image:Some(egui::ColorImage::from_rgba_unmultiplied([1,1],&[1,2,3,255])),applied_image:None};
