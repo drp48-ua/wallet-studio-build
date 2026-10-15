@@ -108,13 +108,14 @@ enum AppTab {
     Help,
     Account,
 }
-fn cloud_sync_status(session:&crate::cloud_sync::Session)->(bool,String) {
-    match crate::cloud_sync::synchronize_report(session) {
-        Ok(report)=>(report.complete(),report.message()),
-        Err(error)=>(false,crate::cloud_sync::sync_failure_message(&error)),
+fn cloud_sync_status(session:&crate::cloud_sync::Session,previously_authenticated:bool,tx:&std::sync::mpsc::Sender<CloudEvent>,ctx:&egui::Context)->(bool,bool,String) {
+    match crate::cloud_sync::synchronize_report_progress(session,|status| {let _=tx.send(CloudEvent::Progress(status));ctx.request_repaint();}) {
+        Ok(report)=>(true,report.complete(),report.message()),
+        Err(error)=>(crate::cloud_sync::authenticated_after_sync_failure(&error,previously_authenticated),false,crate::cloud_sync::sync_failure_message(&error)),
     }
 }
 struct CloudMessage { authenticated:bool,storage_ready:bool,configured:bool,synced:bool,server:String,status:String,session:Option<crate::cloud_sync::Session> }
+enum CloudEvent {Progress(&'static str),Complete(CloudMessage)}
 
 enum BackgroundTaskMessage {
     Progress { step: usize, total: usize, message: String },
@@ -177,7 +178,7 @@ fn current_timestamp() -> String {
 }
 
 pub struct AirCardApp {
-    cloud_rx:Option<Receiver<CloudMessage>>,
+    cloud_rx:Option<Receiver<CloudEvent>>,
     activation_rx:Option<Receiver<bool>>,account_stage:u8,account_code:String,account_confirmation:String,account_authenticated:bool,
     account_devices:Vec<crate::cloud_sync::RegisteredComputer>,account_devices_rx:Option<Receiver<Result<Vec<crate::cloud_sync::RegisteredComputer>,()>>>,
     account_recovery:bool,account_reset_devices:bool,
@@ -273,14 +274,14 @@ impl AirCardApp {
         let (tx,rx)=channel(); self.cloud_rx=Some(rx);
         let endpoint=self.account_server.clone();
         thread::spawn(move || {
+            let _=tx.send(CloudEvent::Progress("Comprobando y preparando las copias locales…"));ctx.request_repaint();
             let mut message=CloudMessage { authenticated:false,storage_ready:false,configured:true,synced:false,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación.".into(),session:None };
             if crate::storage::migrate_legacy().is_ok() {
                 message.storage_ready=true;
                 message.configured=crate::cloud_sync::account_expected_without_session(&endpoint);
                 match crate::cloud_sync::load_session() {
                     Ok(Some(session))=> { message.configured=true; message.server=session.server.clone();
-                        message.authenticated=crate::cloud_sync::validate_session(&session).is_ok();
-                        (message.synced,message.status)=cloud_sync_status(&session);
+                        (message.authenticated,message.synced,message.status)=cloud_sync_status(&session,false,&tx,&ctx);
                         message.session=Some(session);
                     }
                     Ok(None)=>message.status=if message.configured {"Inicia sesión y comprueba tus copias en la nube antes de capturar un original ausente. Los originales locales verificados siguen disponibles."} else {"Almacenamiento local listo · vincula tu cuenta para sincronizar"}.into(),
@@ -288,7 +289,7 @@ impl AirCardApp {
                 }
             }
             if message.storage_ready { message.storage_ready=crate::storage::ensure_ready().is_ok(); }
-            let _=tx.send(message); ctx.request_repaint();
+            let _=tx.send(CloudEvent::Complete(message)); ctx.request_repaint();
         });
     }
     fn tick_cloud(&mut self,ctx:&egui::Context) {
@@ -303,7 +304,8 @@ impl AirCardApp {
             self.account_devices_rx=None;match result {Ok(devices)=>self.account_devices=devices,Err(())=>self.cloud_status="No se pudo actualizar la lista de equipos. Vuelve a comprobar la sesión.".into()}
         }
         if self.account_devices_rx.is_some() {ctx.request_repaint_after(std::time::Duration::from_millis(150));}
-        if let Some(message)=self.cloud_rx.as_ref().and_then(|rx|rx.try_recv().ok()) {
+        while let Some(event)=self.cloud_rx.as_ref().and_then(|rx|rx.try_recv().ok()) {
+            let message=match event {CloudEvent::Progress(status)=>{self.cloud_status=status.into();continue;},CloudEvent::Complete(message)=>message};
             self.cloud_rx=None; self.storage_ready=message.storage_ready; self.cloud_configured=message.configured;
             self.cloud_synced=message.synced; self.cloud_status=message.status.into();
             let newly_authenticated=!self.account_authenticated && message.authenticated;
@@ -325,13 +327,14 @@ impl AirCardApp {
         if crate::storage::is_demo() || self.is_busy || self.scanning_syslog || self.cloud_rx.is_some() { return; }
         let Some(session)=self.cloud_session.clone() else { return; };
         self.cloud_sync_queued=false; self.last_cloud_sync=Instant::now();
+        self.cloud_synced=false;
+        let previously_authenticated=self.account_authenticated;
         let (tx,rx)=channel(); self.cloud_rx=Some(rx);
         thread::spawn(move|| {
-            let authenticated=crate::cloud_sync::validate_session(&session).is_ok();
-            let (synced,status)=if authenticated {cloud_sync_status(&session)} else {(false,"No se pudo verificar la sesión. Comprueba tu conexión o vuelve a iniciar sesión.".into())};
+            let (authenticated,synced,status)=cloud_sync_status(&session,previously_authenticated,&tx,&ctx);
             let message=CloudMessage { authenticated,storage_ready:crate::storage::ensure_ready().is_ok(),configured:true,synced,
                 server:session.server.clone(),session:Some(session),status };
-            let _=tx.send(message);ctx.request_repaint();
+            let _=tx.send(CloudEvent::Complete(message));ctx.request_repaint();
         });
     }
     fn show_account_tab(&mut self,ui:&mut egui::Ui,ctx:&egui::Context) {
@@ -370,6 +373,9 @@ impl AirCardApp {
                 return;
             }
             ui.label("Accede con el correo que utilizaste al comprar Wallet Studio.");
+            if self.cloud_session.is_some() && self.cloud_rx.is_none() && !crate::storage::is_demo() {
+                if studio_button(ui,"Reintentar conexión con mi sesión guardada",!self.is_busy && self.activation_rx.is_none(),false) {self.start_cloud_sync(ctx.clone());}
+            }
             if !self.storage_ready && self.cloud_rx.is_none() && !crate::storage::is_demo() {
                 ui.label("Si acabas de cerrar otra versión, puedes volver a comprobar el almacenamiento sin borrar ninguna copia.");
                 if studio_button(ui,"Volver a comprobar mis copias locales",!self.is_busy && self.activation_rx.is_none(),false) {self.start_cloud_startup(ctx.clone());}
@@ -434,16 +440,15 @@ impl AirCardApp {
                     let result=if register && recovery {crate::cloud_sync::recover_account(&server,&email,&code,&password,&confirmation,reset_devices,consent)} else if register {crate::cloud_sync::activate(&server,&email,&code,&password,&confirmation,consent)} else {crate::cloud_sync::login(&server,&email,&password,false,consent)};
                     match result {
                       Ok(session)=> {
-                        message.authenticated=crate::cloud_sync::validate_session(&session).is_ok();
                         message.configured=true;
-                        (message.synced,message.status)=cloud_sync_status(&session);
+                        (message.authenticated,message.synced,message.status)=cloud_sync_status(&session,true,&tx,&ctx);
                         message.session=Some(session);
                       }
                       Err(error)=>message.status=crate::cloud_sync::account_failure_message(&error).into(),
                     }
                     message.configured|=crate::cloud_sync::account_expected_without_session(&server);
                     message.storage_ready=crate::storage::ensure_ready().is_ok();
-                    let _=tx.send(message); ctx.request_repaint();
+                    let _=tx.send(CloudEvent::Complete(message)); ctx.request_repaint();
                 });
             }
             if self.account_stage>0 && studio_button(ui,"Volver al correo",available,false) {self.account_stage=0;self.activation_requested=None;self.password_visible=false;self.account_password.clear();self.account_confirmation.clear();self.account_code.clear();}

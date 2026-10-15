@@ -33,6 +33,12 @@ unsafe extern "system" {
 struct Handle(*mut std::ffi::c_void);
 impl Drop for Handle{fn drop(&mut self){if !self.0.is_null(){unsafe{WinHttpCloseHandle(self.0);}}}}
 struct Response{status:u32,body:Vec<u8>,location:Option<String>}
+#[derive(Debug)]
+pub(crate) struct HttpStatus(pub u32);
+impl std::fmt::Display for HttpStatus {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {write!(f,"El servicio respondió HTTP {}",self.0)}
+}
+impl std::error::Error for HttpStatus {}
 fn request(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usize)->Result<Response>{
     let url=parse_url(value)?;
     anyhow::ensure!(matches!(method,"GET"|"POST"|"PUT"|"DELETE")&&max<=MAX_PACKAGE&&body.len()<=MAX_PACKAGE,"Petición fuera de límites");
@@ -66,7 +72,7 @@ fn request(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usiz
 }
 pub fn http_request(method:&str,url:&str,headers:&[(String,String)],body:&[u8],max_bytes:usize)->Result<Vec<u8>>{
     let r=request(method,url,headers,body,max_bytes)?;
-    anyhow::ensure!(matches!(r.status,200|201|204),"El servicio respondió HTTP {}",r.status);
+    anyhow::ensure!(matches!(r.status,200|201|204),HttpStatus(r.status));
     Ok(r.body)
 }
 fn public_download(url:&str,max:usize)->Result<Vec<u8>>{

@@ -129,14 +129,14 @@ fn files_in(directory:&Path,prefix:&str,files:&mut BTreeMap<String,Vec<u8>>)->Re
 }
 
 pub fn export_bundle(root:&Path,baseline_directory:&Path)->Result<Vec<u8>> {
-    let _lease=crate::storage::operation_lease_for_import(root)?;
-    let baseline=crate::bank_backup::validate_bundle_directory(baseline_directory)?;
-    crate::storage::ensure_card_ready_at(root,&baseline.udid,&baseline.card_hash)?;
-    let pending=crate::wallet_export::pending_recovery_operations_at(&root.join("wallet-export-recovery"))?;
-    anyhow::ensure!(!crate::wallet_export::pending_recovery_blocks_device(Ok(&pending),Some(&baseline.udid)),"pending recovery must remain local before sync");
+    let _lease=crate::storage::operation_lease_for_import(root).context(LocalReview::Busy)?;
+    let baseline=crate::bank_backup::validate_bundle_directory(baseline_directory).context(LocalReview::Original)?;
+    crate::storage::ensure_card_ready_at(root,&baseline.udid,&baseline.card_hash).context(LocalReview::Conflict)?;
+    let pending=crate::wallet_export::pending_recovery_operations_at(&root.join("wallet-export-recovery")).context(LocalReview::Recovery)?;
+    anyhow::ensure!(!crate::wallet_export::pending_recovery_blocks_device(Ok(&pending),Some(&baseline.udid)),LocalReview::Recovery);
     let key=baseline_directory.file_name().context("missing identity key")?.to_string_lossy();
     let mut files=BTreeMap::new(); files_in(baseline_directory,&format!("bank/{key}"),&mut files)?;
-    for operation in crate::bank_changes::cloud_operation_dirs(&root.join("bank-change-intents"),&baseline.udid,&baseline.card_hash)? {
+    for operation in crate::bank_changes::cloud_operation_dirs(&root.join("bank-change-intents"),&baseline.udid,&baseline.card_hash).context(LocalReview::History)? {
         files_in(&operation,&format!("intents/{}",operation.file_name().unwrap().to_string_lossy()),&mut files)?;
     }
     anyhow::ensure!(files.values().map(Vec::len).sum::<usize>()<LIMIT,"cloud bundle too large");
@@ -284,7 +284,21 @@ pub fn validate_session(session:&Session)->Result<()> {
     require_service(&session.server)?;
     let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/auth/session",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],65536)?;
     #[derive(Deserialize)] struct Reply {user_id:String}
-    let reply:Reply=serde_json::from_slice(&bytes)?;anyhow::ensure!(reply.user_id==session.user_id,"La cuenta requiere iniciar sesión de nuevo");Ok(())
+    let reply:Reply=serde_json::from_slice(&bytes)?;anyhow::ensure!(reply.user_id==session.user_id,SessionRejected);Ok(())
+}
+#[derive(Debug)]
+struct SessionRejected;
+impl std::fmt::Display for SessionRejected {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("La cuenta requiere iniciar sesión de nuevo")}
+}
+impl std::error::Error for SessionRejected {}
+fn session_rejected(error:&anyhow::Error)->bool {
+    error.downcast_ref::<SessionRejected>().is_some() || error.downcast_ref::<crate::auto_update::HttpStatus>().is_some_and(|status|matches!(status.0,401|403))
+}
+// Retaining a previously verified screen on transport failure does not grant
+// phone access: require_access still performs an online check for each operation.
+pub fn authenticated_after_sync_failure(error:&anyhow::Error,previously_authenticated:bool)->bool {
+    !session_rejected(error) && (previously_authenticated || !matches!(error.downcast_ref::<SyncFailure>(),Some(SyncFailure::Session)))
 }
 pub fn require_access()->Result<()> {
     anyhow::ensure!(!crate::storage::is_demo(),"La demostración no permite operaciones del teléfono");
@@ -341,7 +355,7 @@ fn finish_login(server:&str,body:serde_json::Value,operation:&str,initial_link_c
     let path=root.join("cloud-session.dpapi"); crate::storage::write_mutable(&path,&encrypted)?; Ok(session)
 }
 #[derive(Clone,Debug,Default)]
-pub struct SyncReport { pub downloaded:usize,pub uploaded:usize,pub verified:usize,pub local_pending:usize }
+pub struct SyncReport { pub downloaded:usize,pub uploaded:usize,pub verified:usize,pub local_pending:usize,pub pending_reasons:BTreeMap<String,usize> }
 impl SyncReport {
     pub fn complete(&self)->bool { self.local_pending==0 }
     pub fn message(&self)->String {
@@ -349,14 +363,32 @@ impl SyncReport {
             return "Cuenta conectada. No hay copias bancarias verificadas en este perfil ni en la nube. Abre la app con esta cuenta en el PC que conserva los originales para sincronizarlos.".into();
         }
         let summary=format!("Copias: {} descargadas · {} subidas · {} verificadas",self.downloaded,self.uploaded,self.verified);
-        if self.local_pending==0 {summary} else {format!("{summary}. {} copias locales requieren revisión; se conservan sin subir. No se capturará un original ausente.",self.local_pending)}
+        if self.local_pending==0 {summary} else {
+            let reasons=self.pending_reasons.iter().map(|(reason,count)|format!("{count}: {reason}")).collect::<Vec<_>>().join(" · ");
+            format!("{summary}. {} copias locales requieren revisión; se conservan sin subir. {reasons}. No se capturará un original ausente.",self.local_pending)
+        }
     }
+}
+#[derive(Debug)]
+enum LocalReview {Busy,Original,Conflict,Recovery,History}
+impl std::fmt::Display for LocalReview {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str(match self {
+        Self::Busy=>"almacenamiento ocupado o protegido",
+        Self::Original=>"original incompleto o integridad no verificable",
+        Self::Conflict=>"copia marcada por un conflicto local",
+        Self::Recovery=>"recuperación del teléfono pendiente de revisión",
+        Self::History=>"historial de cambios pendiente de revisión",
+    })}
+}
+impl std::error::Error for LocalReview {}
+fn local_review_message(error:&anyhow::Error)->String {
+    error.downcast_ref::<LocalReview>().map(ToString::to_string).unwrap_or_else(||"archivo no exportable con las comprobaciones actuales".into())
 }
 #[derive(Debug)]
 enum SyncFailure {Session,Storage,Inventory,Download,Import,Export,Upload,Receipt}
 impl std::fmt::Display for SyncFailure {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { f.write_str(match self {
-        Self::Session=>"No se pudo verificar la sesión. Comprueba tu conexión o vuelve a iniciar sesión.",
+        Self::Session=>"No se pudo contactar con el servicio para verificar la sesión. Reintenta la conexión; la sesión guardada se conserva.",
         Self::Storage=>"El archivo local necesita revisión o está en uso por otra instancia. Las copias se conservan.",
         Self::Inventory=>"No se pudo consultar el inventario de la nube. Pulsa Sincronizar ahora para reintentar.",
         Self::Download=>"No se pudo descargar y verificar una copia de la nube. Las copias locales se conservan.",
@@ -368,19 +400,27 @@ impl std::fmt::Display for SyncFailure {
 }
 impl std::error::Error for SyncFailure {}
 pub fn sync_failure_message(error:&anyhow::Error)->String {
-    error.downcast_ref::<SyncFailure>().map(ToString::to_string)
-        .unwrap_or_else(||"Sincronización incompleta. Tus copias se conservan; comprueba conexión y almacenamiento.".into())
+    if session_rejected(error) {return "El servidor rechazó la sesión. Inicia sesión de nuevo con tu correo y contraseña; tus copias se conservan.".into();}
+    let mut message=error.downcast_ref::<SyncFailure>().map(ToString::to_string)
+        .unwrap_or_else(||"Sincronización incompleta. Tus copias se conservan; comprueba conexión y almacenamiento.".into());
+    if let Some(status)=error.downcast_ref::<crate::auto_update::HttpStatus>() {message.push_str(&format!(" (HTTP {})",status.0));}
+    message
 }
 pub fn synchronize(session:&Session)->Result<()> {
     let report=synchronize_report(session)?;
     anyhow::ensure!(report.complete(),SyncFailure::Export);Ok(())
 }
 pub fn synchronize_report(session:&Session)->Result<SyncReport> {
+    synchronize_report_progress(session,|_|{})
+}
+pub fn synchronize_report_progress(session:&Session,mut progress:impl FnMut(&'static str))->Result<SyncReport> {
     let mut report=SyncReport::default();
+    progress("Conectando con el servicio y verificando la sesión…");
     validate_session(session).context(SyncFailure::Session)?;
     anyhow::ensure!(!crate::storage::is_demo() && valid_server(&session.server),"cloud service unavailable"); crate::storage::ensure_ready().context(SyncFailure::Storage)?;
     let root=crate::storage::root(); let owner=require_owner_at(&root,session)?;
     let headers=vec![("Authorization".into(),format!("Bearer {}",session.access_token))];
+    progress("Consultando las copias de tu cuenta…");
     let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/bundles",session.server),&headers,&[],1024*1024).context(SyncFailure::Inventory)?;
     #[derive(Deserialize)] struct Entry { id:String,sha256:String,size:usize }
     #[derive(Deserialize)] struct Listing { bundles:Vec<Entry> }
@@ -388,6 +428,7 @@ pub fn synchronize_report(session:&Session)->Result<SyncReport> {
     let mut remote_ids=std::collections::BTreeSet::new();
     let seen=seen_directory(&root,&owner)?; crate::storage::safe_chain(&seen)?; fs::create_dir_all(&seen)?;
     for entry in listing.bundles {
+        progress("Descargando y verificando originales de la nube…");
         remote_ids.insert(entry.id.clone());
         anyhow::ensure!(entry.id.len()==64 && entry.id.bytes().all(|b|b.is_ascii_hexdigit()) && entry.id==entry.sha256 && entry.size<=LIMIT,"invalid cloud inventory");
         if verified_seen(&root,&seen.join(&entry.id),&entry.id)? {report.verified+=1;continue;}
@@ -395,11 +436,14 @@ pub fn synchronize_report(session:&Session)->Result<SyncReport> {
         anyhow::ensure!(bundle.len()==entry.size && crate::bank_backup::sha256(&bundle)?==entry.sha256,"cloud download checksum mismatch");
         import_bundle(&root,&bundle).context(SyncFailure::Import)?;let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&entry.id),&entry.id,manifest).context(SyncFailure::Receipt)?;report.downloaded+=1;
     }
+    progress("Verificando y subiendo originales locales…");
     let banks=root.join("bank-backups"); if banks.is_dir() { for entry in fs::read_dir(banks)? {
         // A recovery or incomplete original for one card must not prevent other
         // verified originals being uploaded. Never upload or alter the failed one.
         let path=entry?.path();
-        let bundle=match export_bundle(&root,&path) {Ok(bundle)=>bundle,Err(_)=>{report.local_pending+=1;continue;}};
+        let bundle=match export_bundle(&root,&path) {Ok(bundle)=>bundle,Err(error)=>{
+            report.local_pending+=1;*report.pending_reasons.entry(local_review_message(&error)).or_default()+=1;continue;
+        }};
         let id=crate::bank_backup::sha256(&bundle)?;
         if remote_ids.contains(&id) && verified_seen(&root,&seen.join(&id),&id)? { continue; }
         let mut upload_headers=headers.clone(); upload_headers.push(("Content-Type".into(),"application/zip".into())); upload_headers.push(("X-Content-SHA256".into(),id.clone()));
@@ -422,6 +466,26 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn transient_sync_failures_do_not_log_out_a_verified_account() {
+        let offline=anyhow::anyhow!("synthetic private transport detail").context(SyncFailure::Session);
+        assert!(authenticated_after_sync_failure(&offline,true));
+        assert!(!authenticated_after_sync_failure(&offline,false));
+        assert!(!sync_failure_message(&offline).contains("private transport"));
+        let unavailable=anyhow::Error::new(crate::auto_update::HttpStatus(503)).context(SyncFailure::Session);
+        assert!(authenticated_after_sync_failure(&unavailable,true));
+        assert!(sync_failure_message(&unavailable).contains("HTTP 503"));
+        for code in [401,403] {
+            for stage in [SyncFailure::Session,SyncFailure::Inventory,SyncFailure::Upload] {
+                let rejected=anyhow::Error::new(crate::auto_update::HttpStatus(code)).context(stage);
+                assert!(!authenticated_after_sync_failure(&rejected,true));
+                assert!(sync_failure_message(&rejected).contains("servidor rechazó"));
+            }
+        }
+        let wrong_identity=anyhow::Error::new(SessionRejected).context(SyncFailure::Session);
+        assert!(!authenticated_after_sync_failure(&wrong_identity,true));
+        let inventory=anyhow::anyhow!("synthetic inventory failure").context(SyncFailure::Inventory);
+        assert!(authenticated_after_sync_failure(&inventory,false),"session check already passed before inventory request");
+    }
     #[test] fn customer_missing_original_waits_for_auth_when_service_or_owner_is_known() {
         let root=fixture_root();
         assert!(missing_original_capture_allowed(account_expected_at(&root,""),false));
@@ -537,10 +601,17 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         let input=fixture_baseline(); let path=crate::bank_backup::save_fixture_at(&a.join("bank-backups"),&input).unwrap();
         let suffix=crate::flasher::generate_token(); let email_a=format!("fixture-a-{suffix}@example.invalid");let email_b=format!("fixture-b-{suffix}@example.invalid");let password="Synthetic-Fixture-Password-2026";
         let session_a=login(&server,&email_a,password,true,true).unwrap();
+        let mut rejected=session_a.clone();rejected.access_token="0".repeat(64);
+        let error=validate_session(&rejected).unwrap_err();
+        assert!(!authenticated_after_sync_failure(&error,true));
+        assert_eq!(error.downcast_ref::<crate::auto_update::HttpStatus>().unwrap().0,401);
         let incomplete=a.join("bank-backups").join("incomplete-fixture");
         fs::create_dir_all(&incomplete).unwrap();fs::write(incomplete.join("preserve.txt"),b"unverified local evidence").unwrap();
-        let partial=synchronize_report(&session_a).unwrap();
+        let mut stages=Vec::new();
+        let partial=synchronize_report_progress(&session_a,|stage|stages.push(stage)).unwrap();
+        assert!(stages[0].contains("sesión"));assert!(stages.iter().any(|stage|stage.contains("locales")));
         assert_eq!(partial.uploaded,1);assert_eq!(partial.local_pending,1);assert!(!partial.complete());
+        assert_eq!(partial.pending_reasons.get("original incompleto o integridad no verificable"),Some(&1));
         assert_eq!(fs::read(incomplete.join("preserve.txt")).unwrap(),b"unverified local evidence");
         fs::remove_file(incomplete.join("preserve.txt")).unwrap();fs::remove_dir(incomplete).unwrap();
         synchronize(&session_a).unwrap();
