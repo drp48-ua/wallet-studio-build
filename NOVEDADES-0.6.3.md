@@ -8,4 +8,4 @@ Se elimina la comprobación duplicada de sesión en cada sincronización. El arr
 
 Las copias locales pendientes incluyen un resumen de motivos: original incompleto o no verificable, conflicto local, recuperación pendiente, historial pendiente o almacenamiento ocupado/protegido. No se cambia ninguna evidencia para darla por válida. Las copias sanas continúan sincronizándose.
 
-La compilación y las pruebas utilizan perfiles y originales sintéticos. Las tres copias pendientes notificadas por el usuario requieren comprobar el nuevo motivo en el ordenador que las conserva; no se consideran reparadas.
+La compilación y las pruebas utilizan perfiles y originales sintéticos. Las copias pendientes requieren comprobar el motivo en el equipo que las conserva; no se consideran reparadas.
