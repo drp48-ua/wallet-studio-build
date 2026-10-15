@@ -156,6 +156,14 @@ class ReportTests(unittest.TestCase):
     def test_v19_catalog_duplicate_class_rejected(self):
         self.v19_catalog(); self.report['renderer_catalog']['classes']*=2
         with self.assertRaises(ValueError): validate(self.report)
+    def test_v20_catalog(self):
+        self.v19_catalog(); self.report['revision']='shader_resources_v20'
+        self.report['texture_probe']['class_name']='PassKitUI.SyntheticMaterial'
+        validate(self.report)
+    def test_v20_catalog_remains_bounded(self):
+        self.v19_catalog(); self.report['revision']='shader_resources_v20'
+        self.report['renderer_catalog']['classes']*=17
+        with self.assertRaises(ValueError): validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

@@ -21,7 +21,7 @@ static NSArray *OwnSelectorCalls(const void *code, const unsigned char *bytes, N
         uintptr_t target=(uintptr_t)code+offset+delta*4;
         Dl_info image={0};
         if(!dladdr((const void*)target,&image) || !image.dli_fname ||
-           strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI")) continue;
+           (strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI") && strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore"))) continue;
         uint32_t stub[2]={0};
         if(!ReadOwnCode((const void*)target,stub,sizeof(stub))) continue;
         if((stub[0]&0x9f00001f)!=0x90000001 || (stub[1]&0xffc003ff)!=0xf9400021) continue;
@@ -48,7 +48,7 @@ static NSDictionary *ProbeOwnCodeForMethod(Method method) {
     const void *code=(const void*)ptrauth_strip(method_getImplementation(method),ptrauth_key_function_pointer);
     Dl_info image={0};
     if(!dladdr(code,&image) || !image.dli_fname ||
-       strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI")) {
+       (strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI") && strcmp(image.dli_fname,"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore"))) {
         result[@"reason"]=@"image_origin_unverified"; return result;
     }
     result[@"image_origin_verified"]=@YES;
@@ -74,37 +74,46 @@ static NSDictionary *ProbeOwnConstructor(void) {
     return ProbeOwnCodeForMethod(method);
 }
 
+static NSArray *OwnPassKitClassNames(BOOL *truncated) {
+    NSMutableArray *result=[NSMutableArray array];
+    for(NSString *image in @[@"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI",
+                            @"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore"]) {
+        unsigned int count=0;const char **names=objc_copyClassNamesForImage(image.UTF8String,&count);
+        if(count>10000) { *truncated=YES;free(names);continue; }
+        for(unsigned int i=0;i<count;++i) if(names[i]) [result addObject:@(names[i])];
+        free(names);
+    }
+    return [result sortedArrayUsingSelector:@selector(compare:)];
+}
+
 static Class OwnMaterialConstructorClass(void) {
-    unsigned int count=0; Class *classes=objc_copyClassList(&count);Class found=Nil;
-    if(count>100000) { free(classes);return Nil; }
+    BOOL truncated=NO;NSArray *names=OwnPassKitClassNames(&truncated);Class found=Nil;
+    if(truncated) return Nil;
     SEL selector=NSSelectorFromString(@"initWithDiffuse:metalness:normal:");
-    for(unsigned int i=0;i<count;++i) {
-        const char *image=class_getImageName(classes[i]);
-        if(!image || strcmp(image,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI")) continue;
-        if(!class_getInstanceMethod(classes[i],selector)) continue;
-        unsigned int amount=0;Method *methods=class_copyMethodList(classes[i],&amount);BOOL own=NO;
+    for(NSString *name in names) {
+        Class cls=objc_lookUpClass(name.UTF8String);
+        if(!cls || !class_getInstanceMethod(cls,selector)) continue;
+        unsigned int amount=0;Method *methods=class_copyMethodList(cls,&amount);BOOL own=NO;
         for(unsigned int j=0;j<amount;++j) if(method_getName(methods[j])==selector) own=YES;
         free(methods);
-        if(own) { if(found) { found=Nil;break; } found=classes[i]; }
+        if(own) { if(found) return Nil;found=cls; }
     }
-    free(classes);return found;
+    return found;
 }
 
 static NSDictionary *OwnRendererCatalog(void) {
-    unsigned int count=0;Class *classes=objc_copyClassList(&count);
-    NSMutableArray *catalog=[NSMutableArray array];BOOL truncated=count>100000;
+    BOOL truncated=NO;NSArray *classNames=OwnPassKitClassNames(&truncated);
+    NSMutableArray *catalog=[NSMutableArray array];
     NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:"];
-    if(!truncated) for(unsigned int i=0;i<count;++i) {
-        const char *image=class_getImageName(classes[i]);
-        if(!image || (strcmp(image,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI") &&
-            strcmp(image,"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore"))) continue;
-        NSString *name=@(class_getName(classes[i]));
-        if(!name.length || name.length>128 || [name rangeOfCharacterFromSet:allowed.invertedSet].location!=NSNotFound) continue;
+    NSMutableCharacterSet *classAllowed=[allowed mutableCopy];[classAllowed addCharactersInString:@"."];
+    for(NSString *name in classNames) {
+        Class cls=objc_lookUpClass(name.UTF8String);
+        if(!cls || !name.length || name.length>128 || [name rangeOfCharacterFromSet:classAllowed.invertedSet].location!=NSNotFound) continue;
         NSString *lower=name.lowercaseString;BOOL related=NO;
         for(NSString *word in @[@"shader",@"scenekit",@"textur",@"material",@"metal",@"liverender"]) if([lower containsString:word]) related=YES;
         if(!related) continue;
         if(catalog.count>=16) { truncated=YES;continue; }
-        unsigned int amount=0;Method *methods=class_copyMethodList(classes[i],&amount);
+        unsigned int amount=0;Method *methods=class_copyMethodList(cls,&amount);
         NSMutableSet *names=[NSMutableSet set];BOOL methodsTruncated=NO;
         for(unsigned int j=0;j<amount;++j) {
             NSString *methodName=NSStringFromSelector(method_getName(methods[j]));NSString *methodLower=methodName.lowercaseString;
@@ -118,7 +127,7 @@ static NSDictionary *OwnRendererCatalog(void) {
         free(methods);
         [catalog addObject:@{@"class_name":name,@"method_names":[[names allObjects] sortedArrayUsingSelector:@selector(compare:)],@"methods_truncated":@(methodsTruncated)}];
     }
-    free(classes);return @{@"classes":catalog,@"truncated":@(truncated)};
+    return @{@"classes":catalog,@"truncated":@(truncated)};
 }
 
 static NSDictionary *ProbeOwnTextureConstructor(void) {
