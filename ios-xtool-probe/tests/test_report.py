@@ -99,6 +99,17 @@ class ReportTests(unittest.TestCase):
     def test_v14_rejects_excess_code(self):
         self.v14_code(); self.report['constructor_probe']['code_hex']+='00'
         with self.assertRaises(ValueError): validate(self.report)
+    def v15_material(self):
+        self.v14_code(); self.report['revision']='shader_resources_v15'
+        self.report['renderer_probe']['material_inputs']={'baseline_view_nil':False,'complete_material_bound':False,'image_ref_count':0,'candidate_view_created':False}
+    def test_v15_unknown(self):
+        self.v15_material(); validate(self.report)
+    def test_v15_rejects_false_material(self):
+        self.v15_material(); self.report['renderer_probe']['material_inputs']['complete_material_bound']=True
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v15_rejects_false_view(self):
+        self.v15_material(); self.report['renderer_probe']['material_inputs']['candidate_view_created']=True
+        with self.assertRaises(ValueError): validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

@@ -2,7 +2,7 @@
   {
     "source": "main.m",
     "target": "Probe.m",
-    "sha256": "58da413156def8f1c87d1124da01ed8d3f9f262ccf38ceaf54bbc293449bc8f8"
+    "sha256": "5e05274921201ea1c94bf31c10b9151b305acd2b0d9f1f0878f0c5981a56d831"
   },
   {
     "source": "pass-probe.h",
@@ -17,7 +17,7 @@
   {
     "source": "renderer-probe.h",
     "target": "renderer-probe.h",
-    "sha256": "b72168d9b5b6a7de182c3544634aeaaa17c566a88e3fbd8bf8fa31148415db87"
+    "sha256": "557fccee47339c7b717d05fa24f49ab150e423ce594f84f754ff2e24a22d6726"
   },
   {
     "source": "admission-probe.h",
@@ -33,5 +33,10 @@
     "source": "constructor-probe.h",
     "target": "constructor-probe.h",
     "sha256": "0bf94882c41b66d33c3201900d081e722b7264784966d14ed7fc466b7f3f2bd4"
+  },
+  {
+    "source": "material-input-probe.h",
+    "target": "material-input-probe.h",
+    "sha256": "273bb370d6f50cf0b60b36862252fc8938e4c3477fefbff05d7e88f1c2ea47a0"
   }
 ]

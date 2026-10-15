@@ -4,6 +4,7 @@
 
 #import "admission-probe.h"
 #import "profile-probe.h"
+#import "material-input-probe.h"
 
 static NSArray *ReadSyntheticCenter(UIView *view) {
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:view.bounds.size];
@@ -41,6 +42,7 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         @"initializer_names": @[],
         @"admission_probe": @{@"status":@"unknown",@"getter_names":@[],@"trace_truncated":@NO,@"constructor_nil_parity":@NO},
         @"profile_probe": EmptySyntheticProfileResult(),
+        @"material_inputs": [@{@"baseline_view_nil":@NO,@"complete_material_bound":@NO,@"image_ref_count":@0,@"candidate_view_created":@NO} mutableCopy],
         @"view_kinds": @[], @"samples_rgb": @[], @"three_phases_observed": @NO} mutableCopy];
     NSDictionary *control = passProbe[@"live_reference"];
     if (![passProbe[@"live_parity"] boolValue] || ![control[@"shader_source_preserved"] boolValue] ||
@@ -135,6 +137,13 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
         UIView *view = (UIView *)[(id<NativeCardViewInitializing>)[viewClass alloc] initWithFrame:CGRectMake(16,100,320,202) pass:pass];
         if (!view) {
             result[@"admission_probe"]=ProbeSyntheticAdmission(passClass,viewClass,metadata,directory,accessor,source);
+            NSMutableDictionary *inputs=result[@"material_inputs"];
+            inputs[@"baseline_view_nil"]=@YES;
+            if(CompleteOwnMaterial(pass,inputs)) {
+                view=(UIView*)[(id<NativeCardViewInitializing>)[viewClass alloc] initWithFrame:CGRectMake(16,100,320,202) pass:pass];
+                inputs[@"candidate_view_created"]=@((BOOL)(view!=nil));
+            }
+            if(!view) {
             NSMutableDictionary *profile=result[@"profile_probe"];
             if(!BindSyntheticProfile(pass,metadata,directory,profile)) { result[@"reason"]=@"renderer_view_unavailable"; return result; }
             // A profile setter may invalidate cached assets. Re-establish final controls.
@@ -149,6 +158,7 @@ static NSMutableDictionary *ProbeSyntheticRenderer(NSDictionary *passProbe, UIVi
             }
             view=(UIView*)[(id<NativeCardViewInitializing>)[viewClass alloc] initWithFrame:CGRectMake(16,100,320,202) pass:pass];
             if(!view) { result[@"reason"]=@"renderer_view_unavailable"; return result; }
+        }
         }
         [host addSubview:view]; [view layoutIfNeeded];
         result[@"view_created"] = @YES;
