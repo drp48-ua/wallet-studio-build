@@ -12,7 +12,9 @@ v15 falló dos veces en el control de captura, antes de probar los mapas complet
 
 ## Revisión en preparación
 
-v18 mantiene la prueba de materiales y añade un inventario acotado de métodos de `PKTexturedCardView`, junto al código de su constructor si coincide la firma esperada. Busca identificar el motor que consume las imágenes. Su resultado físico aún debe comprobarse.
+v18 mantiene la prueba de materiales y se ejecutó: vuelve a crear la vista, con seis muestras grises. El inventario de métodos de `PKTexturedCardView` expone render loop, pausa y movimiento. Esa clase no implementa el constructor con tres mapas buscado, por lo que su captura de código queda explícitamente desconocida.
+
+v19 busca la clase propietaria del constructor observado entre las clases del propio módulo PassKitUI, comprobando la firma antes de capturar su código. Añade un catálogo de hasta 16 clases relacionadas con renderizado de PassKitCore/PassKitUI, con hasta ocho métodos relevantes por clase y banderas de truncamiento. Solo consulta metadatos del runtime; no instancia servicios ni modelos de tarjetas. Compila y pasan 51 pruebas; su ejecución física está pendiente.
 
 La lectura usa `vm_read_overwrite(mach_task_self(), ...)`, únicamente para implementaciones concretas de PassKitUI cargadas en esta app. Nunca obtiene puertos de otros procesos, modifica instrucciones ni exporta direcciones. Reconoce stubs ARM64 estándar y limita la salida a 4.096 bytes por implementación y 128 selectores con desplazamientos. El inventario no contiene valores de propiedades de pases.
 

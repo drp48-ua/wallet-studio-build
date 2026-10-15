@@ -144,6 +144,18 @@ class ReportTests(unittest.TestCase):
     def test_v18_duplicate_method_rejected(self):
         self.v18_texture(); self.report['texture_probe']['method_names']*=2
         with self.assertRaises(ValueError): validate(self.report)
+    def v19_catalog(self):
+        self.v18_texture(); self.report['revision']='shader_resources_v19'
+        self.report['texture_probe']['class_name']='PKSyntheticMaterial'
+        self.report['renderer_catalog']={'classes':[{'class_name':'PKSyntheticMaterial','method_names':['render'],'methods_truncated':False}],'truncated':False}
+    def test_v19_catalog(self):
+        self.v19_catalog(); validate(self.report)
+    def test_v19_catalog_private_path_rejected(self):
+        self.v19_catalog(); self.report['renderer_catalog']['classes'][0]['class_name']='/private/user/card'
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v19_catalog_duplicate_class_rejected(self):
+        self.v19_catalog(); self.report['renderer_catalog']['classes']*=2
+        with self.assertRaises(ValueError): validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

@@ -74,8 +74,55 @@ static NSDictionary *ProbeOwnConstructor(void) {
     return ProbeOwnCodeForMethod(method);
 }
 
+static Class OwnMaterialConstructorClass(void) {
+    unsigned int count=0; Class *classes=objc_copyClassList(&count);Class found=Nil;
+    if(count>100000) { free(classes);return Nil; }
+    SEL selector=NSSelectorFromString(@"initWithDiffuse:metalness:normal:");
+    for(unsigned int i=0;i<count;++i) {
+        const char *image=class_getImageName(classes[i]);
+        if(!image || strcmp(image,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI")) continue;
+        if(!class_getInstanceMethod(classes[i],selector)) continue;
+        unsigned int amount=0;Method *methods=class_copyMethodList(classes[i],&amount);BOOL own=NO;
+        for(unsigned int j=0;j<amount;++j) if(method_getName(methods[j])==selector) own=YES;
+        free(methods);
+        if(own) { if(found) { found=Nil;break; } found=classes[i]; }
+    }
+    free(classes);return found;
+}
+
+static NSDictionary *OwnRendererCatalog(void) {
+    unsigned int count=0;Class *classes=objc_copyClassList(&count);
+    NSMutableArray *catalog=[NSMutableArray array];BOOL truncated=count>100000;
+    NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:"];
+    if(!truncated) for(unsigned int i=0;i<count;++i) {
+        const char *image=class_getImageName(classes[i]);
+        if(!image || (strcmp(image,"/System/Library/PrivateFrameworks/PassKitUI.framework/PassKitUI") &&
+            strcmp(image,"/System/Library/PrivateFrameworks/PassKitCore.framework/PassKitCore"))) continue;
+        NSString *name=@(class_getName(classes[i]));
+        if(!name.length || name.length>128 || [name rangeOfCharacterFromSet:allowed.invertedSet].location!=NSNotFound) continue;
+        NSString *lower=name.lowercaseString;BOOL related=NO;
+        for(NSString *word in @[@"shader",@"scenekit",@"textur",@"material",@"metal",@"liverender"]) if([lower containsString:word]) related=YES;
+        if(!related) continue;
+        if(catalog.count>=16) { truncated=YES;continue; }
+        unsigned int amount=0;Method *methods=class_copyMethodList(classes[i],&amount);
+        NSMutableSet *names=[NSMutableSet set];BOOL methodsTruncated=NO;
+        for(unsigned int j=0;j<amount;++j) {
+            NSString *methodName=NSStringFromSelector(method_getName(methods[j]));NSString *methodLower=methodName.lowercaseString;
+            if(!methodName.length || methodName.length>128 || [methodName rangeOfCharacterFromSet:allowed.invertedSet].location!=NSNotFound) continue;
+            BOOL relevant=NO;
+            for(NSString *word in @[@"shader",@"scene",@"textur",@"material",@"render",@"diffuse"]) if([methodLower containsString:word]) relevant=YES;
+            if(!relevant) continue;
+            if(names.count>=8 && ![names containsObject:methodName]) { methodsTruncated=YES;continue; }
+            [names addObject:methodName];
+        }
+        free(methods);
+        [catalog addObject:@{@"class_name":name,@"method_names":[[names allObjects] sortedArrayUsingSelector:@selector(compare:)],@"methods_truncated":@(methodsTruncated)}];
+    }
+    free(classes);return @{@"classes":catalog,@"truncated":@(truncated)};
+}
+
 static NSDictionary *ProbeOwnTextureConstructor(void) {
-    Class cls=NSClassFromString(@"PKTexturedCardView");
+    Class cls=OwnMaterialConstructorClass();
     Method method=class_getInstanceMethod(cls,NSSelectorFromString(@"initWithDiffuse:metalness:normal:"));
     BOOL valid=method && method_getNumberOfArguments(method)==5;
     if(valid) {
@@ -98,5 +145,6 @@ static NSDictionary *ProbeOwnTextureConstructor(void) {
     free(methods);
     result[@"method_names"]=[[names allObjects] sortedArrayUsingSelector:@selector(compare:)];
     result[@"inventory_truncated"]=@(truncated);
+    result[@"class_name"]=cls?@(class_getName(cls)):@"";
     return result;
 }
