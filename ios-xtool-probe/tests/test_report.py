@@ -65,6 +65,26 @@ class ReportTests(unittest.TestCase):
         self.report['pass_probe'].update(live_parity=True,live_reference={'status':'observed','pass_created':True,'exception':False,'live_background':True,'live_render_type':1,'shader_object_returned':True,'shader_source_preserved':True})
         validate(self.report)
         self.assertFalse(self.report['Wallet_animation_proven'])
+    def v13_code(self):
+        self.v12_unknown(); self.report['revision']='shader_resources_v13'
+        self.report['constructor_probe']={'status':'observed','reason':'own_constructor_code_observed','image_origin_verified':True,'code_hex':'00'*512}
+    def test_v13_bounded_code(self):
+        self.v13_code(); validate(self.report)
+    def test_v13_rejects_unverified_image(self):
+        self.v13_code(); self.report['constructor_probe']['image_origin_verified']=False
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v13_rejects_excess_bytes(self):
+        self.v13_code(); self.report['constructor_probe']['code_hex']+='00'
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v13_rejects_paths(self):
+        self.v13_code(); self.report['constructor_probe']['code_hex']='/private/user/card'
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v13_rejects_false_observation(self):
+        self.v13_code(); self.report['constructor_probe']['status']='unknown'
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v13_unknown(self):
+        self.v13_code(); self.report['constructor_probe'].update(status='unknown',reason='method_unavailable',image_origin_verified=False,code_hex='')
+        validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)
