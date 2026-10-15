@@ -24,6 +24,9 @@ pub fn draw_card_tile(
             egui::Stroke::new(if selected {1.5_f32} else {1.0_f32},if selected {md3::PRIMARY} else {md3::OUTLINE_VARIANT}),egui::StrokeKind::Inside);
         let content=rect.shrink(12.0);
         let mut child=ui.new_child(egui::UiBuilder::new().max_rect(content).layout(egui::Layout::top_down(egui::Align::Min)));
+        // The row's 16-point tile gap must not enlarge the tile's internal
+        // spacing or push its provenance label beyond the fixed frame.
+        child.spacing_mut().item_spacing=egui::vec2(8.0,8.0);
         child.add(egui::Label::new(egui::RichText::new(name).strong().size(14.0).color(md3::ON_SURFACE)).truncate()).on_hover_text(name);
         child.add_space(4.0);
         let size=egui::vec2(art_width,art_height);
