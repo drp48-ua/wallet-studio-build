@@ -132,6 +132,18 @@ class ReportTests(unittest.TestCase):
     def test_v17_valid_red(self):
         self.v17_capture(); self.report['renderer_probe'].update(capture_control=True,capture_control_rgb=[255,0,0],capture_control_alpha=255)
         validate(self.report)
+    def v18_texture(self):
+        self.v17_capture(); self.report['revision']='shader_resources_v18'
+        self.report['texture_probe']=copy.deepcopy(self.report['constructor_probe'])
+        self.report['texture_probe'].update(method_names=['initWithDiffuse:metalness:normal:'],inventory_truncated=False)
+    def test_v18_texture(self):
+        self.v18_texture(); validate(self.report)
+    def test_v18_private_method_path_rejected(self):
+        self.v18_texture(); self.report['texture_probe']['method_names']=['/private/user/card']
+        with self.assertRaises(ValueError): validate(self.report)
+    def test_v18_duplicate_method_rejected(self):
+        self.v18_texture(); self.report['texture_probe']['method_names']*=2
+        with self.assertRaises(ValueError): validate(self.report)
     def test_v7_false_color_claim(self):
         self.v7_unknown(); self.report['renderer_probe']['three_phases_observed']=True
         with self.assertRaises(ValueError): validate(self.report)

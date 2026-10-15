@@ -260,7 +260,7 @@ static UIGraphicsImageRenderer *StandardSyntheticRenderer(CGSize size) {
     view.view.backgroundColor = UIColor.systemBackgroundColor;
     self.window.rootViewController = view; [self.window makeKeyAndVisible];
     UILabel *label = [UILabel new]; label.numberOfLines = 0;
-    label.text = @"Shaders v17 · preparando diagnóstico";
+    label.text = @"Shaders v18 · preparando diagnóstico";
     label.translatesAutoresizingMaskIntoConstraints = NO;
     [view.view addSubview:label];
     [NSLayoutConstraint activateConstraints:@[
@@ -275,17 +275,17 @@ static UIGraphicsImageRenderer *StandardSyntheticRenderer(CGSize size) {
         NSDictionary *loader = ProbeSyntheticFileLoading(discovery);
         NSDictionary *passProbe = ProbeSyntheticPass(loader);
         NSMutableDictionary *rendererProbe = ProbeSyntheticRenderer(passProbe,view.view);
-        NSDictionary *report = @{@"schema": @1, @"revision": @"shader_resources_v17",
+        NSDictionary *report = @{@"schema": @1, @"revision": @"shader_resources_v18",
             @"scope": @"synthetic_accessors_and_own_files_only", @"Wallet_animation_proven": @NO,
             @"runtime_iOS": UIDevice.currentDevice.systemVersion,
             @"environment": TARGET_OS_SIMULATOR ? @"simulator" : @"device_app_own_sandbox",
             @"framework_loaded": @(loaded), @"probe": discovery,
-            @"constructor_probe": ProbeOwnConstructor(), @"file_loader": loader, @"pass_probe": passProbe, @"renderer_probe": rendererProbe};
+            @"constructor_probe": ProbeOwnConstructor(), @"texture_probe": ProbeOwnTextureConstructor(), @"file_loader": loader, @"pass_probe": passProbe, @"renderer_probe": rendererProbe};
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC),dispatch_get_main_queue(), ^{
         NSURL *directory = [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         NSData *data = [NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
         BOOL saved = [data writeToURL:[directory URLByAppendingPathComponent:@"shader-report.json"] atomically:YES];
-        label.text = saved ? @"Shaders v17 · diagnóstico guardado\nNo acredita animación en Wallet." : @"Shaders v17 · informe no guardado";
+        label.text = saved ? @"Shaders v18 · diagnóstico guardado\nNo acredita animación en Wallet." : @"Shaders v18 · informe no guardado";
         });
     });
     return YES;

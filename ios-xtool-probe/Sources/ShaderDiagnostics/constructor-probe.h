@@ -41,17 +41,10 @@ static NSArray *OwnSelectorCalls(const void *code, const unsigned char *bytes, N
     return calls;
 }
 
-static NSDictionary *ProbeOwnConstructor(void) {
+static NSDictionary *ProbeOwnCodeForMethod(Method method) {
     NSMutableDictionary *result=[@{@"status":@"unknown",@"reason":@"method_unavailable",
         @"image_origin_verified":@NO,@"code_hex":@"",@"selector_calls":@[]} mutableCopy];
-    Class cls=NSClassFromString(@"PKLiveRenderedCardFaceView");
-    Method method=class_getInstanceMethod(cls,@selector(initWithFrame:pass:));
-    if(!method || method_getNumberOfArguments(method)!=4) return result;
-    char ret[128]={0}, frame[128]={0}, pass[128]={0};
-    method_getReturnType(method,ret,sizeof(ret));
-    method_getArgumentType(method,2,frame,sizeof(frame));
-    method_getArgumentType(method,3,pass,sizeof(pass));
-    if(ret[0]!='@' || strcmp(frame,@encode(CGRect)) || pass[0]!='@') return result;
+    if(!method) return result;
     const void *code=(const void*)ptrauth_strip(method_getImplementation(method),ptrauth_key_function_pointer);
     Dl_info image={0};
     if(!dladdr(code,&image) || !image.dli_fname ||
@@ -68,5 +61,42 @@ static NSDictionary *ProbeOwnConstructor(void) {
     result[@"status"]=@"observed"; result[@"reason"]=@"own_constructor_code_observed";
     result[@"code_hex"]=hex;
     result[@"selector_calls"]=OwnSelectorCalls(code,bytes,sizeof(bytes));
+    return result;
+}
+
+static NSDictionary *ProbeOwnConstructor(void) {
+    Method method=class_getInstanceMethod(NSClassFromString(@"PKLiveRenderedCardFaceView"),@selector(initWithFrame:pass:));
+    char ret[128]={0},frame[128]={0},pass[128]={0};
+    if(!method || method_getNumberOfArguments(method)!=4) return ProbeOwnCodeForMethod(NULL);
+    method_getReturnType(method,ret,sizeof(ret)); method_getArgumentType(method,2,frame,sizeof(frame));
+    method_getArgumentType(method,3,pass,sizeof(pass));
+    if(ret[0]!='@' || strcmp(frame,@encode(CGRect)) || pass[0]!='@') return ProbeOwnCodeForMethod(NULL);
+    return ProbeOwnCodeForMethod(method);
+}
+
+static NSDictionary *ProbeOwnTextureConstructor(void) {
+    Class cls=NSClassFromString(@"PKTexturedCardView");
+    Method method=class_getInstanceMethod(cls,NSSelectorFromString(@"initWithDiffuse:metalness:normal:"));
+    BOOL valid=method && method_getNumberOfArguments(method)==5;
+    if(valid) {
+        char ret[128]={0};method_getReturnType(method,ret,sizeof(ret));valid=ret[0]=='@';
+        for(unsigned int i=2;i<5 && valid;++i) {
+            char arg[128]={0};method_getArgumentType(method,i,arg,sizeof(arg));
+            valid=arg[0]=='^' && strstr(arg,"CGImage");
+        }
+    }
+    NSMutableDictionary *result=[ProbeOwnCodeForMethod(valid?method:NULL) mutableCopy];
+    unsigned int count=0; Method *methods=class_copyMethodList(cls,&count);
+    NSMutableSet *names=[NSMutableSet set]; BOOL truncated=NO;
+    NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:"];
+    for(unsigned int i=0;i<count;++i) {
+        NSString *name=NSStringFromSelector(method_getName(methods[i]));
+        if(!name.length || name.length>128 || [name rangeOfCharacterFromSet:allowed.invertedSet].location!=NSNotFound) continue;
+        if(names.count>=128 && ![names containsObject:name]) { truncated=YES; continue; }
+        [names addObject:name];
+    }
+    free(methods);
+    result[@"method_names"]=[[names allObjects] sortedArrayUsingSelector:@selector(compare:)];
+    result[@"inventory_truncated"]=@(truncated);
     return result;
 }

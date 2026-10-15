@@ -1,24 +1,24 @@
-# Diagn√≥stico sint√©tico v12 con xtool
+# Diagn√≥stico sint√©tico con xtool
 
-Esta app separada mide la ruta de shaders y el perfil de visualizaci√≥n usando objetos y archivos sint√©ticos. No abre la biblioteca de pases, no lee ni modifica tarjetas bancarias y no solicita permisos privados de Wallet. `Wallet_animation_proven` permanece en `false`.
+App separada para investigar shaders y renderizado mediante objetos y archivos sint√©ticos. No abre la biblioteca de pases, no lee ni modifica tarjetas bancarias y no solicita permisos privados de Wallet. `Wallet_animation_proven` permanece en `false`.
 
-## Estado comprobado
+## Resultado f√≠sico comprobado
 
-- La revisi√≥n v11 compil√≥ con xtool y se ejecut√≥ en un dispositivo f√≠sico. Su informe pas√≥ el validador estricto: fuente del shader conservada, controles sint√©ticos correctos y vista nativa rechazada. La traza registr√≥ `liveRenderType`, `displayProfile` y `liveRenderedImageSet`. Esto justifica medir el perfil; no demuestra que su ausencia cause el rechazo.
-- La revisi√≥n v12 compila con c√≥digo 0 desde Ubuntu 24.04 en WSL2, Swift 6.4.0, xtool 1.22.2 y SDK iPhoneOS 27.0 extra√≠do de Xcode 27. Su validador pasa 26 pruebas. Ejecuci√≥n f√≠sica v12 pendiente.
-- La revisi√≥n v12 observa si existe un perfil, compara perfiles construidos con los mismos metadatos p√∫blicos sint√©ticos y verifica las firmas del runtime. Si el perfil inicial est√° ausente y los controles coinciden, vincula un perfil propio, comprueba su lectura posterior y repite el intento de crear la vista. No asigna estilos ni enums bancarios supuestos.
-- La revisiÛn v13 se ejecutÛ: captura acotada del constructor aceptada por el validador; contiene ramas seg˙n el tipo derivado del pase, pero 512 bytes no cubren la rama usada. La vista sigue devolviendo nil.
-- La revisiÛn v14 verifica la firma y el mÛdulo del constructor `PKLiveRenderedCardFaceView initWithFrame:pass:`. Lee exactamente 4.096 bytes de ese cÛdigo usando `vm_read_overwrite(mach_task_self(), ...)`, sin obtener puertos de otros procesos ni modificar instrucciones. Reconoce ˙nicamente stubs ARM64 est·ndar de selectores Objective-C y exporta como m·ximo 128 nombres con sus desplazamientos dentro de la ventana de cÛdigo. Comprueba que los nombres son selectores registrados. No exporta direcciones ni rutas. La captura no equivale a una vista creada ni a ejecuciÛn de shaders.
-- La revisiÛn v14 se ejecutÛ y su informe pasÛ el validador. El cÛdigo de la rama para el tipo derivado 1 obtiene `diffuseMaterialPropertyImage`, `metalnessMaterialPropertyImage`, `normalMaterialPropertyImage` y sus `imageRef`, y llama a `initWithDiffuse:metalness:normal:`. Los nombres resueltos son referencias est·ticas dentro de una ventana de cÛdigo; no equivalen a una traza de llamadas ejecutadas. La ventana puede incluir cÛdigo contiguo.
-- La revisiÛn v15 conserva el intento inicial con solo diffuse. DespuÈs de un resultado nil, completa ˙nicamente los otros dos mapas con PNG propios (metal negro y normales planas), verifica las firmas, los getters, tres CGImage no vacÌos y la identidad del conjunto. Reintenta la vista y conserva las seis muestras de color. Una vista creada con mapas completos no prueba que se consuma el fragment shader ni que exista animaciÛn.
-- La revisiÛn v15 se ejecutÛ dos veces: ambas se detuvieron en `capture_control_failed`, antes del intento con mapas completos. Esas ejecuciones no eval˙an la hipÛtesis de materiales. La revisiÛn v16 mantiene el criterio rojo y aÒade RGB acotado del control, estado activo de la aplicaciÛn y presencia de la ventana. Programa el diagnÛstico un segundo despuÈs del arranque para observarlo fuera del callback inicial.
-- La revisiÛn v16 se ejecutÛ y su informe pasÛ el validador: aplicaciÛn activa y ventana presente, control rojo capturado como RGB (163,0,0), por lo que la captura siguiÛ sin certificar. No se evaluaron los materiales completos. La revisiÛn v17 fija `preferredRange=Standard`, escala 1 y salida opaca en las im·genes sintÈticas y capturas; convierte el pÌxel mediante sRGB explÌcito y registra alfa. Mantiene el umbral rojo y exige alfa 255, sin convertir la captura fallida anterior en un resultado positivo.
-- Resultado fÌsico v17: captura roja (255,0,0), alfa 255; control inicial con solo diffuse devuelve nil; mapas completos vinculados con tres CGImage v·lidos y vista candidata creada. Se observa `PKTexturedCardView` y `UIImageView`. Las seis muestras permanecen grises (115,115,115): no se observaron fases temporales. Esto acredita admisiÛn de la vista, no ejecuciÛn del shader ni animaciÛn en Apple Wallet.
-- `source-parity.json` documenta los hashes de los ocho archivos Objective-C de la revisi√≥n preparada. `Probe.m` conserva los bytes de su `main.m`, renombrado para evitar que SwiftPM lo trate como un objetivo ejecutable.
+v17 crea una vista nativa `PKTexturedCardView`. El intento inicial con solo mapa de color devuelve nil. Al a√±adir mapas propios de metal y normales, los tres CGImage est√°n disponibles y la vista candidata se crea. El control rojo se captura como (255,0,0), alfa 255. Las seis muestras permanecen grises (115,115,115): no se observan las tres fases del fragment shader candidato. Una vista aceptada no prueba animaci√≥n ni integraci√≥n con Apple Wallet.
 
-## Preparar el SDK y compilar
+v11-v14 cargaron textos propios pero devolvieron nil al construir la vista. v12 comprob√≥ que el perfil ya exist√≠a. v13-v14 capturaron c√≥digo acotado del constructor dentro del propio proceso. La rama correspondiente al tipo derivado 1 consume mapas de color, metal y normales y llama a `initWithDiffuse:metalness:normal:`. Los nombres resueltos son referencias est√°ticas, no una traza de ejecuci√≥n. Una ventana de c√≥digo puede incluir m√©todos contiguos.
 
-Con Swift 6.4 y xtool instalados en Linux:
+v15 fall√≥ dos veces en el control de captura, antes de probar los mapas completos. v16 registr√≥ rojo (163,0,0) con aplicaci√≥n activa y ventana presente. v17 fij√≥ rango est√°ndar, escala 1, salida opaca y conversi√≥n sRGB. Mantiene el umbral rojo y exige alfa 255. Los resultados fallidos anteriores no acreditan la prueba de materiales.
+
+## Revisi√≥n en preparaci√≥n
+
+v18 mantiene la prueba de materiales y a√±ade un inventario acotado de m√©todos de `PKTexturedCardView`, junto al c√≥digo de su constructor si coincide la firma esperada. Busca identificar el motor que consume las im√°genes. Su resultado f√≠sico a√∫n debe comprobarse.
+
+La lectura usa `vm_read_overwrite(mach_task_self(), ...)`, √∫nicamente para implementaciones concretas de PassKitUI cargadas en esta app. Nunca obtiene puertos de otros procesos, modifica instrucciones ni exporta direcciones. Reconoce stubs ARM64 est√°ndar y limita la salida a 4.096 bytes por implementaci√≥n y 128 selectores con desplazamientos. El inventario no contiene valores de propiedades de pases.
+
+## Compilaci√≥n
+
+Entorno comprobado: Ubuntu 24.04 en WSL2, Swift 6.4.0, xtool 1.22.2 y SDK iPhoneOS 27.0 obtenido de Xcode 27.
 
 ```sh
 xtool sdk install "$XCODE_XIP" --slim
@@ -27,22 +27,16 @@ xtool dev build --configuration release --ipa
 python3 -m unittest discover -s tests -v
 ```
 
-`XCODE_XIP` debe contener la ruta Linux al archivo obtenido desde Apple. Conviene compilar en el sistema de archivos Linux de WSL. El SDK instalado aparece como `darwin`. El proyecto biblioteca se enlaza con el ejecutable generado por xtool y aporta su funci√≥n `main`.
+Compilar en el sistema de archivos Linux. El SDK aparece como `darwin`. El producto biblioteca aporta `main` al ejecutable generado por xtool. `source-parity.json` conserva los hashes de la instant√°nea local de los ocho archivos Objective-C; `Probe.m` corresponde a `main.m` renombrado para SwiftPM.
 
-No a√±adir `--sign`: esta compilaci√≥n no necesita credenciales de Apple en xtool. El propietario puede firmar e instalar con Sideloadly, introduciendo personalmente sus credenciales cuando corresponda.
+No a√±adir `--sign`: la compilaci√≥n no necesita credenciales Apple en xtool. El propietario firma con Sideloadly e introduce personalmente sus credenciales. La firma cambia el hash y puede cambiar el identificador.
 
-## Paquete v17
-
-`xtool/ShaderDiagnostics.ipa` sin firma: 141.951 bytes, SHA-256 `8f5da958080229398f1a526cd82c7f67aedb7290f208ca2990107ceef85e5a61`. ZIP √≠ntegro, ejecutable Mach-O arm64, m√≠nimo iOS 17.0, versi√≥n 1.12 (12), identificador `local.walletstudio.shaderdiagnostics`. La firma posterior cambia el hash y puede cambiar el identificador.
-
-Abrir la app, esperar a ¬´Shaders v12 ¬∑ diagn√≥stico guardado¬ª y recuperar su propio `Documents/shader-report.json`. Validar el informe antes de extraer conclusiones. Una vista o shader en esta app no prueba animaci√≥n dentro de Apple Wallet. No publicar informes del dispositivo ni identificadores de firma.
-
-La compilaci√≥n v11 anterior permanece en el historial del repositorio; su IPA sin firma ten√≠a SHA-256 `70cae006bffee0b55a321ae5a1c34b4ebf1e9e6da545729e2f24ad816cdbaa23`.
+Paquete arm64, m√≠nimo iOS 17.0, identificador original `local.walletstudio.shaderdiagnostics`. La app escribe su propio `Documents/shader-report.json`. Validar el informe antes de interpretar resultados. No publicar informes del dispositivo, c√≥digo Apple capturado ni identificadores de firma.
 
 ## Fuentes
 
 - https://github.com/xtool-org/xtool/tree/1.22.2
 - https://xtool.sh/documentation/xtool/installation-linux/
-- `Sources/PackLib/Packer.swift`: genera un ejecutable C que depende de un producto biblioteca.
+- `Sources/PackLib/Packer.swift`: genera un ejecutable que depende de un producto biblioteca.
 - `Sources/XToolSupport/DevCommand.swift`: permite `build --ipa` sin credenciales de firma.
-- Declaraci√≥n de referencia de `PKPassDisplayProfile`; cada firma usada se vuelve a comprobar en el runtime: https://github.com/MTACS/iOS-17-Runtime-Headers/blob/d1d960dfaa4107765dd7fcf891e4967c0930d5fd/PrivateFrameworks/PassKitCore.framework/PKPassDisplayProfile.h
+- Declaraci√≥n del perfil, con firmas comprobadas en el runtime: https://github.com/MTACS/iOS-17-Runtime-Headers/blob/d1d960dfaa4107765dd7fcf891e4967c0930d5fd/PrivateFrameworks/PassKitCore.framework/PKPassDisplayProfile.h
