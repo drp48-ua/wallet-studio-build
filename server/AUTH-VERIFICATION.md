@@ -2,6 +2,10 @@
 
 Datos usados: pedidos, correos, tokens, equipos y copias exclusivamente sintéticos. No se leyó ni escribió ninguna tarjeta física.
 
+## Aceptación parcial del despliegue real
+
+Render Free confirmó `a721e59` como Live, con PostgreSQL y Storage privados de Supabase. Se verificó la cadena TLS y hostname del pooler mediante handshake sin credenciales y la CA oficial. HTTPS devolvió 200 en health, 401 sin sesión en bundles, 403 para registro abierto y 200 uniforme para una activación no elegible sintética. Los webhooks malformados o con firma falsa se rechazan con 400, según el contrato del handler. Una prueba oficial firmada de Shopify quedó persistida: una consulta exclusivamente de conteo confirmó un evento verificado. Siguen pendientes entrega real de correo, comprador autorizado y round trip de bundle privado; Live no sustituye esas pruebas. No hay secretos ni datos de pedidos en esta evidencia.
+
 ## Resultado
 
 - Python: `python -m unittest discover -s server/tests -p 'test_*.py' -v`: **22 pruebas correctas**, 20,344 s en la última suite completa. Incluye acceso por compra concreta, activación por código, caducidad/repetición/intentos, contraseñas no coincidentes sin consumir código, solicitudes HTTP malformadas, HMAC y devoluciones, eventos repetidos/antiguos/con igual fecha, rechazo de fechas sin zona horaria, usuarios creados por administrador sin compra, sesiones antiguas, expiración/inactividad, carrera de tres plazas y recuperación de un cuarto equipo por correo.
