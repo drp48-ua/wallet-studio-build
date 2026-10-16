@@ -1361,6 +1361,19 @@ impl AirCardApp {
         });
     }
 
+    fn prepare_pending_baseline(&mut self, operation_dir: PathBuf) {
+        if crate::storage::is_demo() { return; }
+        let Some(udid) = self.selected_udid.clone() else { return };
+        self.is_busy = true;
+        let (tx, rx) = channel(); self.task_rx = Some(rx);
+        thread::spawn(move || {
+            let result = crate::wallet_export::prepare_pending_from_baseline(&operation_dir, &udid)
+                .map(|_| "Copia original verificada preparada en el PC. Pulsa Recuperar original pendiente para devolverla al iPhone y comprobarla.".into())
+                .map_err(|error| format!("{error:#}"));
+            let _ = tx.send(BackgroundTaskMessage::Done(result));
+        });
+    }
+
     fn select_theme_file(&mut self, ctx: &egui::Context) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Passcode Theme", &["passthm", "passtheme", "zip"])
@@ -2491,6 +2504,16 @@ impl AirCardApp {
                             && self.selected_transport_available() && version_warning.is_none(),
                             egui::Button::new("Recuperar original pendiente")).clicked() {
                             self.recover_pending_original(pending.operation_dir);
+                        }
+                    }
+                    let baseline_pending = self.pending_recoveries.iter().find(|entry|
+                        self.selected_udid.as_ref().is_some_and(|udid| udid.eq_ignore_ascii_case(&entry.udid))
+                        && entry.original_path.is_none() && entry.baseline_recovery_available).cloned();
+                    if let Some(pending) = baseline_pending {
+                        ui.label("La exportación no conservó una copia, pero existe el original verificado de esta tarjeta e iPhone. Prepararlo solo guarda evidencia en el PC; la devolución requiere otra acción.");
+                        if ui.add_enabled(!self.is_busy && !self.scanning_syslog,
+                            egui::Button::new("Preparar recuperación desde mi original verificado")).clicked() {
+                            self.prepare_pending_baseline(pending.operation_dir);
                         }
                     }
                 }
