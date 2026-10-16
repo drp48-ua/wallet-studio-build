@@ -35,6 +35,6 @@ class PostgreSQLIntegration(unittest.TestCase):
     if user:
      for table in ('sessions','computers','bundles'):db.execute(f'DELETE FROM {table} WHERE user_id=?',(user,))
      db.execute('DELETE FROM users WHERE id=?',(user,))
-    db.execute('DELETE FROM activation WHERE email=?',(email,));db.execute('DELETE FROM purchase_orders WHERE id=?',(order,));db.execute('DELETE FROM webhook_events WHERE id=?',('fixture-'+order,))
+    db.execute('DELETE FROM activation WHERE email=?',(email,));db.execute('DELETE FROM purchase_orders WHERE id=?',(order,));db.execute('DELETE FROM purchase_packs WHERE id=?',(order,));db.execute('DELETE FROM webhook_events WHERE id=?',('fixture-'+order,))
 
 if __name__=='__main__':unittest.main()

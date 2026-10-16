@@ -17,11 +17,16 @@ class Accounts:
         self.store=store; self.config=dict(os.environ if config is None else config); self.mailer=mailer or self.send_mail
         self.secret=self.config.get('WALLET_AUTH_SECRET','')
         self.shop=self.config.get('SHOPIFY_SHOP_DOMAIN','').lower()
-        self.products=set(filter(None,self.config.get('SHOPIFY_PRODUCT_IDS','').split(',')))
+        self.products=set(filter(None,self.config.get('SHOPIFY_APP_PRODUCT_IDS',self.config.get('SHOPIFY_PRODUCT_IDS','')).split(',')))
+        self.bundles=set(filter(None,self.config.get('SHOPIFY_BUNDLE_PRODUCT_IDS','').split(',')))
+        self.packs=set(filter(None,self.config.get('SHOPIFY_PACK_PRODUCT_IDS','').split(',')))
+        if self.packs & (self.products | self.bundles):raise AccountError('overlapping_product_configuration')
         self.webhook_secret=self.config.get('SHOPIFY_WEBHOOK_SECRET','')
         with store.connect() as db:
             db.executescript('''
             CREATE TABLE IF NOT EXISTS purchase_orders(id TEXT PRIMARY KEY,email TEXT NOT NULL,active INTEGER NOT NULL,updated REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS purchase_packs(id TEXT PRIMARY KEY,email TEXT NOT NULL,active INTEGER NOT NULL,updated REAL NOT NULL);
+            CREATE INDEX IF NOT EXISTS purchase_pack_email ON purchase_packs(email,active);
             CREATE INDEX IF NOT EXISTS purchase_email ON purchase_orders(email,active);
             CREATE TABLE IF NOT EXISTS webhook_events(id TEXT PRIMARY KEY,received INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS activation(email TEXT PRIMARY KEY,digest TEXT NOT NULL,expires INTEGER NOT NULL,attempts INTEGER NOT NULL,last_sent INTEGER NOT NULL);
@@ -33,7 +38,7 @@ class Accounts:
 
     @property
     def ready(self):
-        return len(self.secret)>=32 and bool(self.shop and self.products and self.webhook_secret)
+        return len(self.secret)>=32 and bool(self.shop and (self.products or self.bundles or self.packs) and self.webhook_secret)
 
     def require_ready(self):
         if not self.ready: raise AccountError('service_not_configured')
@@ -43,6 +48,23 @@ class Accounts:
 
     def entitled(self,db,email):
         return bool(db.execute('SELECT 1 FROM purchase_orders WHERE email=? AND active=1 LIMIT 1',(email,)).fetchone())
+
+    def any_entitled(self,db,email):
+        return self.entitled(db,email) or bool(db.execute('SELECT 1 FROM purchase_packs WHERE email=? AND active=1 LIMIT 1',(email,)).fetchone())
+
+    def app_entitled(self,user):
+        with self.store.connect() as db:
+            row=db.execute('SELECT email FROM users WHERE id=?',(user,)).fetchone()
+            return bool(row and self.entitled(db,row[0]))
+
+    def pack_entitled(self,user):
+        with self.store.connect() as db:
+            row=db.execute('SELECT email FROM users WHERE id=?',(user,)).fetchone()
+            # The single Wallet Studio purchase includes all 50 designs. This
+            # also upgrades existing app owners without rewriting their orders.
+            if row and self.entitled(db,row[0]):return True
+            # Honour historical pack-only rights without ever granting app access.
+            return bool(db.execute('SELECT 1 FROM purchase_packs p JOIN users u ON u.email=p.email WHERE u.id=? AND p.active=1 LIMIT 1',(user,)).fetchone())
 
     def send_mail(self,email,code):
         cfg=self.config
@@ -70,7 +92,7 @@ class Accounts:
             if previous and now-previous[0]<60: return
             # Same response for unknown, existing and eligible addresses.
             exists=bool(db.execute('SELECT 1 FROM users WHERE email=?',(email,)).fetchone())
-            if not self.entitled(db,email) or exists!=(purpose=='recover'): return
+            if not self.any_entitled(db,email) or exists!=(purpose=='recover'): return
             code=f'{secrets.randbelow(1000000):06d}'
             db.execute('INSERT OR REPLACE INTO activation VALUES(?,?,?,?,?)',(email,self.digest(email+'|'+purpose+'|'+code),now+600,0,now))
         try: self.mailer(email,code)
@@ -94,7 +116,7 @@ class Accounts:
             with self.store.connect() as db:
                 row=db.execute('SELECT digest,expires,attempts FROM activation WHERE email=?',(email,)).fetchone()
                 if row:db.execute('UPDATE activation SET attempts=attempts+1 WHERE email=?',(email,))
-                valid=row and row[1]>=int(time.time()) and row[2]<5 and hmac.compare_digest(row[0],self.digest(email+'|activate|'+code)) and self.entitled(db,email)
+                valid=row and row[1]>=int(time.time()) and row[2]<5 and hmac.compare_digest(row[0],self.digest(email+'|activate|'+code)) and self.any_entitled(db,email)
             if not valid:raise AccountError('invalid_activation')
             # Hold the store lock across consuming code + creating user + session.
             # Device validation precedes claiming; malformed requests cannot consume codes.
@@ -113,7 +135,7 @@ class Accounts:
             with self.store.connect() as db:
                 row=db.execute('SELECT digest,expires,attempts FROM activation WHERE email=?',(email,)).fetchone()
                 if row:db.execute('UPDATE activation SET attempts=attempts+1 WHERE email=?',(email,))
-                valid=row and row[1]>=int(time.time()) and row[2]<5 and hmac.compare_digest(row[0],self.digest(email+'|recover|'+code)) and self.entitled(db,email)
+                valid=row and row[1]>=int(time.time()) and row[2]<5 and hmac.compare_digest(row[0],self.digest(email+'|recover|'+code)) and self.any_entitled(db,email)
             if not valid:raise AccountError('invalid_activation')
             salt=secrets.token_bytes(32);digest=hashlib.pbkdf2_hmac('sha256',password.encode(),salt,600_000)
             with self.store.connect() as db:
@@ -142,7 +164,7 @@ class Accounts:
         now=int(time.time());token=secrets.token_hex(32)
         with self.store.lock,self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            if not self.entitled(db,email):raise AccountError('purchase_required')
+            if not self.any_entitled(db,email):raise AccountError('purchase_required')
             known=db.execute('SELECT 1 FROM computers WHERE user_id=? AND id=?',(row,device)).fetchone()
             if not known and db.execute('SELECT count(*) FROM computers WHERE user_id=?',(row,)).fetchone()[0]>=3:raise AccountError('device_limit_reached')
             db.execute('INSERT INTO computers VALUES(?,?,?,?,?) ON CONFLICT(user_id,id) DO UPDATE SET last_seen=excluded.last_seen,peer_digest=excluded.peer_digest',(row,device,now,now,self.digest(peer)))
@@ -150,12 +172,12 @@ class Accounts:
             db.execute('INSERT INTO sessions(digest,user_id,expires,device_id,last_seen) VALUES(?,?,?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),row,now+86400*90,device,now))
         return {'access_token':token,'user_id':row,'expires_in':86400*90}
 
-    def subject(self,token):
+    def subject(self,token,require_app=True):
         if not self.ready or not isinstance(token,str) or not DEVICE.fullmatch(token):return None
         now=int(time.time());digest=hashlib.sha256(token.encode()).hexdigest()
         with self.store.connect() as db:
             row=db.execute('SELECT s.user_id,s.device_id,u.email FROM sessions s JOIN users u ON u.id=s.user_id JOIN computers c ON c.user_id=s.user_id AND c.id=s.device_id WHERE s.digest=? AND s.expires>? AND s.last_seen>?',(digest,now,now-86400*30)).fetchone()
-            if not row or not self.entitled(db,row[2]):return None
+            if not row or not (self.entitled(db,row[2]) if require_app else self.any_entitled(db,row[2])):return None
             db.execute('UPDATE sessions SET last_seen=? WHERE digest=?',(now,digest))
             db.execute('UPDATE computers SET last_seen=? WHERE user_id=? AND id=?',(now,row[0],row[1]))
             return row[0]
@@ -171,11 +193,24 @@ class Accounts:
         self.require_ready()
         expected=base64.b64encode(hmac.new(self.webhook_secret.encode(),raw,hashlib.sha256).digest()).decode()
         if not isinstance(signature,str) or not hmac.compare_digest(expected,signature) or shop.lower()!=self.shop:raise AccountError('invalid_webhook_signature')
-        if topic not in ('orders/paid','orders/updated','orders/cancelled'):raise AccountError('unsupported_webhook')
+        if topic not in ('orders/paid','orders/updated','orders/cancelled','refunds/create'):raise AccountError('unsupported_webhook')
         if not isinstance(event,str) or not 1<=len(event)<=128:raise AccountError('invalid_webhook_id')
         body=json.loads(raw)
-        # Shopify sends full order payloads for these topics. Partial refund events
-        # are deliberately not used: orders/updated contains authoritative balances.
+        if topic=='refunds/create':
+            # Partial refund notifications lack an authoritative remaining order.
+            # Fail closed until a newer full orders/updated payload reconciles it.
+            ident=str(body['order_id'])
+            if not ident.isdigit() or len(ident)>32:raise AccountError('invalid_order')
+            from datetime import datetime
+            stamp=datetime.fromisoformat(body['created_at'].replace('Z','+00:00'))
+            if stamp.tzinfo is None:raise AccountError('invalid_order_timestamp')
+            with self.store.lock,self.store.connect() as db:
+                if db.execute('SELECT 1 FROM webhook_events WHERE id=?',(event,)).fetchone():return
+                for table in ('purchase_orders','purchase_packs'):
+                    db.execute(f'INSERT INTO {table} VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET active=0,updated=excluded.updated WHERE {table}.updated<=excluded.updated',(ident,'',0,stamp.timestamp()))
+                db.execute('INSERT INTO webhook_events VALUES(?,?)',(event,int(time.time())))
+            return
+        # Full order payloads provide authoritative remaining line balances.
         from datetime import datetime
         date=datetime.fromisoformat(body['updated_at'].replace('Z','+00:00'))
         if date.tzinfo is None:raise AccountError('invalid_order_timestamp')
@@ -183,16 +218,22 @@ class Accounts:
         email=self.email(body.get('email') or body.get('contact_email',''))
         ident=str(body['id'])
         if not ident.isdigit() or len(ident)>32:raise AccountError('invalid_order')
-        eligible=[x for x in body.get('line_items',[]) if str(x.get('product_id')) in self.products and int(x.get('quantity',0))>0]
+        eligible=[x for x in body.get('line_items',[]) if str(x.get('product_id')) in (self.products | self.bundles | self.packs) and int(x.get('quantity',0))>0]
         refunded={}
         for refund in body.get('refunds',[]):
-            for item in refund.get('refund_line_items',[]):refunded[str(item['line_item_id'])]=refunded.get(str(item['line_item_id']),0)+int(item.get('quantity',0))
+            for item in refund.get('refund_line_items',[]):
+                quantity=int(item.get('quantity',0))
+                if quantity<0:raise AccountError('invalid_refund_quantity')
+                refunded[str(item['line_item_id'])]=refunded.get(str(item['line_item_id']),0)+quantity
+        remaining=[x for x in eligible if int(x['quantity'])>refunded.get(str(x['id']),0)]
         active=bool(eligible and body.get('financial_status') in ('paid','partially_refunded') and not body.get('cancelled_at') and topic!='orders/cancelled' and any(int(x['quantity'])>refunded.get(str(x['id']),0) for x in eligible))
         with self.store.lock,self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if db.execute('SELECT 1 FROM webhook_events WHERE id=?',(event,)).fetchone():return
-            old=db.execute('SELECT updated FROM purchase_orders WHERE id=?',(ident,)).fetchone()
-            if not old or updated>old[0]:db.execute('INSERT OR REPLACE INTO purchase_orders VALUES(?,?,?,?)',(ident,email,int(active),updated))
-            # Equal timestamp event conflicts fail closed rather than revive a refund.
-            elif updated==old[0] and not active:db.execute('UPDATE purchase_orders SET active=0 WHERE id=?',(ident,))
+            for table,products in (('purchase_orders',self.products|self.bundles),('purchase_packs',self.packs|self.bundles)):
+                grant=active and any(str(x.get('product_id')) in products for x in remaining)
+                old=db.execute(f'SELECT updated FROM {table} WHERE id=?',(ident,)).fetchone()
+                if not old or updated>old[0]:
+                    db.execute(f'INSERT INTO {table} VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,active=excluded.active,updated=excluded.updated',(ident,email,int(grant),updated))
+                elif updated==old[0] and not grant:db.execute(f'UPDATE {table} SET active=0 WHERE id=?',(ident,))
             db.execute('INSERT INTO webhook_events VALUES(?,?)',(event,int(time.time())))

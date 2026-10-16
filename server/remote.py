@@ -7,7 +7,7 @@ No session locks, search_path state or prepared statements (transaction pooler).
 import contextlib,hashlib,json,os,re,ssl,threading,urllib.request,urllib.error,urllib.parse
 
 MAX_REMOTE_BUNDLE=32*1024*1024
-TABLES=('users','sessions','bundles','purchase_orders','webhook_events','activation','computers')
+TABLES=('users','sessions','bundles','purchase_orders','purchase_packs','webhook_events','activation','computers')
 SCHEMA='wallet_private'
 LOCK_ID=6299748183224241
 

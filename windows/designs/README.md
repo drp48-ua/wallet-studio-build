@@ -1,1 +1,1 @@
-Biblioteca local. Los diseños personales no se publican. Cada PNG preparado se guarda aquí antes de transferirse.
+Biblioteca0.6.5: importa y guarda diseños desde la pestaña Biblioteca. Se almacenan de forma privada por cuenta en el perfil Windows, no junto al ejecutable. Los PNG guardado-*.png anteriores se copian una vez a tu biblioteca sin borrar los originales. Los packs se descargan mediante el servicio autenticado y nunca forman parte del instalador.

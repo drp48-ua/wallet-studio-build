@@ -1,4 +1,4 @@
-param([string]$Version = '0.6.4', [switch]$RequireSigned, [string]$BinaryPath = '')
+param([string]$Version = '0.6.5', [switch]$RequireSigned, [string]$BinaryPath = '')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version no valida' }
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -19,12 +19,8 @@ foreach ($relative in @('LICENSE','LEEME.md','ACTUALIZACIONES.md','CLIENTES-Y-NU
     Copy-Item -LiteralPath (Join-Path $projectRoot $relative) -Destination $package
 }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'third-party-licenses') -Destination $package -Recurse
-$designs = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'windows/designs') -File
-foreach ($design in $designs) {
-    if ($design.Name -match 'fanart' -or $design.LinkType) { continue }
-    if ($design.Extension.ToLowerInvariant() -notin @('.png','.jpg','.jpeg','.webp','.gif','.md','.json')) { continue }
-    Copy-Item -LiteralPath $design.FullName -Destination (Join-Path $package 'designs')
-}
+# Paid catalog images are provisioned privately, never copied into releases.
+Copy-Item -LiteralPath (Join-Path $projectRoot 'windows/designs/README.md') -Destination (Join-Path $package 'designs')
 $zipPath = Join-Path $outputRoot ('Wallet-Studio-' + $Version + '-Windows.zip')
 Compress-Archive -LiteralPath $package -DestinationPath $zipPath -Force
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()

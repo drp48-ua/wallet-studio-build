@@ -61,7 +61,7 @@ fn main() -> eframe::Result<()> {
     // A separate copy with this reserved name lets native GUI review launch a
     // fully isolated demo without command-line interaction with other apps.
     let demo_name=std::env::current_exe().ok().and_then(|p|p.file_stem().map(|s|s.to_string_lossy().into_owned())).filter(|s|s.starts_with("Wallet Studio Demo ")||s.to_ascii_uppercase().starts_with("WSDEMO"));
-    let demo = demo_name.is_some() || std::env::args().any(|a| a == "--wallet-studio-ui-demo" || a=="--wallet-studio-auth-demo");
+    let demo = demo_name.is_some() || std::env::args().any(|a| a == "--wallet-studio-ui-demo" || a == "--wallet-studio-library-demo" || a=="--wallet-studio-auth-demo");
     if demo {
         let path = std::env::temp_dir().join(format!("wallet-studio-demo-{}", flasher::generate_token()));
         if let Err(error) = storage::initialize_demo(&path) {

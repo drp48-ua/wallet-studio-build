@@ -2,6 +2,7 @@
 import argparse,contextlib,hashlib,hmac,json,os,pathlib,re,secrets,sqlite3,threading,time,uuid,zipfile,io,getpass,sys
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from accounts import Accounts,AccountError
+from designs import DesignCatalog
 from remote import PgDatabase,SupabaseBlobs,RemoteError,MAX_REMOTE_BUNDLE,StartupError,startup_stage
 
 HEX=re.compile(r'^[0-9a-f]{64}$')
@@ -9,6 +10,7 @@ MAX_BUNDLE=100*1024*1024
 PASSWORD_ROUNDS=600_000
 class Store:
     def __init__(self,root,allow_registration=False,session_seconds=86400*7):
+        self.design_catalog=DesignCatalog(dict(os.environ))
         self.remote=os.environ.get('WALLET_STORAGE_MODE')=='remote'
         self.remote_db=None;self.blob_store=None;self.max_bundle=MAX_REMOTE_BUNDLE if self.remote else MAX_BUNDLE
         if os.environ.get('RENDER') and not self.remote:raise StartupError('configuration',ValueError())
@@ -83,8 +85,8 @@ class Store:
             db.execute('DELETE FROM sessions WHERE expires<?',(int(time.time()),))
             db.execute('INSERT INTO sessions(digest,user_id,expires) VALUES(?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),user,expires))
         return {'access_token':token,'expires_in':self.session_seconds,'user_id':user}
-    def subject(self,token):
-        if not self.allow_registration:return self.accounts.subject(token)
+    def subject(self,token,require_app=True):
+        if not self.allow_registration:return self.accounts.subject(token,require_app)
         if not HEX.fullmatch(token):return None
         with self.connect() as db:row=db.execute('SELECT user_id FROM sessions WHERE digest=? AND expires>?',(hashlib.sha256(token.encode()).hexdigest(),int(time.time()))).fetchone()
         return row[0] if row else None
@@ -112,7 +114,7 @@ class Handler(BaseHTTPRequestHandler):
         return raw
     def user(self):
         value=self.headers.get('Authorization','')
-        return self.server.store.subject(value[7:]) if value.startswith('Bearer ') else None
+        return self.server.store.subject(value[7:],require_app=not (self.path.startswith('/v1/designs') or self.path in ('/v1/auth/account','/v1/auth/devices/revoke','/v1/auth/logout'))) if value.startswith('Bearer ') else None
     def do_POST(self):
         if self.path=='/v1/shopify/webhook':
             try:
@@ -174,7 +176,19 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=='/health':return self.reply(200,{'status':'ok'})
         user=self.user()
         if not user:return self.error(401,'unauthorized')
-        if self.path=='/v1/auth/session':return self.reply(200,{'user_id':user,'devices':self.server.store.accounts.devices(user)})
+        if self.path=='/v1/designs' or self.path.startswith('/v1/designs/'):
+            if not self.server.store.accounts.pack_entitled(user):
+                if self.path=='/v1/designs':return self.reply(200,{'schema':1,'pack_id':'studio-50-v1','entitled':False,'designs':[]})
+                return self.error(403,'design_pack_required')
+            try:
+                catalog=self.server.store.design_catalog.catalog()
+                if self.path=='/v1/designs':return self.reply(200,dict(catalog,entitled=True))
+                ident=self.path.removeprefix('/v1/designs/')
+                item=next((item for item in catalog['designs'] if item['id']==ident),None)
+                if not item:return self.error(404,'not_found')
+                return self.reply(200,body=self.server.store.design_catalog.read(item))
+            except (ValueError,OSError,KeyError,RemoteError):return self.error(503,'design_catalog_unavailable')
+        if self.path in ('/v1/auth/session','/v1/auth/account'):return self.reply(200,{'user_id':user,'app_licensed':self.server.store.allow_registration or self.server.store.accounts.app_entitled(user),'devices':self.server.store.accounts.devices(user)})
         if self.path=='/v1/bundles':
             with self.server.store.connect() as db:rows=db.execute('SELECT id,size FROM bundles WHERE user_id=? ORDER BY id LIMIT 1001',(user,)).fetchall()
             if len(rows)>1000:return self.error(409,'account_object_limit')

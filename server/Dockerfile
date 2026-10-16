@@ -4,6 +4,7 @@ COPY requirements.txt /service/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt && test -s /etc/ssl/certs/ca-certificates.crt
 COPY app.py /service/app.py
 COPY accounts.py /service/accounts.py
+COPY designs.py design-catalog.json /service/
 COPY remote.py /service/remote.py
 COPY certs/supabase-root-2021.crt /service/certs/supabase-root-2021.crt
 RUN cat /etc/ssl/certs/ca-certificates.crt /service/certs/supabase-root-2021.crt > /service/certs/postgres-trust.pem

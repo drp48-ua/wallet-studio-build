@@ -280,12 +280,29 @@ fn require_service(server:&str)->Result<()> {
     anyhow::ensure!(option_env!("WALLET_STUDIO_CLOUD_URL").is_some_and(|endpoint|normalized_server(endpoint).ok()==normalized_server(server).ok()),"El proveedor debe configurar el servicio oficial antes de distribuir esta versión");
     Ok(())
 }
-pub fn validate_session(session:&Session)->Result<()> {
+pub fn account_app_license(session:&Session)->Result<bool> {
     require_service(&session.server)?;
-    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/auth/session",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],65536)?;
-    #[derive(Deserialize)] struct Reply {user_id:String}
-    let reply:Reply=serde_json::from_slice(&bytes)?;anyhow::ensure!(reply.user_id==session.user_id,SessionRejected);Ok(())
+    let headers=[("Authorization".into(),format!("Bearer {}",session.access_token))];
+    let result=crate::auto_update::http_request("GET",&format!("{}/v1/auth/account",session.server),&headers,&[],65536);
+    let bytes=match result {
+        Err(error) if error.downcast_ref::<crate::auto_update::HttpStatus>().is_some_and(|status|status.0==404)=>
+            crate::auto_update::http_request("GET",&format!("{}/v1/auth/session",session.server),&headers,&[],65536)?,
+        result=>result?,
+    };
+    parse_account_license(session,&bytes)
 }
+
+fn parse_account_license(session:&Session,bytes:&[u8])->Result<bool> {
+    #[derive(Deserialize)] struct Reply {user_id:String,app_licensed:Option<bool>}
+    let reply:Reply=serde_json::from_slice(bytes)?;
+    anyhow::ensure!(reply.user_id==session.user_id,SessionRejected);
+    // Pre-library service sessions were exclusively app licence holders.
+    Ok(reply.app_licensed.unwrap_or(true))
+}
+pub fn validate_session(session:&Session)->Result<()> {
+    anyhow::ensure!(account_app_license(session)?,SessionRejected);Ok(())
+}
+
 #[derive(Debug)]
 struct SessionRejected;
 impl std::fmt::Display for SessionRejected {
@@ -307,7 +324,9 @@ pub fn require_access()->Result<()> {
 #[derive(Clone,Deserialize)] pub struct RegisteredComputer { pub id:String,pub last_seen:u64,#[serde(default)] pub current:bool }
 pub fn registered_computers(session:&Session)->Result<Vec<RegisteredComputer>> {
     require_service(&session.server)?;
-    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/auth/session",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],65536)?;
+    let headers=[("Authorization".into(),format!("Bearer {}",session.access_token))];
+    let result=crate::auto_update::http_request("GET",&format!("{}/v1/auth/account",session.server),&headers,&[],65536);
+    let bytes=match result {Err(error) if error.downcast_ref::<crate::auto_update::HttpStatus>().is_some_and(|status|status.0==404)=>crate::auto_update::http_request("GET",&format!("{}/v1/auth/session",session.server),&headers,&[],65536)?,result=>result?};
     #[derive(Deserialize)] struct Reply {devices:Vec<RegisteredComputer>}
     let mut reply:Reply=serde_json::from_slice(&bytes)?;anyhow::ensure!(reply.devices.len()<=3 && reply.devices.iter().all(|d|d.id.len()==64 && d.id.bytes().all(|b|b.is_ascii_hexdigit())),"Inventario de equipos no válido");
     let current=computer_id()?;for device in &mut reply.devices {device.current=device.id==current;}Ok(reply.devices)
@@ -634,5 +653,16 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
     }
     #[test] fn malformed_and_traversal_archives_are_rejected_before_import() {
         assert!(parse_bundle(b"not a zip").is_err()); assert!(!safe_name("bank/../baseline.json")); assert!(!safe_name("C:/x")); assert!(!safe_name("bank//x"));
+    }
+}
+
+#[cfg(test)] mod design_license_tests {
+    use super::*;
+    #[test] fn pack_only_session_never_grants_phone_or_backup_licence_and_legacy_sessions_remain_compatible() {
+        let session=Session {server:"https://example.test".into(),access_token:"unused".into(),user_id:"owner".into()};
+        assert!(!parse_account_license(&session,br#"{"user_id":"owner","app_licensed":false}"#).unwrap());
+        assert!(parse_account_license(&session,br#"{"user_id":"owner","app_licensed":true}"#).unwrap());
+        assert!(parse_account_license(&session,br#"{"user_id":"owner"}"#).unwrap());
+        assert!(parse_account_license(&session,br#"{"user_id":"other","app_licensed":true}"#).is_err());
     }
 }
