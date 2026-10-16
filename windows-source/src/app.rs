@@ -65,6 +65,7 @@ fn load_card_snapshot(selected: Option<&str>, hash: &str) -> CardSnapshot {
     let Some(udid) = udid else { return result; };
     let card_review_blocked = crate::storage::ensure_card_ready_at(&crate::storage::root(),&udid,hash).is_err();
     let bank = crate::bank_backup::load_baseline(&udid,hash);
+    let has_bank_baseline = matches!(&bank, Ok(Some(_)));
     let mut bank_verified = false;
     match bank {
         Ok(Some(baseline)) => {
@@ -94,8 +95,7 @@ fn load_card_snapshot(selected: Option<&str>, hash: &str) -> CardSnapshot {
             result.phase = Ok(intent.as_ref().map(|intent| intent.phase.clone()));
             if intent.is_some() && result.original == OriginalState::Missing { result.original = OriginalState::Blocked; }
             result.restore = if card_review_blocked {
-                bank.as_ref().ok().and_then(|b| b.as_ref()).is_some()
-                    && intent.as_ref().is_some_and(|intent| intent.phase != "restored")
+                has_bank_baseline && intent.as_ref().is_some_and(|intent| intent.phase != "restored")
             } else {
                 result.original == OriginalState::Verified && (!bank_verified
                     || intent.as_ref().is_some_and(|intent| intent.phase != "restored"))

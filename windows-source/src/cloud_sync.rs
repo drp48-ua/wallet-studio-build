@@ -645,6 +645,7 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         let source_op=crate::bank_changes::save_fixture_applied_at(&source.join("bank-change-intents"),&input.udid,&input.card_hash,&pairs).unwrap();
         crate::bank_changes::restore_fixture_at(&source_op).unwrap();
         let bundle=export_bundle(&source,&source_path).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(25));
 
         // Target has an intent in prepared phase
         let target_op=crate::bank_changes::save_fixture_prepared_at(&target.join("bank-change-intents"),&input.udid,&input.card_hash,&pairs).unwrap();
