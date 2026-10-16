@@ -14,7 +14,23 @@ pub struct Design {
 }
 
 pub fn library_dir() -> Result<PathBuf> {
-    Ok(std::env::current_exe()?.parent().context("No hay carpeta de aplicación")?.join("designs"))
+    if crate::storage::is_demo() {return Ok(crate::storage::root().join("demo-library").join("own"));}
+    let session=crate::cloud_sync::load_session()?.context("Inicia sesión para abrir tu biblioteca")?;
+    let root=account_dir(&session)?.join("own");crate::storage::safe_chain(&root)?;
+    Ok(root)
+}
+/// Copy legacy user saves once, without moving originals or sharing paid cache.
+pub fn migrate_legacy_saves(root:&Path)->Result<()> {
+    crate::storage::safe_chain(root)?;std::fs::create_dir_all(root)?;
+    let marker=root.join(".legacy-migrated");crate::storage::safe_chain(&marker)?;
+    if marker.exists() {return Ok(());}
+    let legacy=std::env::current_exe()?.parent().context("Carpeta anterior no disponible")?.join("designs");
+    for design in discover(&legacy)? {
+        if design.path.file_name().and_then(|name|name.to_str()).is_some_and(|name|name.starts_with("guardado-") && name.ends_with(".png")) {
+            let png=read_image(&design.path)?;save_prepared_png(root,&png)?;
+        }
+    }
+    crate::storage::write_new(&marker,b"1")?;Ok(())
 }
 
 pub fn supported_path(path: &Path) -> bool {
@@ -58,6 +74,7 @@ pub fn save_prepared_png(root: &Path, png: &[u8]) -> Result<PathBuf> {
     let image = decode_still(png)?;
     anyhow::ensure!(image.width() == crate::image_skin::CARD_WIDTH && image.height() == crate::image_skin::CARD_HEIGHT,
         "El diseño preparado no tiene el tamaño de tarjeta");
+    crate::storage::safe_chain(root)?;
     std::fs::create_dir_all(root).context("No se pudo crear la biblioteca de diseños")?;
     let metadata = std::fs::symlink_metadata(root)?;
     anyhow::ensure!(metadata.is_dir() && !metadata.file_type().is_symlink(), "La biblioteca debe ser una carpeta normal");
@@ -211,5 +228,77 @@ mod tests {
         png[29..33].copy_from_slice(&(!crc).to_be_bytes());
         assert_eq!(image::ImageReader::new(Cursor::new(&png)).with_guessed_format().unwrap().into_dimensions().unwrap(), (32768, 32768));
         assert!(decode_still(&png).unwrap_err().to_string().contains("16 megapíxeles"));
+    }
+}
+
+
+#[derive(Clone,Debug,serde::Deserialize)]
+pub struct PurchasedDesign { pub id:String,pub title:String,pub filename:String,pub sha256:String,pub bytes:usize,pub width:u32,pub height:u32 }
+#[derive(serde::Deserialize)]
+pub struct PurchasedCatalog { pub schema:u32,pub pack_id:String,pub entitled:bool,pub designs:Vec<PurchasedDesign> }
+pub fn account_dir(session:&crate::cloud_sync::Session)->Result<PathBuf> {
+    anyhow::ensure!(crate::cloud_sync::valid_server(&session.server) && !session.user_id.is_empty(),"Cuenta no válida");
+    let key=crate::bank_backup::sha256(format!("{}|{}",session.server,session.user_id).as_bytes())?;
+    let root=crate::storage::root().join("design-library").join(key);crate::storage::safe_chain(&root)?;Ok(root)
+}
+pub fn purchased_catalog(session:&crate::cloud_sync::Session)->Result<PurchasedCatalog> {
+    anyhow::ensure!(crate::cloud_sync::valid_server(&session.server),"Servicio no válido");
+    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],65536)
+        .context("No se pudo actualizar el pack: revisa tu conexión o actualiza el servidor")?;
+    let catalog:PurchasedCatalog=serde_json::from_slice(&bytes)?;
+    anyhow::ensure!(catalog.schema==1 && catalog.pack_id=="studio-50-v1" && ((!catalog.entitled && catalog.designs.is_empty()) || (catalog.entitled && catalog.designs.len()==50)),"Catálogo no compatible");
+    for (index,item) in catalog.designs.iter().enumerate() {
+        anyhow::ensure!(item.id==format!("ws-{:03}",index+1) && item.filename==format!("{}.png",item.id) && item.sha256.len()==64 && item.sha256.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) && item.bytes>0 && item.bytes<=1024*1024 && (item.width,item.height)==(320,200) && !item.title.is_empty() && item.title.len()<=320 && !item.title.chars().any(char::is_control),"Metadatos de diseño no válidos");
+    } Ok(catalog)
+}
+pub fn verify_purchased(item:&PurchasedDesign,bytes:&[u8])->Result<()> {
+    anyhow::ensure!(bytes.len()==item.bytes && bytes.len()<=1024*1024 && bytes.starts_with(b"\x89PNG\r\n\x1a\n") && crate::bank_backup::sha256(bytes)?==item.sha256,"El diseño descargado no pasó la verificación");
+    let image=decode_still(bytes)?;anyhow::ensure!((image.width(),image.height())==(320,200),"Tamaño de diseño no válido");Ok(())
+}
+pub fn download_purchased(session:&crate::cloud_sync::Session,item:&PurchasedDesign)->Result<PathBuf> {
+    anyhow::ensure!(crate::cloud_sync::valid_server(&session.server) && item.id.len()==6 && item.id.starts_with("ws-") && item.id[3..].bytes().all(|b|b.is_ascii_digit()),"Diseño no válido");
+    // Always ask the service when using a paid design, including cached designs.
+    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs/{}",session.server,item.id),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],1024*1024)?;
+    verify_purchased(item,&bytes)?;
+    let root=account_dir(session)?.join("purchased");crate::storage::safe_chain(&root)?;std::fs::create_dir_all(&root)?;
+    let path=root.join(format!("{}.png",item.sha256));crate::storage::safe_chain(&path)?;
+    if path.exists() {if read_image(&path).is_ok_and(|old|old==bytes) {return Ok(path);} std::fs::remove_file(&path)?;}
+    if let Err(error)=crate::storage::write_new(&path,&bytes) {if !read_image(&path).is_ok_and(|existing|existing==bytes) {return Err(error);}}
+    Ok(path)
+}
+pub fn purchased_cache_path(session:&crate::cloud_sync::Session,item:&PurchasedDesign)->Result<PathBuf> {
+    anyhow::ensure!(item.sha256.len()==64 && item.sha256.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),"Hash de diseño no válido");
+    let path=account_dir(session)?.join("purchased").join(format!("{}.png",item.sha256));crate::storage::safe_chain(&path)?;Ok(path)
+}
+pub fn cached_purchased(session:&crate::cloud_sync::Session,item:&PurchasedDesign)->Result<PathBuf> {
+    let path=purchased_cache_path(session,item)?;
+    if path.exists() && read_image(&path).is_ok_and(|bytes|verify_purchased(item,&bytes).is_ok()) {return Ok(path);}
+    download_purchased(session,item)
+}
+
+#[cfg(test)]
+mod paid_tests {
+    use super::*;
+    fn fixture()->(PurchasedDesign,Vec<u8>) {
+        let mut bytes=Vec::new();image::DynamicImage::new_rgb8(320,200).write_to(&mut Cursor::new(&mut bytes),image::ImageFormat::Png).unwrap();
+        (PurchasedDesign {id:"ws-001".into(),title:"Fixture".into(),filename:"ws-001.png".into(),sha256:crate::bank_backup::sha256(&bytes).unwrap(),bytes:bytes.len(),width:320,height:200},bytes)
+    }
+    #[test] fn purchased_png_requires_exact_hash_size_format_and_dimensions() {
+        let (mut item,bytes)=fixture();verify_purchased(&item,&bytes).unwrap();
+        assert!(verify_purchased(&item,b"not a png").is_err());
+        item.bytes+=1;assert!(verify_purchased(&item,&bytes).is_err());item.bytes-=1;
+        item.sha256="0".repeat(64);assert!(verify_purchased(&item,&bytes).is_err());
+        let mut other=Vec::new();image::DynamicImage::new_rgb8(321,200).write_to(&mut Cursor::new(&mut other),image::ImageFormat::Png).unwrap();item.sha256=crate::bank_backup::sha256(&other).unwrap();item.bytes=other.len();assert!(verify_purchased(&item,&other).is_err());
+    }
+    #[test] fn library_storage_is_separated_by_account_and_service() {
+        let a=crate::cloud_sync::Session {server:"https://example.test".into(),access_token:"unused".into(),user_id:"one".into()};
+        let mut b=a.clone();b.user_id="two".into();assert_ne!(account_dir(&a).unwrap(),account_dir(&b).unwrap());
+        b=a.clone();b.server="https://other.test".into();assert_ne!(account_dir(&a).unwrap(),account_dir(&b).unwrap());
+        b.server="http://attacker.test".into();assert!(account_dir(&b).is_err());
+    }
+    #[test] fn unsafe_cache_hash_is_rejected_before_filesystem_access() {
+        let (mut item,_)=fixture();item.sha256="../../foreign".into();
+        let session=crate::cloud_sync::Session {server:"https://example.test".into(),access_token:"unused".into(),user_id:"one".into()};
+        assert!(cached_purchased(&session,&item).is_err());
     }
 }

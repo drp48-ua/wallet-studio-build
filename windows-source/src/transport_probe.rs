@@ -20,8 +20,7 @@ struct ProbeJournal {
 }
 
 fn root() -> PathBuf {
-    PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".into()))
-        .join("AirCard").join("transport-probe-recovery")
+    crate::storage::root().join("transport-probe-recovery")
 }
 
 fn names(token: &str) -> Result<(String, String)> {

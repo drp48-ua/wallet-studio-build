@@ -12,11 +12,7 @@ pub const CARD_ARTWORK_ASSETS: [&str; 3] = [
 ];
 
 fn backup_root() -> PathBuf {
-    let local_app_data = std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string());
-    PathBuf::from(local_app_data)
-        .join("AirCard")
-        .join("wallet-backups")
+    crate::storage::root().join("wallet-backups")
 }
 
 fn backup_dir(udid: &str, card_hash: &str) -> PathBuf {
@@ -100,10 +96,15 @@ pub(crate) fn valid_asset(asset: &str, bytes: &[u8]) -> bool {
 }
 
 fn complete_backup_at(dir: &Path) -> bool {
-    let Ok(manifest_bytes) = fs::read(dir.join("verified-original.json")) else { return false };
+    if crate::storage::safe_chain(dir).is_err() {return false;}
+    let metadata=dir.join("verified-original.json");
+    if crate::storage::safe_chain(&metadata).is_err() || !fs::symlink_metadata(&metadata).is_ok_and(|meta|meta.is_file() && meta.len()<=65536) {return false;}
+    let Ok(manifest_bytes) = fs::read(metadata) else { return false };
     let Ok(manifest) = serde_json::from_slice::<BackupManifest>(&manifest_bytes) else { return false };
     manifest.version == 1 && manifest.assets.len() == CARD_ARTWORK_ASSETS.len()
-        && CARD_ARTWORK_ASSETS.iter().all(|asset| fs::read(dir.join(asset)).is_ok_and(|bytes|
+        && CARD_ARTWORK_ASSETS.iter().all(|asset| crate::storage::safe_chain(&dir.join(asset)).is_ok()
+            && fs::symlink_metadata(dir.join(asset)).is_ok_and(|meta|meta.is_file() && meta.len()<=32*1024*1024)
+            && fs::read(dir.join(asset)).is_ok_and(|bytes|
             valid_asset(asset, &bytes) && manifest.assets.get(*asset)
                 .is_some_and(|hash| sha256(&bytes).is_ok_and(|actual| actual == *hash))))
 }
@@ -161,29 +162,12 @@ where
 {
     anyhow::ensure!(crate::scanner::is_valid_card_hash(card_hash),
         "El identificador de la tarjeta no es válido");
+    let _lease=crate::storage::operation_lease()?;
+    crate::storage::ensure_card_ready(udid,card_hash)?;
     let dir = backup_dir(udid, card_hash);
-    fs::create_dir_all(&dir)
-        .with_context(|| format!("Could not create backup directory {}", dir.display()))?;
-    if complete_backup_at(&dir) {
-        log("Copia original completa: integridad SHA-256 verificada.");
-        return Ok(Some(card_hash.to_string()));
-    }
-
-    log("Exporting the original Wallet artwork through Airlift with a durable PC recovery copy...");
-    for asset in CARD_ARTWORK_ASSETS {
-        let backup_path = dir.join(asset);
-        // Old loose files remain previews only. Every current source asset is
-        // exported and preserved before the backup manifest can be certified.
-        let data = crate::wallet_export::capture_verified_original_asset(
-            udid, connection_mode, card_hash, asset, &mut log)
-            .with_context(|| format!("Could not safely export original card asset {}", asset))?;
-        anyhow::ensure!(valid_asset(asset, &data), "El original {} no es una imagen válida", asset);
-        write_backup_file(&backup_path, &data)
-            .with_context(|| format!("Failed to save original card asset {}", asset))?;
-        log(&format!("Backed up original card asset: {}", asset));
-    }
-
-    commit_verified_manifest(&dir)?;
+    require_verified_legacy_at(&dir)?;
+    let _=connection_mode;
+    log("Copia original antigua completa: integridad SHA-256 verificada. No se volvió a capturar.");
     Ok(Some(card_hash.to_string()))
 }
 
@@ -219,20 +203,25 @@ pub fn load_original_assets(
     Ok(assets)
 }
 
+fn require_verified_legacy_at(dir:&Path)->Result<()> {
+    crate::storage::safe_chain(dir)?;
+    anyhow::ensure!(complete_backup_at(dir),"Falta una copia original antigua verificable. No se capturará el diseño local actual; utiliza la captura bancaria que prueba cada recurso del emisor.");Ok(())
+}
 fn write_backup_file(path: &Path, data: &[u8]) -> Result<()> {
-    let temporary = path.with_extension("tmp");
-    fs::write(&temporary, data)?;
-    anyhow::ensure!(fs::read(&temporary)? == data, "La copia local no coincide con los bytes originales");
-    if path.exists() {
-        fs::remove_file(path)?;
-    }
-    fs::rename(temporary, path)?;
-    Ok(())
+    // Immutable originals must never delete or replace existing evidence.
+    crate::storage::write_new(path,data)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn customer_legacy_capture_requires_existing_proof_and_never_overwrites() {
+        let root=std::env::temp_dir().join(format!("ws-legacy-fixture-{}",crate::flasher::generate_token()));
+        assert!(require_verified_legacy_at(&root).is_err());assert!(!root.exists());
+        let file=root.join("original.png");write_backup_file(&file,b"existing original fixture").unwrap();
+        assert!(write_backup_file(&file,b"current custom fixture").is_err());assert_eq!(fs::read(&file).unwrap(),b"existing original fixture");
+        assert!(require_verified_legacy_at(&root).is_err());fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn partial_original_evidence_blocks_automatic_recapture() {
         let dir = std::env::temp_dir().join(format!("wallet-studio-evidence-test-{}-{}",

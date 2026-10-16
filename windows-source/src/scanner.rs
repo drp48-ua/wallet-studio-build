@@ -29,9 +29,7 @@ pub struct SavedCard {
 }
 
 pub fn get_cards_storage_path() -> PathBuf {
-    let local_app_data = std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string());
-    let dir = PathBuf::from(local_app_data).join("AirCard");
+    let dir = crate::storage::root();
     let _ = fs::create_dir_all(&dir);
     dir.join("cards.json")
 }
@@ -319,6 +317,33 @@ pub fn extract_card_hash_from_line(line: &str) -> Option<String> {
     None
 }
 
+/// One user-requested scan selects one exact card, then releases the relay.
+/// Bounded line storage also prevents a malformed syslog stream growing memory.
+fn receive_first_card(stop:&AtomicBool,mut receive:impl FnMut(&mut [u8])->isize)->Option<(String,String)> {
+    let mut buffer=[0u8;8192];let mut line=Vec::with_capacity(1024);let mut oversized=false;
+    while !stop.load(Ordering::Acquire) {
+        let count=receive(&mut buffer);
+        if count==0 {break;}
+        if count<0 {std::thread::sleep(std::time::Duration::from_millis(50));continue;}
+        if count as usize>buffer.len() {break;}
+        for &byte in &buffer[..count as usize] {
+            if stop.load(Ordering::Acquire) {return None;}
+            if byte==b'\n' || byte==0 {
+                if !oversized && !line.is_empty() {
+                    let text=String::from_utf8_lossy(&line);
+                    if let Some(hash)=extract_card_hash_from_line(&text).filter(|hash|crate::wallet_export::is_exact_card_hash(hash)) {
+                        let name=extract_card_name_from_line(&text).unwrap_or_default();
+                        stop.store(true,Ordering::Release);return Some((hash,name));
+                    }
+                }
+                line.clear();oversized=false;
+            } else if byte!=b'\r' && !oversized {
+                if line.len()<16384 {line.push(byte);} else {line.clear();oversized=true;}
+            }
+        }
+    } None
+}
+
 pub fn scan_syslog_for_cards<F, L>(
     udid: Option<&str>,
     connection_mode: ConnectionMode,
@@ -353,65 +378,34 @@ where
     #[cfg(windows)]
     unsafe {
         let timeout_ms: u32 = 500;
-        setsockopt(
+        let result=setsockopt(
             raw_socket as usize,
             SOL_SOCKET,
             SO_RCVTIMEO,
             &timeout_ms as *const u32 as *const i8,
             std::mem::size_of::<u32>() as i32,
         );
+        if result!=0 {
+            (libs.amd_service_connection_invalidate)(service_conn);
+            anyhow::bail!("No se pudo configurar el tiempo de espera del receptor");
+        }
     }
 
     log("Syslog relay established. Listening for Wallet & PassKit events...".to_string());
     log("Tip: Open Apple Wallet on your iPhone or tap your card to trigger events.".to_string());
 
-    let mut buffer = [0u8; 8192];
-    let mut line_acc = Vec::with_capacity(1024);
-
-    while !stop_flag.load(Ordering::Relaxed) {
-        let bytes_read = unsafe {
-            (libs.amd_service_connection_receive)(
-                service_conn,
-                buffer.as_mut_ptr(),
-                buffer.len(),
-            )
-        };
-
-        if bytes_read > 0 {
-            let slice = &buffer[..bytes_read as usize];
-            for &b in slice {
-                if b == b'\n' || b == b'\0' {
-                    if !line_acc.is_empty() {
-                        let line = String::from_utf8_lossy(&line_acc);
-                        if let Some(hash) = extract_card_hash_from_line(&line) {
-                            let name = extract_card_name_from_line(&line).unwrap_or_default();
-                            log(format!(
-                                "Found card pass! Name: '{}', Hash: {}",
-                                if name.is_empty() { "Unknown" } else { &name },
-                                hash
-                            ));
-                            add_or_update_card(&hash, &name);
-                            on_card_found(hash, name);
-                        }
-                        line_acc.clear();
-                    }
-                } else if b != b'\r' {
-                    line_acc.push(b);
-                }
-            }
-        } else if bytes_read == 0 {
-            log("Syslog socket closed by device.".to_string());
-            break; // Socket closed
-        } else {
-            // Timeout or transient: sleep briefly to avoid pegging CPU
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
+    let found=receive_first_card(&stop_flag,|buffer| unsafe {
+        (libs.amd_service_connection_receive)(service_conn,buffer.as_mut_ptr(),buffer.len()) as isize
+    });
+    // Release both the relay and the device session BEFORE notifying the UI.
+    // The next task (original capture) must never compete with this receiver.
+    unsafe { (libs.amd_service_connection_invalidate)(service_conn); }
+    drop(session);
+    if let Some((hash,name))=found {
+        if !load_saved_cards().iter().any(|card|card.hash==hash) {add_or_update_card(&hash,&name);}
+        on_card_found(hash,name);
     }
-
-    unsafe {
-        (libs.amd_service_connection_invalidate)(service_conn);
-    }
-    log("Syslog scan stopped.".to_string());
+    log("Syslog scan stopped; relay and device session released.".to_string());
 
     Ok(())
 }
@@ -419,6 +413,27 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_stops_after_one_exact_card_even_when_same_receive_contains_more() {
+        let stop=AtomicBool::new(false);let mut receives=0;
+        let bytes=b"passd: Card hash: 'OM6NYhwXMZrAw0sRUjR62wmF4ZQ=' title='Mi tarjeta' loaded\npassd: Card hash: 'OM6NYhwXMZrAw0sRUjR62wmF4ZQ=' loaded\n";
+        let found=receive_first_card(&stop,|buffer| {receives+=1;buffer[..bytes.len()].copy_from_slice(bytes);bytes.len() as isize});
+        assert_eq!(found,Some(("OM6NYhwXMZrAw0sRUjR62wmF4ZQ=".into(),"Mi tarjeta".into())));
+        assert!(stop.load(Ordering::Acquire));assert_eq!(receives,1);
+    }
+    #[test]
+    fn cancelled_scan_never_receives_or_reports_a_card() {
+        let stop=AtomicBool::new(true);
+        assert_eq!(receive_first_card(&stop,|_|panic!("cancelled receiver must not run")),None);
+    }
+    #[test]
+    fn partial_and_invalid_syslog_lines_do_not_finish_scan() {
+        let stop=AtomicBool::new(false);let mut count=0;
+        let parts:Vec<&[u8]>=vec![b"passd: Card hash: 'not-a-card'\npassd: Card hash: 'OM6NYhwXMZrA",b"w0sRUjR62wmF4ZQ=' loaded\n"];
+        let found=receive_first_card(&stop,|buffer| {let part=parts[count];count+=1;buffer[..part.len()].copy_from_slice(part);part.len() as isize});
+        assert!(found.is_some());assert_eq!(count,2);
+    }
 
     #[test]
     fn test_extract_card_hash() {

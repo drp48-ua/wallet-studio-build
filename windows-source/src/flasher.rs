@@ -72,6 +72,7 @@ pub fn generate_token() -> String {
 }
 
 fn preflight_wallet_write(udid: &str) -> Result<()> {
+    crate::storage::ensure_ready()?;
     crate::device::ensure_wallet_version_supported(udid)?;
     let pending = crate::wallet_export::pending_recovery_operations()?;
     anyhow::ensure!(pending.iter().all(|operation| !operation.udid.eq_ignore_ascii_case(udid)),
@@ -103,6 +104,8 @@ where
     L: FnMut(&str),
 {
     validate_write_destination(target_dir, leaf_name, payload.len())?;
+    let _lease = crate::storage::operation_lease()?;
+    crate::storage::ensure_ready()?;
     let token = generate_token();
     let source = format!("{}{}", SOURCE_PREFIX, token);
     let link_dest = format!("{}{}", LINK_PREFIX, token);
@@ -185,6 +188,8 @@ where
     for (leaf, payload) in items {
         validate_write_destination(target_dir, leaf, payload.len())?;
     }
+    let _lease = crate::storage::operation_lease()?;
+    crate::storage::ensure_ready()?;
     if items.len() == 1 {
         return write_system_file(
             udid,
@@ -285,9 +290,11 @@ where
 {
     anyhow::ensure!(BANK_APPLY_READY,
         "La aplicación está bloqueada: falta una invalidación de caché con diario y restauración exacta. No se escribió nada.");
+    let _lease = crate::storage::operation_lease()?;
     preflight_wallet_write(udid)?;
     anyhow::ensure!(crate::wallet_export::is_exact_card_hash(card_hash),
         "Invalid Wallet card path identifier");
+    crate::storage::ensure_card_ready(udid,card_hash)?;
 
     if let Some(baseline) = crate::bank_backup::load_baseline(udid, card_hash)? {
         return flash_bank_wallet_skin(udid, connection_mode, card_hash, &baseline,
@@ -357,6 +364,8 @@ where
     F: FnMut(usize, usize, &str),
     L: FnMut(&str),
 {
+    let _lease = crate::storage::operation_lease()?;
+    crate::storage::ensure_card_ready(udid,card_hash)?;
     if !crate::bank_backup::baseline_exists(udid, card_hash) {
         // Legacy non-bank passes retain the original hash-verified backup route.
         load_original_assets(udid, card_hash)
@@ -392,13 +401,18 @@ where
     F: FnMut(usize, usize, &str),
     L: FnMut(&str),
 {
+    let _lease = crate::storage::operation_lease()?;
     preflight_wallet_write(udid)?;
     anyhow::ensure!(crate::scanner::is_valid_card_hash(card_hash),
         "El identificador de la tarjeta no es válido");
+    crate::storage::ensure_ready()?;
     if let Some(baseline) = crate::bank_backup::load_baseline(udid, card_hash)? {
-        return restore_bank_wallet_original(udid, connection_mode, card_hash, &baseline,
-            &mut progress, &mut log);
+        restore_bank_wallet_original(udid, connection_mode, card_hash, &baseline,
+            &mut progress, &mut log)?;
+        let _ = crate::cloud_sync::reconcile_card_quarantine(udid, card_hash, &mut log);
+        return Ok(());
     }
+    crate::storage::ensure_card_ready(udid,card_hash)?;
     let original_assets = load_original_assets(udid, card_hash)
         .context("Could not load the original Wallet card face backup")?;
     let asset_refs: Vec<(&str, &[u8])> = original_assets
@@ -495,8 +509,10 @@ where L: FnMut(&str) {
 pub fn replace_bank_animation<F, L>(udid: &str, mode: ConnectionMode, card_hash: &str,
     png_3x: &[u8], png_2x: &[u8], mut progress: F, mut log: L) -> Result<()>
 where F: FnMut(usize, usize, &str), L: FnMut(&str) {
+    let _lease = crate::storage::operation_lease()?;
     anyhow::ensure!(BANK_APPLY_READY && crate::wallet_export::is_exact_card_hash(card_hash),
         "No se cumplen las condiciones de escritura experimental");
+    crate::storage::ensure_card_ready(udid,card_hash)?;
     crate::animated_artwork::validate_pair(png_3x, png_2x)?;
     let baseline = crate::bank_backup::load_baseline(udid, card_hash)?
         .context("El experimento requiere un baseline bancario exacto y verificable")?;
@@ -672,6 +688,7 @@ where
     F: FnMut(usize, usize, &str),
     L: FnMut(&str),
 {
+    let _lease = crate::storage::operation_lease()?;
     preflight_wallet_write(udid)?;
     let total = items.len();
     log(&format!("Flashing passcode theme ({} assets)...", total));

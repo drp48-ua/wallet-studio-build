@@ -57,9 +57,7 @@ struct Journal {
 }
 
 fn journal_root() -> PathBuf {
-    PathBuf::from(std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string()))
-        .join("AirCard").join("wallet-export-recovery")
+    crate::storage::root().join("wallet-export-recovery")
 }
 
 fn create_operation_dir(root: &Path, token: &str) -> Result<PathBuf> {
@@ -188,6 +186,67 @@ pub struct PendingRecovery {
     pub card_hash: String,
     pub leaf: String,
     pub original_path: Option<PathBuf>,
+    pub baseline_recovery_available: bool,
+}
+
+/// Valid journals are scoped to their phone because Books state is per-device.
+/// An unreadable ledger remains globally blocking; no selected phone is also
+/// conservative. This never changes or completes any recovery evidence.
+pub fn pending_recovery_blocks_device(pending: std::result::Result<&[PendingRecovery], ()>, selected: Option<&str>) -> bool {
+    pending_recovery_blocks_device_except(pending, selected, None)
+}
+
+#[cfg(test)]
+mod pending_device_tests {
+    use super::*;
+    fn pending(udid: &str, card: &str, directory: &str) -> PendingRecovery {
+        PendingRecovery { operation_dir: PathBuf::from(directory), phase: "export-uncertain".into(),
+            udid: udid.into(), card_hash: card.into(), leaf: "cardBackgroundCombined@2x.png".into(), original_path: None, baseline_recovery_available: false }
+    }
+    #[test]
+    fn valid_foreign_pending_does_not_block_current_phone_or_require_an_original_file() {
+        let ledger = vec![pending("phone-A", "card-A", "pending-A")];
+        assert!(!pending_recovery_blocks_device(Ok(&ledger),Some("phone-B")));
+        assert!(pending_recovery_blocks_device(Ok(&ledger),Some("PHONE-a")));
+        assert!(pending_recovery_blocks_device(Ok(&ledger),None));
+        assert!(ledger[0].original_path.is_none());
+    }
+    #[test]
+    fn all_cards_on_current_phone_share_the_books_recovery_block_and_mixed_ledgers_block() {
+        let same_phone_other_card = vec![pending("phone-B", "another-card", "pending-B")];
+        assert!(pending_recovery_blocks_device(Ok(&same_phone_other_card),Some("phone-B")));
+        let mixed = vec![pending("phone-A", "card-A", "pending-A"), pending("phone-B", "another-card", "pending-B")];
+        assert!(pending_recovery_blocks_device(Ok(&mixed),Some("phone-B")));
+        assert!(pending_recovery_blocks_device(Ok(&mixed),None));
+        assert!(!pending_recovery_blocks_device(Ok(&mixed),Some("phone-C")));
+    }
+    #[test]
+    fn unknown_or_corrupt_ledger_is_global_fail_closed_even_without_pending_rows() {
+        for selected in [None,Some("phone-A"),Some("phone-B")] {
+            assert!(pending_recovery_blocks_device(Err(()),selected));
+        }
+        assert!(!pending_recovery_blocks_device(Ok(&[]),None));
+    }
+    #[test]
+    fn allowed_recovery_is_only_an_exact_operation_on_the_same_phone() {
+        let current = pending("phone-B", "card-B", "pending-B");
+        let foreign = pending("phone-A", "card-A", "pending-A");
+        let ledger = vec![foreign,current];
+        assert!(!pending_recovery_blocks_device_except(Ok(&ledger),Some("phone-B"),Some(Path::new("pending-B"))));
+        assert!(pending_recovery_blocks_device_except(Ok(&ledger),Some("phone-B"),Some(Path::new("pending-A"))));
+        assert!(pending_recovery_blocks_device_except(Ok(&ledger),Some("phone-B"),Some(Path::new("pending-B-different"))));
+        assert!(pending_recovery_blocks_device_except(Err(()),Some("phone-B"),Some(Path::new("pending-B"))));
+    }
+}
+
+fn pending_recovery_blocks_device_except(pending: std::result::Result<&[PendingRecovery], ()>,
+    selected: Option<&str>, allowed_operation: Option<&Path>) -> bool {
+    match pending {
+        Err(()) => true,
+        Ok(pending) => pending.iter().any(|operation|
+            selected.is_none_or(|udid| operation.udid.eq_ignore_ascii_case(udid))
+                && allowed_operation != Some(operation.operation_dir.as_path())),
+    }
 }
 
 fn latest_journal(operation_dir: &Path) -> Result<Journal> {
@@ -222,7 +281,11 @@ fn validate_journal(journal: &Journal) -> Result<()> {
 }
 
 fn validate_operation_dir(operation_dir: &Path, journal: &Journal) -> Result<()> {
-    anyhow::ensure!(operation_dir.parent() == Some(journal_root().as_path())
+    validate_operation_dir_at(operation_dir,journal,&journal_root())
+}
+fn validate_operation_dir_at(operation_dir:&Path,journal:&Journal,root:&Path)->Result<()> {
+    crate::storage::safe_chain(operation_dir)?;
+    anyhow::ensure!(operation_dir.parent() == Some(root)
         && operation_dir.file_name().and_then(|name| name.to_str()) == Some(journal.token.as_str()),
         "Recovery directory does not match the journal token");
     anyhow::ensure!(!fs::symlink_metadata(operation_dir)?.file_type().is_symlink(),
@@ -231,7 +294,10 @@ fn validate_operation_dir(operation_dir: &Path, journal: &Journal) -> Result<()>
 }
 
 pub fn pending_recovery_operations() -> Result<Vec<PendingRecovery>> {
-    let root = journal_root();
+    pending_recovery_operations_at(&journal_root())
+}
+pub(crate) fn pending_recovery_operations_at(root:&Path)->Result<Vec<PendingRecovery>> {
+    crate::storage::safe_chain(root)?;
     if !root.exists() { return Ok(Vec::new()); }
     let mut pending = Vec::new();
     for item in fs::read_dir(root)? {
@@ -244,7 +310,7 @@ pub fn pending_recovery_operations() -> Result<Vec<PendingRecovery>> {
                 || entry.file_name().to_string_lossy().ends_with(".original"));
         if !has_state { continue; }
         let journal = latest_journal(&path)?;
-        validate_operation_dir(&path, &journal)?;
+        validate_operation_dir_at(&path, &journal,root)?;
         if journal.phase == "complete" { continue; }
         let mut original_path = None;
         if let Some(expected) = journal.original_sha256.as_deref() {
@@ -256,8 +322,9 @@ pub fn pending_recovery_operations() -> Result<Vec<PendingRecovery>> {
                 }
             }
         }
+        let baseline_recovery_available = recovery_baseline(&journal).is_ok();
         pending.push(PendingRecovery { operation_dir: path, phase: journal.phase,
-            udid: journal.udid, card_hash: journal.card_hash, leaf: journal.leaf, original_path });
+            udid: journal.udid, card_hash: journal.card_hash, leaf: journal.leaf, original_path, baseline_recovery_available });
     }
     Ok(pending)
 }
@@ -278,6 +345,69 @@ pub fn load_preserved_original(operation_dir: &Path) -> Result<Vec<u8>> {
     verified_original_in(operation_dir, &journal)
 }
 
+fn baseline_recovery_bytes<'a>(journal: &Journal, baseline: &'a crate::bank_backup::Baseline) -> Result<&'a [u8]> {
+    anyhow::ensure!(journal.phase == "export-uncertain" && journal.original_sha256.is_none()
+        && journal.bundle_suffix == ".pkpass", "This journal is not eligible for baseline recovery");
+    anyhow::ensure!(baseline.udid == journal.udid && baseline.card_hash == journal.card_hash,
+        "Baseline belongs to another device/card");
+    let Some(crate::bank_backup::LocalAssetState::Present { bytes }) = baseline.local_assets.get(&journal.leaf) else {
+        bail!("The baseline does not preserve this exact leaf");
+    };
+    anyhow::ensure!(!bytes.is_empty() && bytes.len() <= resource_limit(&journal.leaf)
+        && crate::wallet_backup::CARD_ARTWORK_ASSETS.contains(&journal.leaf.as_str()), "Invalid baseline recovery resource");
+    Ok(bytes)
+}
+
+fn recovery_baseline(journal: &Journal) -> Result<crate::bank_backup::Baseline> {
+    anyhow::ensure!(journal.phase == "export-uncertain" && journal.original_sha256.is_none()
+        && journal.bundle_suffix == ".pkpass", "This journal is not eligible for baseline recovery");
+    let baseline = crate::bank_backup::load_baseline(&journal.udid, &journal.card_hash)?
+        .context("A fully verified baseline is required")?;
+    baseline_recovery_bytes(journal, &baseline)?;
+    Ok(baseline)
+}
+
+fn retain_baseline_for_recovery(operation_dir: &Path, journal: &mut Journal,
+    baseline: &crate::bank_backup::Baseline, root: &Path) -> Result<()> {
+    validate_operation_dir_at(operation_dir, journal, root)?;
+    let bytes = baseline_recovery_bytes(journal, baseline)?;
+    let hash = sha256(bytes)?;
+    // This is explicitly baseline provenance, never a claim that the failed
+    // export observed these bytes. Keep every earlier journal and evidence file.
+    let proof = serde_json::to_vec_pretty(&serde_json::json!({
+        "version": 1, "source": "verified-bank-baseline", "token": journal.token,
+        "udid": journal.udid, "card_hash": journal.card_hash, "leaf": journal.leaf,
+        "bundle_suffix": journal.bundle_suffix, "source_revision": journal.revision,
+        "sha256": hash, "size": bytes.len(), "phone_verified": false,
+        "baseline_manifest_sha256": sha256(&baseline.manifest_bytes)?,
+        "baseline_remote_artwork_sha256": sha256(&baseline.remote_artwork_bytes)?
+    }))?;
+    for (path, data) in [(operation_dir.join("baseline-recovery-provenance.json"), proof.as_slice()),
+        (operation_dir.join(format!("{}-baseline.original", journal.leaf)), bytes)] {
+        if path.exists() {
+            crate::storage::safe_chain(&path)?;
+            anyhow::ensure!(fs::symlink_metadata(&path)?.is_file() && fs::read(&path)? == data,
+                "Existing recovery evidence differs; nothing was replaced");
+        } else { durable_write(&path, data)?; }
+    }
+    journal.original_sha256 = Some(hash);
+    // Remains pending until the existing return/readback/Books pipeline succeeds.
+    save_journal(operation_dir, journal)?;
+    verified_original_in(operation_dir, journal)?;
+    Ok(())
+}
+
+/// PC-only explicit preparation. Does not query or write the phone, and does
+/// not complete the recovery. The existing return action performs verification.
+pub fn prepare_pending_from_baseline(operation_dir: &Path, selected_udid: &str) -> Result<()> {
+    let _lease = crate::storage::operation_lease()?;
+    let mut journal = latest_journal(operation_dir)?;
+    validate_operation_dir(operation_dir, &journal)?;
+    anyhow::ensure!(journal.udid.eq_ignore_ascii_case(selected_udid), "Select the matching iPhone");
+    let baseline = recovery_baseline(&journal)?;
+    retain_baseline_for_recovery(operation_dir, &mut journal, &baseline, &journal_root())
+}
+
 fn verified_original_in(operation_dir: &Path, journal: &Journal) -> Result<Vec<u8>> {
     let expected = journal.original_sha256.as_deref().context("No complete PC original is recorded in this phase")?;
     for path in original_candidates(operation_dir, &journal.leaf)? {
@@ -296,6 +426,7 @@ fn verified_original_in(operation_dir: &Path, journal: &Journal) -> Result<Vec<u
 pub fn resume_pending_return<L>(operation_dir: &Path, udid: &str, mode: ConnectionMode,
     mut log: L) -> Result<()>
 where L: FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;
     let mut journal = latest_journal(operation_dir)?;
     validate_operation_dir(operation_dir, &journal)?;
     anyhow::ensure!(journal.udid.eq_ignore_ascii_case(udid), "Recovery journal belongs to another device");
@@ -481,11 +612,12 @@ where L: FnMut(&str) {
 pub fn capture_verified_original_asset<L>(udid: &str, mode: ConnectionMode,
     card_hash: &str, leaf: &str, mut log: L) -> Result<Vec<u8>>
 where L: FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;
     anyhow::ensure!(is_exact_card_hash(card_hash), "Invalid Wallet card identifier");
     anyhow::ensure!(valid_leaf(leaf), "Artwork name must be a single file name");
     crate::device::ensure_wallet_version_supported(udid)?;
     let pending = pending_recovery_operations()?;
-    anyhow::ensure!(pending.is_empty(),
+    anyhow::ensure!(!pending_recovery_blocks_device(Ok(&pending), Some(udid)),
         "A previous Wallet artwork operation needs recovery review before another export: {}",
         pending.iter().map(|item| format!("{} ({})", item.operation_dir.display(), item.phase)).collect::<Vec<_>>().join(", "));
     let preimage_session = ActiveDeviceSession::open(Some(udid), mode)?;
@@ -579,6 +711,7 @@ where L: FnMut(&str) {
 pub fn inspect_bank_overrides<L>(udid: &str, mode: ConnectionMode, card_hash: &str,
     returned_manifest: &[u8], mut log: L) -> Result<BTreeMap<String, MetadataState>>
 where L: FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;
     inspect_bank_overrides_inner(udid, mode, card_hash, returned_manifest, None, &mut log)
 }
 
@@ -593,7 +726,7 @@ where L: FnMut(&str) {
     anyhow::ensure!(valid_resource(BANK_MANIFEST, returned_manifest), "No verified returned bank manifest supplied");
     crate::device::ensure_wallet_version_supported(udid)?;
     let pending = pending_recovery_operations()?;
-    anyhow::ensure!(pending.iter().all(|item| allowed_pending == Some(item.operation_dir.as_path())),
+    anyhow::ensure!(!pending_recovery_blocks_device_except(Ok(&pending), Some(udid), allowed_pending),
         "Pending recovery must finish before inspection");
     let session = ActiveDeviceSession::open(Some(udid), mode)?;
     let afc = AfcClient::new(&session)?;
@@ -675,7 +808,7 @@ where L: FnMut(&str) {
         "Invalid scoped AFC inspection target");
     crate::device::ensure_wallet_version_supported(udid)?;
     let pending = pending_recovery_operations()?;
-    anyhow::ensure!(pending.iter().all(|item| allowed_pending == Some(item.operation_dir.as_path())),
+    anyhow::ensure!(!pending_recovery_blocks_device_except(Ok(&pending), Some(udid), allowed_pending),
         "Pending recovery must finish before scoped AFC inspection");
     let session = ActiveDeviceSession::open(Some(udid), mode)?;
     let afc = AfcClient::new(&session)?;
@@ -761,7 +894,7 @@ pub fn remove_verified_cache_leaf<L>(udid: &str, mode: ConnectionMode, card_hash
 where L: FnMut(&str) {
     anyhow::ensure!(matches!(suffix, ".cache" | ".pkcache") && valid_suffix_leaf(suffix, leaf),
         "Invalid cache removal target");
-    anyhow::ensure!(pending_recovery_operations()?.is_empty(),
+    anyhow::ensure!(!pending_recovery_blocks_device(Ok(&pending_recovery_operations()?), Some(udid)),
         "A prior export needs recovery before cache invalidation");
     match inspect_scoped_leaf(udid, mode, card_hash, suffix, leaf, None, &mut log)? {
         MetadataState::Absent => {
@@ -880,7 +1013,7 @@ where L: FnMut(&str) {
     anyhow::ensure!(intent.phase != "restored" && intent.assets.get(leaf).is_some_and(|bytes| bytes == expected_own_bytes),
         "Refusing removal: target bytes are not bound to the active Wallet Studio write intent");
     crate::device::ensure_wallet_version_supported(udid)?;
-    anyhow::ensure!(pending_recovery_operations()?.is_empty(),
+    anyhow::ensure!(!pending_recovery_blocks_device(Ok(&pending_recovery_operations()?), Some(udid)),
         "A prior export needs recovery before removing a bank override");
 
     let current = inspect_bank_overrides_inner(udid, mode, card_hash, &baseline.manifest_bytes, None, &mut log)?;
@@ -950,6 +1083,64 @@ where L: FnMut(&str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn recovery_fixture(journal: &Journal) -> crate::bank_backup::Baseline {
+        crate::bank_backup::Baseline { udid: journal.udid.clone(), card_hash: journal.card_hash.clone(),
+            manifest_bytes: b"fixture manifest".to_vec(), artwork_name: "fixture".into(),
+            remote_artwork_bytes: b"fixture issuer artwork".to_vec(), remote_size: 22, remote_sha1: String::new(),
+            local_assets: [(journal.leaf.clone(), crate::bank_backup::LocalAssetState::Present {
+                bytes: b"independently verified original fixture".to_vec() })].into_iter().collect() }
+    }
+
+    #[test]
+    fn baseline_recovery_retains_audit_and_stays_pending_until_phone_verification() {
+        let root = std::env::temp_dir().join(format!("baseline-recovery-{}", crate::flasher::generate_token()));
+        let mut journal = test_journal(); journal.phase = "export-uncertain".into();
+        let dir = create_operation_dir(&root, &journal.token).unwrap();
+        save_journal(&dir, &mut journal).unwrap();
+        let old_path = dir.join("state-0001-export-uncertain.json"); let old = fs::read(&old_path).unwrap();
+        let baseline = recovery_fixture(&journal);
+        retain_baseline_for_recovery(&dir, &mut journal, &baseline, &root).unwrap();
+        assert_eq!(fs::read(old_path).unwrap(), old);
+        assert_eq!(latest_journal(&dir).unwrap().phase, "export-uncertain");
+        assert_eq!(verified_original_in(&dir, &latest_journal(&dir).unwrap()).unwrap(), b"independently verified original fixture");
+        let proof: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("baseline-recovery-provenance.json")).unwrap()).unwrap();
+        assert_eq!(proof["source"], "verified-bank-baseline"); assert_eq!(proof["phone_verified"], false);
+        assert!(retain_baseline_for_recovery(&dir, &mut journal, &baseline, &root).is_err());
+        assert_eq!(pending_recovery_operations_at(&root).unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn baseline_recovery_rejects_wrong_identity_absence_phase_and_existing_hash() {
+        let mut journal = test_journal(); journal.phase = "export-uncertain".into();
+        let mut baseline = recovery_fixture(&journal);
+        baseline.udid = "another phone".into(); assert!(baseline_recovery_bytes(&journal, &baseline).is_err());
+        baseline.udid = journal.udid.clone(); baseline.card_hash = "another card".into();
+        assert!(baseline_recovery_bytes(&journal, &baseline).is_err());
+        baseline = recovery_fixture(&journal);
+        baseline.local_assets.insert(journal.leaf.clone(), crate::bank_backup::LocalAssetState::Absent);
+        assert!(baseline_recovery_bytes(&journal, &baseline).is_err());
+        baseline = recovery_fixture(&journal); journal.bundle_suffix = ".cache".into();
+        assert!(baseline_recovery_bytes(&journal, &baseline).is_err());
+        journal.bundle_suffix = ".pkpass".into(); journal.phase = "complete".into();
+        assert!(baseline_recovery_bytes(&journal, &baseline).is_err());
+        journal.phase = "export-uncertain".into(); journal.original_sha256 = Some("a".repeat(64));
+        assert!(baseline_recovery_bytes(&journal, &baseline).is_err());
+    }
+
+    #[test]
+    fn baseline_recovery_never_replaces_conflicting_retained_evidence() {
+        let root = std::env::temp_dir().join(format!("baseline-conflict-{}", crate::flasher::generate_token()));
+        let mut journal = test_journal(); journal.phase = "export-uncertain".into();
+        let dir = create_operation_dir(&root, &journal.token).unwrap(); save_journal(&dir, &mut journal).unwrap();
+        let path = dir.join(format!("{}-baseline.original", journal.leaf)); durable_write(&path, b"different evidence").unwrap();
+        let baseline = recovery_fixture(&journal);
+        assert!(retain_baseline_for_recovery(&dir, &mut journal, &baseline, &root).is_err());
+        assert_eq!(fs::read(path).unwrap(), b"different evidence");
+        assert!(latest_journal(&dir).unwrap().original_sha256.is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn test_journal() -> Journal {
         Journal { version: 1, revision: 0, token: "abcdef1234567890abcd".into(),
