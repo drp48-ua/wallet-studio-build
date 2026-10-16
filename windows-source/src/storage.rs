@@ -89,6 +89,16 @@ pub(crate) fn ensure_card_ready_at(root:&Path,udid:&str,hash:&str)->Result<()> {
     anyhow::ensure!(!path.exists(),"Esta tarjeta tiene evidencia en conflicto; conserva las copias y revisa su original");Ok(())
 }
 pub(crate) fn block_card_at(root:&Path,udid:&str,hash:&str)->Result<()> { block_key_at(root,&card_key(udid,hash)?) }
+pub(crate) fn card_is_blocked_at(root:&Path,udid:&str,hash:&str)->bool {
+    card_key(udid,hash).ok().map(|key|root.join("card-review").join(key).exists()).unwrap_or(false)
+}
+pub(crate) fn clear_card_review_at(root:&Path,udid:&str,hash:&str)->Result<()> {
+    let key=card_key(udid,hash)?;
+    let path=root.join("card-review").join(key);
+    safe_chain(&path)?;
+    if path.exists() { fs::remove_file(&path)?; }
+    Ok(())
+}
 fn block_key_at(root:&Path,key:&str)->Result<()> {
     anyhow::ensure!(key.len()==64 && key.bytes().all(|b|b.is_ascii_hexdigit()),"invalid review key");
     let path=root.join("card-review").join(key);safe_chain(&path)?;
@@ -283,6 +293,19 @@ pub fn migrate_legacy()->Result<MigrationReport> {
         let mut report=MigrationReport::default();merge_tree(&source,&destination,&root,true,&mut report).unwrap();
         assert_eq!(fs::read(&destination).unwrap(),b"existing original fixture");assert!(ensure_card_ready_at(&root,"synthetic-A",hash).is_err());
         assert!(ensure_card_ready_at(&root,"synthetic-B",hash).is_ok());assert!(!root.join("storage-blocked.json").exists());fs::remove_dir_all(base).unwrap();
+    }
+    #[test] fn customer_card_review_clears_safely_and_is_scoped() {
+        let root=std::env::temp_dir().join(format!("ws-review-fixture-{}",crate::flasher::generate_token()));
+        let hash="OM6NYhwXMZrAw0sRUjR62wmF4ZQ=";
+        block_card_at(&root,"device-A",hash).unwrap();
+        assert!(card_is_blocked_at(&root,"device-A",hash));
+        assert!(ensure_card_ready_at(&root,"device-A",hash).is_err());
+        assert!(!card_is_blocked_at(&root,"device-B",hash));
+        assert!(ensure_card_ready_at(&root,"device-B",hash).is_ok());
+        clear_card_review_at(&root,"device-A",hash).unwrap();
+        assert!(!card_is_blocked_at(&root,"device-A",hash));
+        assert!(ensure_card_ready_at(&root,"device-A",hash).is_ok());
+        fs::remove_dir_all(root).unwrap();
     }
     #[test] fn customer_atomic_replace_failure_preserves_existing_settings() {
         let base=std::env::temp_dir().join(format!("ws-atomic-{}",crate::flasher::generate_token()));

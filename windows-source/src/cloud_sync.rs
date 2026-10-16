@@ -225,6 +225,69 @@ pub fn import_bundle(root:&Path,bytes:&[u8])->Result<()> {
     result
 }
 
+pub fn reconcile_card_quarantine<L>(udid: &str, hash: &str, log: &mut L) -> Result<bool>
+where L: FnMut(&str) {
+    let root = crate::storage::root();
+    reconcile_card_quarantine_at(&root, udid, hash, log)
+}
+
+pub(crate) fn reconcile_card_quarantine_at<L>(root: &Path, udid: &str, hash: &str, log: &mut L) -> Result<bool>
+where L: FnMut(&str) {
+    let _lease = crate::storage::operation_lease_for_import(root)?;
+    crate::storage::safe_chain(root)?;
+    if crate::bank_changes::cloud_operation_dirs(&root.join("bank-change-intents"), udid, hash).is_err() {
+        return Ok(false);
+    }
+    let quarantine_dir = root.join("quarantine");
+    if !quarantine_dir.exists() {
+        if crate::storage::card_is_blocked_at(root, udid, hash) {
+            crate::storage::clear_card_review_at(root, udid, hash)?;
+            log("Revisión de tarjeta liberada tras comprobar que no hay evidencia en conflicto en cuarentena.");
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    crate::storage::safe_chain(&quarantine_dir)?;
+    let mut matching_zips = Vec::new();
+    for entry in fs::read_dir(&quarantine_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("zip") { continue; }
+        let bytes = match fs::read(&path) { Ok(b) => b, Err(_) => continue };
+        if let Ok((manifest, _)) = parse_bundle(&bytes) {
+            if manifest.udid == udid && manifest.card_hash == hash {
+                matching_zips.push((path, bytes));
+            }
+        }
+    }
+    for (path, bytes) in &matching_zips {
+        if import_bundle(root, bytes).is_ok() {
+            let _ = fs::remove_file(path);
+            log(&format!("Paquete en cuarentena reconciliado e importado con éxito: {}", path.file_name().unwrap().to_string_lossy()));
+        } else {
+            log(&format!("El paquete en cuarentena mantiene diferencias con la evidencia local; se conserva: {}", path.file_name().unwrap().to_string_lossy()));
+        }
+    }
+    let mut still_quarantined = false;
+    for entry in fs::read_dir(&quarantine_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("zip") { continue; }
+        if let Ok(bytes) = fs::read(&path) {
+            if let Ok((manifest, _)) = parse_bundle(&bytes) {
+                if manifest.udid == udid && manifest.card_hash == hash {
+                    still_quarantined = true;
+                    break;
+                }
+            }
+        }
+    }
+    if !still_quarantined && crate::bank_changes::cloud_operation_dirs(&root.join("bank-change-intents"), udid, hash).is_ok() {
+        crate::storage::clear_card_review_at(root, udid, hash)?;
+        log("Revisión de tarjeta liberada tras reconciliar toda la evidencia cloud.");
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 #[cfg(windows)] fn protect(bytes:&[u8],decrypt:bool)->Result<Vec<u8>> {
     #[repr(C)] struct Blob { length:u32,data:*mut u8 }
     #[link(name="crypt32")] unsafe extern "system" {
@@ -572,6 +635,43 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
             crate::bank_changes::validate_cloud_chain(&target.join("bank-change-intents"),&input.udid,&input.card_hash).unwrap();
             assert!(crate::storage::ensure_card_ready_at(&target,&input.udid,&input.card_hash).is_ok());fs::remove_dir_all(target).unwrap();
         }fs::remove_dir_all(source).unwrap();
+    }
+    #[test] fn customer_quarantine_reconciles_and_clears_review_after_intent_is_restored() {
+        let source=fixture_root();let target=fixture_root();let input=fixture_baseline();
+        let source_path=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),&input).unwrap();
+        let _target_path=crate::bank_backup::save_fixture_at(&target.join("bank-backups"),&input).unwrap();
+        let png=input.remote_artwork_bytes.clone();
+        let pairs=crate::wallet_backup::CARD_ARTWORK_ASSETS.iter().map(|name|(name.to_string(),if name.ends_with(".pdf") {b"%PDF-1.7\n%%EOF".to_vec()} else {png.clone()})).collect::<Vec<_>>();
+        let source_op=crate::bank_changes::save_fixture_applied_at(&source.join("bank-change-intents"),&input.udid,&input.card_hash,&pairs).unwrap();
+        crate::bank_changes::restore_fixture_at(&source_op).unwrap();
+        let bundle=export_bundle(&source,&source_path).unwrap();
+
+        // Target has an intent in prepared phase
+        let target_op=crate::bank_changes::save_fixture_prepared_at(&target.join("bank-change-intents"),&input.udid,&input.card_hash,&pairs).unwrap();
+        // Import fails because target intent is prepared -> quarantined and blocked
+        assert!(import_bundle(&target,&bundle).is_err());
+        assert!(crate::storage::card_is_blocked_at(&target,&input.udid,&input.card_hash));
+        assert!(crate::storage::ensure_card_ready_at(&target,&input.udid,&input.card_hash).is_err());
+        let digest=crate::bank_backup::sha256(&bundle).unwrap();
+        assert!(target.join("quarantine").join(format!("{digest}.zip")).is_file());
+
+        // Reconcile while still prepared does NOT clear review or delete quarantine
+        let mut log_lines=Vec::new();
+        assert!(!reconcile_card_quarantine_at(&target,&input.udid,&input.card_hash,&mut |l| log_lines.push(l.to_string())).unwrap());
+        assert!(crate::storage::card_is_blocked_at(&target,&input.udid,&input.card_hash));
+        assert!(target.join("quarantine").join(format!("{digest}.zip")).is_file());
+
+        // Target completes physical restoration: prepared -> applied -> restored
+        crate::bank_changes::apply_fixture_at(&target_op).unwrap();
+        crate::bank_changes::restore_fixture_at(&target_op).unwrap();
+
+        // Now reconcile succeeds: imports bundle, deletes quarantine zip, and clears review!
+        assert!(reconcile_card_quarantine_at(&target,&input.udid,&input.card_hash,&mut |l| log_lines.push(l.to_string())).unwrap());
+        assert!(!crate::storage::card_is_blocked_at(&target,&input.udid,&input.card_hash));
+        assert!(crate::storage::ensure_card_ready_at(&target,&input.udid,&input.card_hash).is_ok());
+        assert!(!target.join("quarantine").join(format!("{digest}.zip")).exists());
+
+        fs::remove_dir_all(source).unwrap();fs::remove_dir_all(target).unwrap();
     }
     #[test] fn customer_cloud_receipts_verify_current_files_and_upgrade_legacy_markers() {
         let source=fixture_root();let target=fixture_root();let input=fixture_baseline();

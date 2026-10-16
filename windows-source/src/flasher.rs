@@ -405,11 +405,14 @@ where
     preflight_wallet_write(udid)?;
     anyhow::ensure!(crate::scanner::is_valid_card_hash(card_hash),
         "El identificador de la tarjeta no es válido");
-    crate::storage::ensure_card_ready(udid,card_hash)?;
+    crate::storage::ensure_ready()?;
     if let Some(baseline) = crate::bank_backup::load_baseline(udid, card_hash)? {
-        return restore_bank_wallet_original(udid, connection_mode, card_hash, &baseline,
-            &mut progress, &mut log);
+        restore_bank_wallet_original(udid, connection_mode, card_hash, &baseline,
+            &mut progress, &mut log)?;
+        let _ = crate::cloud_sync::reconcile_card_quarantine(udid, card_hash, &mut log);
+        return Ok(());
     }
+    crate::storage::ensure_card_ready(udid,card_hash)?;
     let original_assets = load_original_assets(udid, card_hash)
         .context("Could not load the original Wallet card face backup")?;
     let asset_refs: Vec<(&str, &[u8])> = original_assets

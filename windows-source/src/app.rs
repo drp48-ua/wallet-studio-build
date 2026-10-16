@@ -63,30 +63,43 @@ fn load_card_snapshot(selected: Option<&str>, hash: &str) -> CardSnapshot {
         original: OriginalState::Missing, restore: false, phase: Ok(None),
         original_image: None, applied_image: None };
     let Some(udid) = udid else { return result; };
-    if crate::storage::ensure_card_ready_at(&crate::storage::root(),&udid,hash).is_err() { result.original=OriginalState::Blocked;result.phase=Err(());return result; }
+    let card_review_blocked = crate::storage::ensure_card_ready_at(&crate::storage::root(),&udid,hash).is_err();
     let bank = crate::bank_backup::load_baseline(&udid,hash);
     let mut bank_verified = false;
     match bank {
         Ok(Some(baseline)) => {
-            bank_verified = true; result.original = OriginalState::Verified;
+            if card_review_blocked {
+                result.original = OriginalState::Blocked;
+            } else {
+                bank_verified = true;
+                result.original = OriginalState::Verified;
+            }
             result.original_image = thumbnail(&baseline.remote_artwork_bytes);
         }
-        Err(_) => result.original = OriginalState::Blocked,
-        Ok(None) => if crate::wallet_backup::backup_evidence_exists(&udid,hash) {
-            match crate::wallet_backup::load_original_assets(&udid,hash) {
-                Ok(assets) => { result.original = OriginalState::Verified;
-                    result.original_image = assets.iter().filter(|(leaf,_)| leaf.ends_with(".png"))
-                        .find_map(|(_,bytes)| thumbnail(bytes)); }
-                Err(_) => result.original = OriginalState::Blocked,
+        Err(_) => { result.original = OriginalState::Blocked; if card_review_blocked { result.phase=Err(());return result; } }
+        Ok(None) => {
+            if card_review_blocked { result.original=OriginalState::Blocked;result.phase=Err(());return result; }
+            if crate::wallet_backup::backup_evidence_exists(&udid,hash) {
+                match crate::wallet_backup::load_original_assets(&udid,hash) {
+                    Ok(assets) => { result.original = OriginalState::Verified;
+                        result.original_image = assets.iter().filter(|(leaf,_)| leaf.ends_with(".png"))
+                            .find_map(|(_,bytes)| thumbnail(bytes)); }
+                    Err(_) => result.original = OriginalState::Blocked,
+                }
             }
-        },
+        }
     }
     match crate::bank_changes::load_latest_intent(&udid,hash) {
         Ok(intent) => {
             result.phase = Ok(intent.as_ref().map(|intent| intent.phase.clone()));
             if intent.is_some() && result.original == OriginalState::Missing { result.original = OriginalState::Blocked; }
-            result.restore = result.original == OriginalState::Verified && (!bank_verified
-                || intent.as_ref().is_some_and(|intent| intent.phase != "restored"));
+            result.restore = if card_review_blocked {
+                bank.as_ref().ok().and_then(|b| b.as_ref()).is_some()
+                    && intent.as_ref().is_some_and(|intent| intent.phase != "restored")
+            } else {
+                result.original == OriginalState::Verified && (!bank_verified
+                    || intent.as_ref().is_some_and(|intent| intent.phase != "restored"))
+            };
             if let Some(intent) = intent.filter(|intent| intent.phase == "applied") {
                 result.applied_image = intent.assets.get("cardBackgroundCombined@3x.png").and_then(|bytes| thumbnail(bytes));
                 if result.original == OriginalState::Missing { result.original = OriginalState::Blocked; }

@@ -111,6 +111,12 @@ pub(crate) fn review_persistence_store_at(root:&Path,vault:&Path)->Result<()> {
 pub(crate) fn operation_identity(directory:&Path)->Result<(String,String)> {
     let state=latest_metadata(directory)?;Ok((state.udid,state.card_hash))
 }
+#[cfg(test)] pub(crate) fn save_fixture_prepared_at(root:&Path,udid:&str,hash:&str,pairs:&[(String,Vec<u8>)])->Result<PathBuf> {
+    save_intent_at(root,udid,hash,pairs,true)
+}
+#[cfg(test)] pub(crate) fn apply_fixture_at(directory:&Path)->Result<()> {
+    append_phase(directory,"applied")
+}
 #[cfg(test)] pub(crate) fn save_fixture_applied_at(root:&Path,udid:&str,hash:&str,pairs:&[(String,Vec<u8>)])->Result<PathBuf> {
     let directory=save_intent_at(root,udid,hash,pairs,true)?;append_phase(&directory,"applied")?;Ok(directory)
 }
