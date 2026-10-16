@@ -258,18 +258,20 @@ class ClientCatalogAndRevocationTests(unittest.TestCase):
     def test_live_render_backend_health_and_unauthorized_catalog(self):
         render_url = 'https://wallet-studio-accounts.onrender.com'
         try:
-            with urllib.request.urlopen(f'{render_url}/health', timeout=10) as resp:
+            with urllib.request.urlopen(f'{render_url}/health', timeout=15) as resp:
                 self.assertEqual(resp.status, 200)
                 data = json.loads(resp.read())
                 self.assertEqual(data.get('status'), 'ok')
 
             try:
-                urllib.request.urlopen(f'{render_url}/v1/designs', timeout=10)
+                urllib.request.urlopen(f'{render_url}/v1/designs', timeout=15)
                 self.fail('Unauthenticated /v1/designs should fail with 401')
             except urllib.error.HTTPError as err:
+                if err.code in (502, 503, 504):
+                    self.skipTest(f'Live Render free tier proxy warming up: HTTP {err.code}')
                 self.assertEqual(err.code, 401)
 
-        except (urllib.error.URLError, TimeoutError) as net_err:
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as net_err:
             self.skipTest(f'Live Render backend network probe skipped: {net_err}')
 
 
