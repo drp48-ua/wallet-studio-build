@@ -260,11 +260,24 @@ pub fn download_purchased(session:&crate::cloud_sync::Session,item:&PurchasedDes
     // Always ask the service when using a paid design, including cached designs.
     let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs/{}",session.server,item.id),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],1024*1024)?;
     verify_purchased(item,&bytes)?;
-    let root=account_dir(session)?.join("purchased");crate::storage::safe_chain(&root)?;std::fs::create_dir_all(&root)?;
-    let path=root.join(format!("{}.png",item.sha256));crate::storage::safe_chain(&path)?;
-    if path.exists() {if read_image(&path).is_ok_and(|old|old==bytes) {return Ok(path);} std::fs::remove_file(&path)?;}
-    if let Err(error)=crate::storage::write_new(&path,&bytes) {if !read_image(&path).is_ok_and(|existing|existing==bytes) {return Err(error);}}
+    let path=purchased_cache_path(session,item)?;
+    store_purchased_cache(&path,item,&bytes)?;
     Ok(path)
+}
+fn store_purchased_cache(path:&Path,item:&PurchasedDesign,bytes:&[u8])->Result<()> {
+    verify_purchased(item,bytes)?;crate::storage::safe_chain(path)?;
+    let root=path.parent().context("Carpeta de caché no válida")?;std::fs::create_dir_all(root)?;
+    if read_image(path).is_ok_and(|old|old==bytes) {return Ok(());}
+    // Atomic replacement prevents another preview/use worker seeing a partial PNG.
+    let temporary=root.join(format!(".design-{}",crate::flasher::generate_token()));
+    crate::storage::write_new(&temporary,bytes)?;
+    let result=(|| {
+        verify_purchased(item,&std::fs::read(&temporary)?)?;
+        crate::storage::replace_file_at(&temporary,path)?;
+        verify_purchased(item,&read_image(path)?)
+    })();
+    if result.is_err() {let _=std::fs::remove_file(&temporary);}
+    result
 }
 pub fn purchased_cache_path(session:&crate::cloud_sync::Session,item:&PurchasedDesign)->Result<PathBuf> {
     anyhow::ensure!(item.sha256.len()==64 && item.sha256.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),"Hash de diseño no válido");
@@ -300,5 +313,17 @@ mod paid_tests {
         let (mut item,_)=fixture();item.sha256="../../foreign".into();
         let session=crate::cloud_sync::Session {server:"https://example.test".into(),access_token:"unused".into(),user_id:"one".into()};
         assert!(cached_purchased(&session,&item).is_err());
+    }
+    #[test] fn damaged_cache_is_repaired_atomically_and_invalid_download_preserves_existing() {
+        let (item,bytes)=fixture();
+        let root=std::env::temp_dir().join(format!("ws-cache-repair-{}",crate::flasher::generate_token()));
+        std::fs::create_dir_all(&root).unwrap();let path=root.join("preview.png");
+        std::fs::write(&path,b"interrupted old download").unwrap();
+        assert!(store_purchased_cache(&path,&item,b"invalid network response").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(),b"interrupted old download");
+        store_purchased_cache(&path,&item,&bytes).unwrap();verify_purchased(&item,&read_image(&path).unwrap()).unwrap();
+        std::thread::scope(|scope| {for _ in 0..4 {let path=&path;let item=&item;let bytes=&bytes;scope.spawn(move|| {store_purchased_cache(path,item,bytes).unwrap();});}});
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(),1);
+        assert_eq!(read_image(&path).unwrap(),bytes);std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -123,15 +123,51 @@ enum AppTab {
     Help,
     Account,
 }
-fn cloud_sync_status(session:&crate::cloud_sync::Session,previously_authenticated:bool,tx:&std::sync::mpsc::Sender<CloudEvent>,ctx:&egui::Context)->(bool,bool,bool,String) {
-    if matches!(crate::cloud_sync::account_app_license(session),Ok(false)) {return (false,true,false,"Tu cuenta conserva derechos históricos de diseños. Necesitas una licencia vigente de Wallet Studio para utilizar el iPhone y sus copias.".into());}
+fn cloud_sync_status(session:&crate::cloud_sync::Session,previously_authenticated:bool,tx:&std::sync::mpsc::Sender<CloudEvent>,ctx:&egui::Context)->(bool,bool,bool,bool,String) {
+    match crate::cloud_sync::account_app_license(session) {
+        Ok(false)=>return (false,true,false,false,"Tu cuenta conserva derechos históricos de diseños. Necesitas una licencia vigente de Wallet Studio para utilizar el iPhone y sus copias.".into()),
+        Err(error)=>{let retained=crate::cloud_sync::retained_session_after_failure(&error);return (false,retained,false,retained,crate::cloud_sync::session_connection_failure_message(&error));},
+        Ok(true)=>{},
+    }
     match crate::cloud_sync::synchronize_report_progress(session,|status| {let _=tx.send(CloudEvent::Progress(status));ctx.request_repaint();}) {
-        Ok(report)=>(true,true,report.complete(),report.message()),
-        Err(error)=>{let authenticated=crate::cloud_sync::authenticated_after_sync_failure(&error,previously_authenticated);(authenticated,authenticated,false,crate::cloud_sync::sync_failure_message(&error))},
+        Ok(report)=>(true,true,report.complete(),false,report.message()),
+        Err(error)=>{let authenticated=crate::cloud_sync::authenticated_after_sync_failure(&error,previously_authenticated);let retained=crate::cloud_sync::retained_session_after_failure(&error);(authenticated,retained,false,!authenticated && retained,crate::cloud_sync::sync_failure_message(&error))},
     }
 }
-struct CloudMessage { authenticated:bool,library_authenticated:bool,storage_ready:bool,configured:bool,synced:bool,server:String,status:String,session:Option<crate::cloud_sync::Session> }
-enum CloudEvent {Progress(&'static str),Complete(CloudMessage)}
+struct CloudMessage { authenticated:bool,library_authenticated:bool,session_pending:bool,storage_ready:bool,configured:bool,synced:bool,server:String,status:String,session:Option<crate::cloud_sync::Session> }
+enum CloudEvent {Progress(&'static str),Restored(crate::cloud_sync::Session),Complete(CloudMessage)}
+
+/// Decoding and PNG preparation run before switching away from the library.
+struct LoadedLibraryDesign {
+    path: PathBuf,
+    source_image: DynamicImage,
+    frames: Vec<crate::animated_input::GifFrame>,
+    skin: PreparedSkin,
+    preview: egui::ColorImage,
+}
+fn prepare_library_design(path: PathBuf) -> anyhow::Result<LoadedLibraryDesign> {
+    let bytes = crate::design_library::read_image(&path)?;
+    let (source_image, frames) = if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("gif")) {
+        let frames = crate::animated_input::decode_gif(Cursor::new(bytes))?;
+        let image = frames.first().context("El GIF no tiene fotogramas")?.image.clone();
+        (image, frames)
+    } else { (crate::design_library::decode_still(&bytes)?, Vec::new()) };
+    let skin = PreparedSkin::from_image_with_focus(source_image.clone(), 0.5, 0.5)?;
+    let rgba = source_image.thumbnail(source_image.width().min(2048), source_image.height().min(2048)).to_rgba8();
+    let preview = egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
+    Ok(LoadedLibraryDesign { path, source_image, frames, skin, preview })
+}
+fn paint_library_preview(ui:&egui::Ui,rect:egui::Rect,path:&Path,texture:Option<&egui::TextureHandle>,failed:bool) {
+    ui.painter().rect_filled(rect,8.0,md3::SURFACE_CONTAINER_HIGH);
+    let opacity=ui.ctx().animate_bool_with_time(egui::Id::new(("library-loaded",path)),texture.is_some(),0.18);
+    if let Some(texture)=texture {
+        let size=texture.size_vec2();let scale=(rect.width()/size.x).min(rect.height()/size.y);
+        egui::Image::new((texture.id(),size)).tint(egui::Color32::WHITE.linear_multiply(opacity))
+            .paint_at(ui,egui::Rect::from_center_size(rect.center(),size*scale));
+    } else {
+        ui.painter().text(rect.center(),egui::Align2::CENTER_CENTER,if failed {"Imagen no disponible"} else {"Cargando…"},egui::FontId::proportional(12.0),md3::ON_SURFACE_VARIANT);
+    }
+}
 
 enum BackgroundTaskMessage {
     Progress { step: usize, total: usize, message: String },
@@ -195,7 +231,7 @@ fn current_timestamp() -> String {
 
 pub struct AirCardApp {
     cloud_rx:Option<Receiver<CloudEvent>>,
-    activation_rx:Option<Receiver<bool>>,account_stage:u8,account_code:String,account_confirmation:String,account_authenticated:bool,library_authenticated:bool,
+    activation_rx:Option<Receiver<bool>>,account_stage:u8,account_code:String,account_confirmation:String,account_authenticated:bool,library_authenticated:bool,session_pending:bool,
     account_devices:Vec<crate::cloud_sync::RegisteredComputer>,account_devices_rx:Option<Receiver<Result<Vec<crate::cloud_sync::RegisteredComputer>,()>>>,
     account_recovery:bool,account_reset_devices:bool,
     auth_preview:bool,
@@ -233,15 +269,15 @@ pub struct AirCardApp {
     gif_playback: Option<(Instant, usize)>,
     source_path: Option<PathBuf>,
     library_designs: Vec<crate::design_library::Design>,
-    library_selected: Option<PathBuf>,
+    library_selection: crate::library_loader::Selection,
     library_error: Option<String>,
     library_textures: HashMap<PathBuf,egui::TextureHandle>,
     purchased_designs: Vec<(crate::design_library::PurchasedDesign,PathBuf)>,
     purchased_status: String,
     purchased_rx: Option<Receiver<(String,Result<Vec<(crate::design_library::PurchasedDesign,PathBuf)>,String>)>>,
-    purchased_use_rx: Option<Receiver<(String,Result<PathBuf,String>)>>,
+    purchased_use_rx: Option<Receiver<(String,u64,Result<LoadedLibraryDesign,String>)>>,
     library_owner: String,
-    library_preview_rx: Option<Receiver<(String,PathBuf,Result<egui::ColorImage,String>)>>,
+    library_previews: crate::library_loader::Previews,
     source_image: Option<DynamicImage>,
     source_texture: Option<egui::TextureHandle>,
     crop_focus: [f32; 2],
@@ -319,13 +355,14 @@ impl AirCardApp {
         let endpoint=self.account_server.clone();
         thread::spawn(move || {
             let _=tx.send(CloudEvent::Progress("Comprobando y preparando las copias locales…"));ctx.request_repaint();
-            let mut message=CloudMessage { authenticated:false,library_authenticated:false,storage_ready:false,configured:true,synced:false,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación.".into(),session:None };
+            let mut message=CloudMessage { authenticated:false,library_authenticated:false,session_pending:false,storage_ready:false,configured:true,synced:false,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación.".into(),session:None };
             if crate::storage::migrate_legacy().is_ok() {
                 message.storage_ready=true;
                 message.configured=crate::cloud_sync::account_expected_without_session(&endpoint);
                 match crate::cloud_sync::load_session() {
                     Ok(Some(session))=> { message.configured=true; message.server=session.server.clone();
-                        (message.authenticated,message.library_authenticated,message.synced,message.status)=cloud_sync_status(&session,false,&tx,&ctx);
+                        let _=tx.send(CloudEvent::Restored(session.clone()));ctx.request_repaint();
+                        (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status)=cloud_sync_status(&session,false,&tx,&ctx);
                         message.session=Some(session);
                     }
                     Ok(None)=>message.status=if message.configured {"Inicia sesión y comprueba tus copias en la nube antes de capturar un original ausente. Los originales locales verificados siguen disponibles."} else {"Almacenamiento local listo · vincula tu cuenta para sincronizar"}.into(),
@@ -348,14 +385,36 @@ impl AirCardApp {
             self.account_devices_rx=None;match result {Ok(devices)=>self.account_devices=devices,Err(())=>self.cloud_status="No se pudo actualizar la lista de equipos. Vuelve a comprobar la sesión.".into()}
         }
         if self.account_devices_rx.is_some() {ctx.request_repaint_after(std::time::Duration::from_millis(150));}
-        while let Some(event)=self.cloud_rx.as_ref().and_then(|rx|rx.try_recv().ok()) {
-            let message=match event {CloudEvent::Progress(status)=>{self.cloud_status=status.into();continue;},CloudEvent::Complete(message)=>message};
+        loop {
+            let event=match self.cloud_rx.as_ref().map(|rx|rx.try_recv()) {
+                Some(Ok(event))=>event,
+                Some(Err(std::sync::mpsc::TryRecvError::Disconnected))=>{
+                    self.cloud_rx=None;self.cloud_synced=false;self.last_cloud_sync=Instant::now();self.cloud_sync_queued=false;
+                    if self.cloud_session.is_some() {self.account_authenticated=false;self.library_authenticated=true;self.session_pending=true;}
+                    self.cloud_status="La comprobación se interrumpió. La sesión guardada se conserva; reintenta la conexión desde Cuenta.".into();break;
+                },
+                _=>break,
+            };
+            let message=match event {
+                CloudEvent::Progress(status)=>{self.cloud_status=status.into();continue;},
+                CloudEvent::Restored(session)=>{
+                    self.account_authenticated=false;self.library_authenticated=true;self.session_pending=true;
+                    self.cloud_configured=true;self.cloud_synced=false;self.storage_ready=crate::storage::ensure_ready().is_ok();
+                    self.account_server=session.server.clone();self.cloud_session=Some(session);
+                    self.cloud_status="Sesión guardada en este equipo. Comprobando la conexión; puedes preparar tus diseños mientras esperas.".into();continue;
+                },
+                CloudEvent::Complete(message)=>message,
+            };
             self.cloud_rx=None; self.storage_ready=message.storage_ready; self.cloud_configured=message.configured;
             self.cloud_synced=message.synced; self.cloud_status=message.status.into();
             let newly_authenticated=!self.account_authenticated && message.authenticated;
             self.account_authenticated=message.authenticated;self.library_authenticated=message.library_authenticated;
+            self.session_pending=message.session_pending;
             if !message.server.is_empty() { self.account_server=message.server; }
-            self.cloud_session=message.session;
+            self.cloud_session=if !message.library_authenticated {
+                if let Some(session)=message.session {let _=crate::cloud_sync::forget_rejected_session(&session);}
+                None
+            } else {message.session};
             self.last_cloud_sync=Instant::now();
             self.saved_cards=load_saved_cards(); self.invalidate_card_cache();
             if newly_authenticated && self.apple_ready {self.refresh_devices();self.refresh_recovery_status();}
@@ -375,8 +434,8 @@ impl AirCardApp {
         let previously_authenticated=self.account_authenticated;
         let (tx,rx)=channel(); self.cloud_rx=Some(rx);
         thread::spawn(move|| {
-            let (authenticated,library_authenticated,synced,status)=cloud_sync_status(&session,previously_authenticated,&tx,&ctx);
-            let message=CloudMessage { authenticated,library_authenticated,storage_ready:crate::storage::ensure_ready().is_ok(),configured:true,synced,
+            let (authenticated,library_authenticated,synced,session_pending,status)=cloud_sync_status(&session,previously_authenticated,&tx,&ctx);
+            let message=CloudMessage { authenticated,library_authenticated,session_pending,storage_ready:crate::storage::ensure_ready().is_ok(),configured:true,synced,
                 server:session.server.clone(),session:Some(session),status };
             let _=tx.send(CloudEvent::Complete(message));ctx.request_repaint();
         });
@@ -384,7 +443,7 @@ impl AirCardApp {
     fn show_account_tab(&mut self,ui:&mut egui::Ui,ctx:&egui::Context) {
         m3_card(ui,|ui| {
             crate::auth_ui::steps(ui,self.account_stage,self.account_recovery);
-            ui.label(egui::RichText::new(if self.account_authenticated {"Cuenta y copias"} else if self.account_stage==2 {if self.account_recovery {"Recupera tu acceso"} else {"Activa tu espacio"}} else if self.account_stage==1 {"Qué bien verte de nuevo"} else {"Tu estudio empieza aquí"}).size(27.0).strong());
+            ui.label(egui::RichText::new(if self.account_authenticated || self.library_authenticated {"Cuenta y copias"} else if self.account_stage==2 {if self.account_recovery {"Recupera tu acceso"} else {"Activa tu espacio"}} else if self.account_stage==1 {"Qué bien verte de nuevo"} else {"Tu estudio empieza aquí"}).size(27.0).strong());
             ui.add_space(12.0);
             crate::auth_ui::notice(ui,&self.cloud_status,self.cloud_rx.is_some() || self.activation_rx.is_some());
             ui.add_space(18.0);
@@ -394,7 +453,7 @@ impl AirCardApp {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(if self.cloud_synced {"Copias verificadas"} else {"Sincronización pendiente"}).strong().color(if self.cloud_synced {md3::SUCCESS} else {md3::PRIMARY}));
                 });
-                if studio_button(ui,if self.cloud_rx.is_some() {"Sincronizando…"} else {"Sincronizar ahora"},idle && self.account_authenticated,true) {self.start_cloud_sync(ctx.clone());}
+                if studio_button(ui,if self.cloud_rx.is_some() {"Sincronizando…"} else {"Sincronizar ahora"},idle && (self.account_authenticated || self.session_pending),true) {self.start_cloud_sync(ctx.clone());}
                 ui.add_space(16.0);
                 let mut revoke=None;
                 for (index,device) in self.account_devices.iter().enumerate() {
@@ -412,7 +471,7 @@ impl AirCardApp {
                     }
                 }
                 if studio_button(ui,"Cerrar sesión en este PC",idle,false) {
-                    if crate::cloud_sync::forget_session().is_ok() {self.cloud_session=None;self.account_authenticated=false;self.library_authenticated=false;self.cloud_synced=false;self.account_devices.clear();self.account_stage=1;self.cloud_status="Sesión cerrada. Tus originales y su propietario se conservan.".into();}
+                    if crate::cloud_sync::forget_session().is_ok() {self.cloud_session=None;self.account_authenticated=false;self.library_authenticated=false;self.session_pending=false;self.cloud_synced=false;self.account_devices.clear();self.account_stage=1;self.cloud_status="Sesión cerrada. Tus originales y su propietario se conservan.".into();}
                 }
                 return;
             }
@@ -480,12 +539,12 @@ impl AirCardApp {
                 let old_configured=self.cloud_configured; let (tx,rx)=channel(); self.cloud_rx=Some(rx); self.cloud_synced=false; self.storage_ready=false;
                 self.cloud_status="Verificando cuenta y originales…".into(); let ctx=ctx.clone();
                 thread::spawn(move || {
-                    let mut message=CloudMessage { authenticated:false,library_authenticated:false,storage_ready:true,configured:old_configured,synced:false,server:server.clone(),status:"Acceso rechazado: revisa compra, código, contraseña y límite de 3 equipos.".into(),session:None };
+                    let mut message=CloudMessage { authenticated:false,library_authenticated:false,session_pending:false,storage_ready:true,configured:old_configured,synced:false,server:server.clone(),status:"Acceso rechazado: revisa compra, código, contraseña y límite de 3 equipos.".into(),session:None };
                     let result=if register && recovery {crate::cloud_sync::recover_account(&server,&email,&code,&password,&confirmation,reset_devices,consent)} else if register {crate::cloud_sync::activate(&server,&email,&code,&password,&confirmation,consent)} else {crate::cloud_sync::login(&server,&email,&password,false,consent)};
                     match result {
                       Ok(session)=> {
                         message.configured=true;
-                        (message.authenticated,message.library_authenticated,message.synced,message.status)=cloud_sync_status(&session,true,&tx,&ctx);
+                        (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status)=cloud_sync_status(&session,true,&tx,&ctx);
                         message.session=Some(session);
                       }
                       Err(error)=>message.status=crate::cloud_sync::account_failure_message(&error).into(),
@@ -574,7 +633,7 @@ impl AirCardApp {
         let saved_cards = load_saved_cards();
         let offline_baseline_device = HashMap::new();
         let mut app = Self {
-            activation_requested:None,password_visible:false,activation_rx:None,account_stage:0,account_code:String::new(),account_confirmation:String::new(),account_authenticated:false,library_authenticated:false,
+            activation_requested:None,password_visible:false,activation_rx:None,account_stage:0,account_code:String::new(),account_confirmation:String::new(),account_authenticated:false,library_authenticated:false,session_pending:false,
             account_devices:Vec::new(),account_devices_rx:None,
             account_recovery:false,account_reset_devices:false,
             auth_preview:crate::storage::is_demo() && (std::env::args().any(|arg|arg=="--wallet-studio-auth-demo") || std::env::current_exe().ok().and_then(|path|path.file_stem().map(|stem|matches!(stem.to_string_lossy().to_ascii_uppercase().as_str(),"WSDEMOAU"|"WSDEMOA9"|"WSDEMOAF"))).unwrap_or(false)),
@@ -606,9 +665,9 @@ impl AirCardApp {
             gif_playback: None,
             source_path: None,
             library_designs: Vec::new(),
-            library_selected: None,
+            library_selection: crate::library_loader::Selection::default(),
             library_error: None,
-            library_textures:HashMap::new(),purchased_designs:Vec::new(),purchased_status:"Wallet Studio incluye 50 diseños. Actualiza tu biblioteca para consultarlos.".into(),purchased_rx:None,purchased_use_rx:None,library_owner:String::new(),library_preview_rx:None,
+            library_textures:HashMap::new(),purchased_designs:Vec::new(),purchased_status:"Wallet Studio incluye 50 diseños. Actualiza tu biblioteca para consultarlos.".into(),purchased_rx:None,purchased_use_rx:None,library_owner:String::new(),library_previews:crate::library_loader::Previews::default(),
             source_image: None,
             source_texture: None,
             crop_focus: [0.5, 0.5],
@@ -799,8 +858,9 @@ impl AirCardApp {
     fn refresh_design_library(&mut self) {
         match crate::design_library::library_dir().and_then(|root| {if !crate::storage::is_demo() {crate::design_library::migrate_legacy_saves(&root)?;}crate::design_library::discover(&root)}) {
             Ok(designs) => {
-                if !designs.iter().any(|design| Some(&design.path) == self.library_selected.as_ref()) {
-                    self.library_selected = designs.first().map(|design| design.path.clone());
+                if !designs.iter().any(|design| Some(&design.path) == self.library_selection.path.as_ref())
+                    && !self.purchased_designs.iter().any(|(_,path)| Some(path) == self.library_selection.path.as_ref()) {
+                    self.library_selection.select(None);
                 }
                 self.library_designs = designs;
                 self.library_textures.retain(|path,_|self.library_designs.iter().any(|design|&design.path==path) || self.purchased_designs.iter().any(|(_,paid)|paid==path));
@@ -808,7 +868,7 @@ impl AirCardApp {
             }
             Err(_) => {
                 self.library_designs.clear();
-                self.library_selected = None;
+                self.library_selection.select(None);
                 self.library_error = Some("No se pudo abrir tu biblioteca. Inicia sesión y revisa el almacenamiento personal.".into());
             }
         }
@@ -818,9 +878,8 @@ impl AirCardApp {
         if crate::storage::is_demo() || self.purchased_rx.is_some() {return;}
         let owner=self.library_owner.clone();
                 if let Some(session)=self.cloud_session.clone() {
-                    self.library_preview_rx=None;
-                    self.library_textures.retain(|path,_|self.library_designs.iter().any(|design|&design.path==path));
-                    self.purchased_designs.clear();self.purchased_status="Consultando compras y preparando miniaturas…".into();
+                    self.library_previews.reset();
+                    self.purchased_status="Consultando compras y preparando miniaturas…".into();
                     let (tx,rx)=std::sync::mpsc::channel();self.purchased_rx=Some(rx);let key=owner.clone();let ctx=ctx.clone();
                     std::thread::spawn(move|| {let result=(||->anyhow::Result<_> {let catalog=crate::design_library::purchased_catalog(&session)?;catalog.designs.into_iter().map(|item| {let path=crate::design_library::purchased_cache_path(&session,&item)?;Ok((item,path))}).collect()})();let _=tx.send((key,result.map_err(|_|"No se pudo actualizar el pack. Revisa conexión y compra; el servidor puede requerir configuración o actualización.".into())));ctx.request_repaint();});
                 }
@@ -828,24 +887,41 @@ impl AirCardApp {
     fn show_library_tab(&mut self,ctx:&egui::Context,ui:&mut egui::Ui) {
         let owner=if crate::storage::is_demo() {"demo".into()} else {self.cloud_session.as_ref().map(|s|format!("{}|{}",s.server,s.user_id)).unwrap_or_default()};
         if owner!=self.library_owner {
-            self.library_owner=owner.clone();self.library_designs.clear();self.library_textures.clear();self.purchased_designs.clear();self.purchased_status="Wallet Studio incluye 50 diseños. Actualiza tu biblioteca para consultarlos.".into();self.purchased_rx=None;self.purchased_use_rx=None;self.library_preview_rx=None;self.refresh_design_library();
+            self.library_owner=owner.clone();self.library_designs.clear();self.library_textures.clear();self.library_selection.reset();self.purchased_designs.clear();self.purchased_status="Wallet Studio incluye 50 diseños. Actualiza tu biblioteca para consultarlos.".into();self.purchased_rx=None;self.purchased_use_rx=None;self.library_previews.reset();self.refresh_design_library();
             self.start_purchased_refresh(ctx);
         }
-        if let Some(rx)=&self.purchased_rx {if let Ok((key,result))=rx.try_recv() {
-            self.purchased_rx=None;
-            if key==owner {match result {Ok(items)=> {self.purchased_status=if items.is_empty() {"Tu compra de Wallet Studio incluye 50 diseños. Si no aparecen, actualiza la biblioteca o revisa el estado de tu cuenta.".into()} else {"50 diseños incluidos con Wallet Studio. Se verifica tu acceso al usar un diseño.".into()};self.purchased_designs=items;},Err(error)=>{self.purchased_designs.clear();self.purchased_status=error;}}}
+        match self.purchased_rx.as_ref().map(|rx|rx.try_recv()) {
+            Some(Ok((key,result)))=>{
+                self.purchased_rx=None;
+                if key==owner {match result {Ok(items)=> {self.purchased_status=if items.is_empty() {"Tu compra de Wallet Studio incluye 50 diseños. Si no aparecen, actualiza la biblioteca o revisa el estado de tu cuenta.".into()} else {"50 diseños incluidos con Wallet Studio. Se verifica tu acceso al usar un diseño.".into()};self.purchased_designs=items;},Err(error)=>{self.purchased_status=error;}}}
+            },
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected))=>{self.purchased_rx=None;self.purchased_status="No se pudo actualizar la biblioteca. Vuelve a intentarlo.".into();},
+            _=>{},
+        }
+        // A removed paid item must never fall through to the local-image route.
+        if self.library_selection.path.as_ref().is_some_and(|selected|
+            !self.library_designs.iter().any(|item|&item.path==selected)
+            && !self.purchased_designs.iter().any(|(_,path)|path==selected)) {
+            self.library_selection.select(None);
+        }
+        if !self.is_busy {match self.purchased_use_rx.as_ref().map(|rx|rx.try_recv()) {
+            Some(Ok((key,request,result)))=>{
+                self.purchased_use_rx=None;
+                if key==owner && self.library_selection.finish(request) {match result {
+                    Ok(loaded)=>{self.install_library_design(ctx,loaded);self.library_error=None;self.current_tab=AppTab::Wallet;ui.scroll_to_cursor(Some(egui::Align::Min));ctx.request_repaint();return;},
+                    Err(error)=>self.library_error=Some(error),
+                }}
+            },
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected))=>{self.purchased_use_rx=None;self.library_selection.cancel();self.library_error=Some("La preparación se interrumpió. Tu selección se conserva; vuelve a intentarlo.".into());},
+            _=>{},
         }}
-        if let Some(rx)=&self.purchased_use_rx {if let Ok((key,result))=rx.try_recv() {
-            self.purchased_use_rx=None;
-            if key==owner {match result {Ok(path)=>{self.load_skin_path(ctx,path);self.current_tab=AppTab::Wallet;},Err(_)=>{self.purchased_status="No se pudo verificar la compra. Actualiza los diseños incluidos y vuelve a intentarlo.".into();self.purchased_designs.clear();}}}
-        }}
-        if let Some(rx)=&self.library_preview_rx {if let Ok((key,path,result))=rx.try_recv() {
-            self.library_preview_rx=None;
-            if key==owner {let color=result.unwrap_or_else(|_|egui::ColorImage::filled([1,1],md3::SURFACE_CONTAINER_HIGH));self.library_textures.insert(path,ctx.load_texture("library-preview",color,egui::TextureOptions::LINEAR));}
-        }}
+        for (path,color) in self.library_previews.poll() {
+            self.library_textures.insert(path,ctx.load_texture("library-preview",color,egui::TextureOptions::LINEAR));
+        }
         ui.heading("Biblioteca");ui.label("Tus diseños guardados y los diseños incluidos con Wallet Studio.");ui.add_space(12.0);
+        let idle=!self.is_busy && !self.library_selection.busy();
         ui.horizontal_wrapped(|ui| {
-            if studio_button(ui,"Importar imagen…",!self.is_busy,false) {
+            if studio_button(ui,"Importar imagen…",idle,false) {
                 if let Some(path)=rfd::FileDialog::new().add_filter("Imagen", &["png","jpg","jpeg","webp","gif"]).pick_file() {
                     let result=(||->anyhow::Result<PathBuf> {
                         let bytes=crate::design_library::read_image(&path)?;
@@ -856,47 +932,96 @@ impl AirCardApp {
                     match result {Ok(saved)=>{self.load_skin_path(ctx,saved);self.refresh_design_library();},Err(_)=>self.library_error=Some("No se pudo importar la imagen. Usa un archivo PNG, JPG, WebP o GIF válido de hasta 32 MB.".into())}
                 }
             }
-            if studio_button(ui,"Guardar diseño actual",!self.is_busy && self.skin.is_some(),false) {
+            if studio_button(ui,"Guardar diseño actual",idle && self.skin.is_some(),false) {
                 if let Some(skin)=&self.skin {match crate::design_library::library_dir().and_then(|root|crate::design_library::save_prepared_png(&root,&skin.png)) {Ok(_)=>self.refresh_design_library(),Err(_)=>self.library_error=Some("No se pudo guardar el diseño.".into())}}
             }
-            if studio_button(ui,"Actualizar diseños incluidos",self.purchased_rx.is_none() && self.cloud_session.is_some(),false) {
+            if studio_button(ui,"Actualizar diseños incluidos",idle && self.purchased_rx.is_none() && self.cloud_session.is_some(),false) {
                 self.start_purchased_refresh(ctx);
             }
         });
         if let Some(error)=&self.library_error {ui.colored_label(md3::ERROR,error);}
+        let selection_top=ui.cursor().min;
+        self.library_selection_panel(ctx,ui);
         ui.add_space(12.0);ui.label(egui::RichText::new("TUS DISEÑOS").strong());
         if self.library_designs.is_empty() {ui.label("Todavía no tienes diseños guardados. Importa una imagen o guarda tu diseño actual.");}
-        let own=self.library_designs.clone();self.library_grid(ctx,ui,own.into_iter().map(|d|(d.title,d.path,None)).collect());
+        let own=self.library_designs.clone();self.library_grid(ctx,ui,own.into_iter().map(|d|(d.title,d.path,None)).collect(),selection_top);
         ui.add_space(20.0);ui.label(egui::RichText::new("50 DISEÑOS INCLUIDOS").strong());ui.label(&self.purchased_status);
-        if self.purchased_rx.is_some() || self.purchased_use_rx.is_some() || self.library_preview_rx.is_some() {ui.spinner();ctx.request_repaint_after(std::time::Duration::from_millis(100));}
-        let paid=self.purchased_designs.iter().map(|(item,path)|(item.title.clone(),path.clone(),Some(item.clone()))).collect();self.library_grid(ctx,ui,paid);
+        if self.purchased_rx.is_some() || self.purchased_use_rx.is_some() || self.library_previews.busy() {ctx.request_repaint_after(std::time::Duration::from_millis(100));}
+        let paid=self.purchased_designs.iter().map(|(item,path)|(item.title.clone(),path.clone(),Some(item.clone()))).collect();self.library_grid(ctx,ui,paid,selection_top);
     }
-    fn library_grid(&mut self,ctx:&egui::Context,ui:&mut egui::Ui,items:Vec<(String,PathBuf,Option<crate::design_library::PurchasedDesign>)>) {
+    fn request_library_preview(&mut self,ctx:&egui::Context,path:&Path,paid:Option<crate::design_library::PurchasedDesign>) {
+        if self.library_textures.contains_key(path) {return;}
+        let path=path.to_owned();let read_path=path.clone();let session=self.cloud_session.clone();let demo=crate::storage::is_demo();
+        self.library_previews.request(path,ctx,move|| {
+            if !demo {if let Some(item)=paid {crate::design_library::cached_purchased(&session.context("Inicia sesión para ver el pack")?,&item)?;}}
+            let image=crate::design_library::read_image(&read_path).and_then(|bytes|crate::design_library::decode_still(&bytes))?;
+            let image=image.thumbnail(image.width().min(640),image.height().min(400)).to_rgba8();
+            Ok(egui::ColorImage::from_rgba_unmultiplied([image.width() as usize,image.height() as usize],image.as_raw()))
+        });
+    }
+    fn library_selection_panel(&mut self,ctx:&egui::Context,ui:&mut egui::Ui) {
+        let selected=self.library_selection.path.clone();
+        m3_card(ui,|ui| {
+            ui.label(egui::RichText::new("DISEÑO SELECCIONADO").strong());
+            if let Some(path)=selected {
+                let paid=self.purchased_designs.iter().find(|(_,item)|item==&path).map(|(item,_)|item.clone());
+                let title=paid.as_ref().map(|item|item.title.clone()).or_else(||self.library_designs.iter().find(|item|item.path==path).map(|item|item.title.clone())).unwrap_or_else(||"Tu diseño".into());
+                self.request_library_preview(ctx,&path,paid.clone());
+                let width=ui.available_width().min(480.0);let size=egui::vec2(width,width*0.625);
+                let (rect,_)=ui.allocate_exact_size(size,egui::Sense::hover());
+                paint_library_preview(ui,rect,&path,self.library_textures.get(&path),self.library_previews.failed(&path));
+                ui.label(title);
+                if self.library_previews.failed(&path) {
+                    ui.colored_label(md3::ERROR,if self.library_previews.exhausted(&path) {"No se pudo cargar la vista previa. Comprueba tu conexión y pulsa Reintentar imagen."} else {"No se pudo cargar la vista previa. Se reintentará automáticamente."});
+                    if studio_button(ui,"Reintentar imagen",!self.is_busy && !self.library_selection.busy(),false) {self.library_previews.retry(&path);}
+                    if !self.library_previews.exhausted(&path) {ctx.request_repaint_after(std::time::Duration::from_secs(1));}
+                }
+                if studio_button(ui,if self.library_selection.busy() {"Preparando diseño…"} else {"Usar diseño seleccionado"},!self.is_busy && !self.library_selection.busy(),true) {
+                    if let Some(request)=self.library_selection.begin() {
+                        self.library_error=None;
+                        let (tx,rx)=channel();self.purchased_use_rx=Some(rx);
+                        let session=self.cloud_session.clone();let key=self.library_owner.clone();let ctx=ctx.clone();let demo=crate::storage::is_demo();
+                        thread::spawn(move|| {
+                            let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||->anyhow::Result<_> {
+                                let path=if !demo {if let Some(item)=paid {crate::design_library::download_purchased(&session.context("Inicia sesión para usar el diseño")?,&item)?} else {path}} else {path};
+                                prepare_library_design(path)
+                            })).unwrap_or_else(|_|Err(anyhow::anyhow!("Preparación interrumpida"))).map_err(|_|"No se pudo preparar el diseño. Revisa la conexión, tu acceso y el archivo; tu selección y el diseño anterior se conservan. Vuelve a intentarlo.".into());
+                            let _=tx.send((key,request,result));ctx.request_repaint();
+                        });
+                    }
+                }
+            } else {
+                ui.label("Selecciona una imagen para verla ampliada y llevarla al editor de tarjetas.");
+                studio_button(ui,"Usar diseño seleccionado",false,false);
+            }
+        });
+    }
+    fn library_grid(&mut self,ctx:&egui::Context,ui:&mut egui::Ui,items:Vec<(String,PathBuf,Option<crate::design_library::PurchasedDesign>)>,selection_top:egui::Pos2) {
         let columns=((ui.available_width()/184.0).floor() as usize).max(1);
         for row in items.chunks(columns) {ui.horizontal(|ui| {for (title,path,paid) in row {
             ui.vertical(|ui| {ui.set_width(172.0);
-                // Only a visible, uncached preview schedules work; paint performs no IO or decoding.
-                if self.library_preview_rx.is_none() && !self.library_textures.contains_key(path) && ui.is_rect_visible(egui::Rect::from_min_size(ui.cursor().min,egui::vec2(172.0,150.0))) {
-                    let (tx,rx)=channel();self.library_preview_rx=Some(rx);
-                    let path=path.clone();let item=paid.clone();let session=self.cloud_session.clone();let key=self.library_owner.clone();let ctx=ctx.clone();
-                    thread::spawn(move|| {
-                        let result=(||->anyhow::Result<egui::ColorImage> {
-                            if !crate::storage::is_demo() {if let Some(item)=item {let session=session.context("Inicia sesión para ver el pack")?;crate::design_library::cached_purchased(&session,&item)?;}}
-                            let image=crate::design_library::read_image(&path).and_then(|bytes|crate::design_library::decode_still(&bytes))?.thumbnail(320,200).to_rgba8();
-                            Ok(egui::ColorImage::from_rgba_unmultiplied([image.width() as usize,image.height() as usize],image.as_raw()))
-                        })();
-                        let _=tx.send((key,path,result.map_err(|_|"preview_unavailable".into())));ctx.request_repaint();
-                    });
+                let visible=ui.is_rect_visible(egui::Rect::from_min_size(ui.cursor().min,egui::vec2(172.0,150.0)));
+                if visible {self.request_library_preview(ctx,path,paid.clone());}
+                let selected=self.library_selection.path.as_ref()==Some(path);
+                let (rect,response)=ui.allocate_exact_size(egui::vec2(168.0,105.0),egui::Sense::click());
+                paint_library_preview(ui,rect,path,self.library_textures.get(path),self.library_previews.failed(path));
+                if selected {ui.painter().rect_stroke(rect.expand(2.0),9.0,egui::Stroke::new(2.0,md3::PRIMARY),egui::StrokeKind::Outside);}
+                if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !self.is_busy && !self.library_selection.busy() {
+                    self.library_selection.select(Some(path.clone()));self.library_error=None;
+                    ui.scroll_to_rect(egui::Rect::from_min_size(selection_top,egui::vec2(1.0,1.0)),Some(egui::Align::Min));
                 }
-                if let Some(texture)=self.library_textures.get(path) {ui.add(egui::Image::new((texture.id(),egui::vec2(168.0,105.0))));}else{ui.allocate_space(egui::vec2(168.0,105.0));}
                 ui.add(egui::Label::new(title).truncate());
-                if studio_button(ui,"Usar diseño",!self.is_busy && self.purchased_use_rx.is_none(),false) {
-                    if crate::storage::is_demo() {self.load_skin_path(ctx,path.clone());self.current_tab=AppTab::Wallet;}
-                    else if let Some(item)=paid {if let Some(session)=self.cloud_session.clone() {let (tx,rx)=std::sync::mpsc::channel();self.purchased_use_rx=Some(rx);let item=item.clone();let ctx=ctx.clone();let key=self.library_owner.clone();std::thread::spawn(move|| {let result=crate::design_library::download_purchased(&session,&item).map_err(|_|"download_failed".into());let _=tx.send((key,result));ctx.request_repaint();});}}
-                    else {self.load_skin_path(ctx,path.clone());self.current_tab=AppTab::Wallet;}
-                }
+                if visible && self.library_previews.failed(path) && !self.library_previews.exhausted(path) {ctx.request_repaint_after(std::time::Duration::from_secs(1));}
             });
         }});ui.add_space(12.0);}
+    }
+
+    fn install_library_design(&mut self,ctx:&egui::Context,loaded:LoadedLibraryDesign) {
+        self.source_texture=Some(ctx.load_texture("card-skin-source-preview",loaded.preview,egui::TextureOptions::LINEAR));
+        self.status_msg="Diseño preparado. Selecciona tu tarjeta y revisa la vista previa antes de aplicarlo.".into();
+        self.source_path=Some(loaded.path);self.source_image=Some(loaded.source_image);self.gif_frames=loaded.frames;
+        self.gif_frame=0;self.gif_playback=None;self.crop_focus=[0.5,0.5];self.crop_zoom=1.0;
+        self.crop_edges=None;self.crop_draft=None;self.crop_dirty=false;self.skin=Some(loaded.skin);
     }
 
     fn load_skin_path(&mut self, ctx: &egui::Context, path: PathBuf) {
@@ -1076,6 +1201,8 @@ impl AirCardApp {
             return;
         }
 
+        if self.session_pending {self.status_msg="Sesión guardada: espera a que se verifique la conexión antes de buscar tarjetas.".into();return;}
+
         if !self.validate_selected_transport("Syslog scan") {
             return;
         }
@@ -1124,6 +1251,7 @@ impl AirCardApp {
     }
 
     fn flash_card(&mut self) {
+        if self.session_pending {self.status_msg="Sesión guardada: verifica la conexión desde Cuenta antes de aplicar un diseño.".into();return;}
         if crate::storage::is_demo() {return;}
         if self.gif_playback.is_some() || self.crop_draft.is_some() || self.crop_dirty { return; }
         if !self.validate_selected_transport("Card flash") {
@@ -1304,6 +1432,7 @@ impl AirCardApp {
     }
 
     fn capture_original_backup(&mut self) {
+        if self.session_pending {return;}
         if self.cloud_rx.is_some() { return; }
         if !self.storage_ready || crate::storage::is_demo() || !crate::cloud_sync::missing_original_capture_allowed(self.cloud_configured,self.cloud_synced) { return; }
         if self.is_busy || self.scanning_syslog || self.pending_recovery_blocks_selected()
@@ -1459,6 +1588,7 @@ impl AirCardApp {
     }
 
     fn flash_theme(&mut self) {
+        if self.session_pending {self.status_msg="Sesión guardada: verifica la conexión desde Cuenta antes de aplicar un teclado.".into();return;}
         if crate::storage::is_demo() {return;}
         if !self.validate_selected_transport("Theme flash") {
             return;
@@ -1575,7 +1705,7 @@ impl AirCardApp {
                         if self.library_designs.len() >= crate::design_library::MAX_DESIGNS { self.library_designs.pop(); }
                         self.library_designs.push(crate::design_library::Design { path: path.clone(), title: "Diseño guardado automáticamente".into() });
                     }
-                    self.library_selected = Some(path);
+                    self.library_selection.select(Some(path));
                     self.add_log("Exact prepared PNG saved and verified in the local design library before transfer.");
                 }
                 BackgroundTaskMessage::OriginalBackupDone { udid, hash, result } => {
@@ -1829,7 +1959,7 @@ impl eframe::App for AirCardApp {
             });
             return;
         }
-        if !crate::storage::is_demo() && !self.account_authenticated && self.library_authenticated {
+        if !crate::storage::is_demo() && !self.account_authenticated && self.library_authenticated && !self.session_pending {
             egui::CentralPanel::default().show(ctx,|ui| {
                 ui.label("Cuenta con pack de diseños · necesitas la licencia de Wallet Studio para utilizar el iPhone y sus copias.");
                 ui.horizontal(|ui| {if ui.button("Biblioteca").clicked() {self.current_tab=AppTab::Library;}if ui.button("Cuenta").clicked() {self.current_tab=AppTab::Account;}});
@@ -1844,6 +1974,15 @@ impl eframe::App for AirCardApp {
 
         if self.is_busy || self.scanning_syslog {
             ctx.request_repaint_after(std::time::Duration::from_millis(60));
+        }
+
+        if self.session_pending {
+            egui::TopBottomPanel::top("session-pending-banner").show(ctx,|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Sesión guardada · conexión pendiente. Puedes preparar diseños; el iPhone espera la verificación.");
+                    if studio_button(ui,"Comprobar conexión",self.cloud_rx.is_none() && !self.is_busy,false) {self.start_cloud_sync(ctx.clone());}
+                });
+            });
         }
 
         // Top bar
@@ -1891,7 +2030,7 @@ impl eframe::App for AirCardApp {
                         }
 
                         ui.add_space(6.0);
-                        let controls_enabled = !self.is_busy && !self.scanning_syslog;
+                        let controls_enabled = !self.is_busy && !self.scanning_syslog && !self.session_pending;
                         let mut next_mode = self.connection_mode;
                         ui.add_enabled_ui(controls_enabled, |ui| {
                             egui::ComboBox::from_id_salt("connection_mode_combo")
@@ -2054,7 +2193,7 @@ impl eframe::App for AirCardApp {
                     let selected=self.current_tab==tab;
                     let button=egui::Button::new(egui::RichText::new(label).strong().color(if selected {md3::PRIMARY} else {md3::ON_SURFACE_VARIANT}))
                         .fill(if selected {md3::PRIMARY_CONTAINER} else {egui::Color32::TRANSPARENT}).corner_radius(10);
-                    if ui.add_sized([ui.available_width(),44.0],button).clicked() {if tab==AppTab::Library {self.refresh_design_library();self.library_textures.clear();} self.current_tab=tab;}
+                    if ui.add_sized([ui.available_width(),44.0],button).clicked() {if tab==AppTab::Library {self.refresh_design_library();} self.current_tab=tab;}
                 }
                 ui.add_space(24.0);ui.separator();ui.add_space(12.0);
                 ui.label(egui::RichText::new("Tus originales").strong().size(12.0));
@@ -2309,7 +2448,7 @@ impl AirCardApp {
         let connected=self.selected_transport_available() && version_ok && !self.pending_recovery_blocks_selected() && self.recovery_status_error.is_none() && !crate::storage::is_demo();
         let phase=self.selected_udid.as_ref().map_or(Err(()),|udid|self.bank_intent_phase(udid,&selected_hash));let plan=cached_bank_apply_plan(&phase);
         let idle=!self.is_busy && !self.scanning_syslog && self.cloud_rx.is_none();
-        let can_apply=connected && idle && original && crate::flasher::BANK_APPLY_READY && self.skin.is_some() && self.gif_playback.is_none() && self.crop_draft.is_none() && !self.crop_dirty && plan!=crate::flasher::BankApplyPlan::Block;
+        let can_apply=!self.session_pending && connected && idle && original && crate::flasher::BANK_APPLY_READY && self.skin.is_some() && self.gif_playback.is_none() && self.crop_draft.is_none() && !self.crop_dirty && plan!=crate::flasher::BankApplyPlan::Block;
         let can_restore=connected && idle && self.snapshot(&selected_hash).is_some_and(|snapshot|snapshot.restore);
         ui.columns(3,|buttons| {
             if studio_button(&mut buttons[0],"Elegir imagen…",idle,false) {self.select_skin(ctx);}
@@ -2831,6 +2970,18 @@ impl AirCardApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn selected_library_design_is_prepared_before_editor_installation_and_invalid_file_fails() {
+        let root=std::env::temp_dir().join(format!("ws-library-use-{}",crate::flasher::generate_token()));std::fs::create_dir_all(&root).unwrap();
+        let path=root.join("selected.png");let mut bytes=Vec::new();
+        DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(320,200,image::Rgba([14,90,180,255])))
+            .write_to(&mut Cursor::new(&mut bytes),image::ImageFormat::Png).unwrap();std::fs::write(&path,&bytes).unwrap();
+        let prepared=prepare_library_design(path.clone()).unwrap();assert_eq!(prepared.path,path);
+        assert_eq!((prepared.source_image.width(),prepared.source_image.height()),(320,200));
+        assert_eq!(prepared.preview.size,[320,200]);assert!(prepared.frames.is_empty());
+        let image=crate::design_library::decode_still(&prepared.skin.png).unwrap();assert_eq!((image.width(),image.height()),(1536,969));
+        std::fs::write(&path,b"broken download").unwrap();assert!(prepare_library_design(path).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn branded_login_palette_overrides_a_restored_light_theme() {
         let ctx=egui::Context::default();

@@ -307,7 +307,10 @@ where L: FnMut(&str) {
 
 pub fn load_session()->Result<Option<Session>> {
     if crate::storage::is_demo() { return Ok(None); }
-    let path=crate::storage::root().join("cloud-session.dpapi"); crate::storage::safe_chain(&path)?; if !path.exists() { return Ok(None); }
+    load_session_at(&crate::storage::root())
+}
+fn load_session_at(root:&Path)->Result<Option<Session>> {
+    let path=root.join("cloud-session.dpapi"); crate::storage::safe_chain(&path)?; if !path.exists() { return Ok(None); }
     let meta=fs::symlink_metadata(&path)?; anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=65536,"saved session unsafe");
     let session:Session=serde_json::from_slice(&protect(&fs::read(path)?,true)?)?;
     anyhow::ensure!(valid_server(&session.server) && !session.user_id.is_empty() && session.user_id.len()<=64 &&
@@ -380,6 +383,15 @@ fn session_rejected(error:&anyhow::Error)->bool {
 pub fn authenticated_after_sync_failure(error:&anyhow::Error,previously_authenticated:bool)->bool {
     !session_rejected(error) && (previously_authenticated || !matches!(error.downcast_ref::<SyncFailure>(),Some(SyncFailure::Session)))
 }
+/// A readable DPAPI session can retain the library/account screen while offline.
+/// This is not licence verification: pending sessions cannot start new phone work.
+pub fn retained_session_after_failure(error:&anyhow::Error)->bool { !session_rejected(error) }
+pub fn session_connection_failure_message(error:&anyhow::Error)->String {
+    if session_rejected(error) {return sync_failure_message(error);}
+    let mut message="Sesión guardada en este equipo. Conexión pendiente; se reintentará automáticamente sin pedir tu contraseña. El iPhone requiere verificar el acceso en línea.".to_owned();
+    if let Some(status)=error.downcast_ref::<crate::auto_update::HttpStatus>() {message.push_str(&format!(" (HTTP {})",status.0));}
+    message
+}
 pub fn require_access()->Result<()> {
     anyhow::ensure!(!crate::storage::is_demo(),"La demostración no permite operaciones del teléfono");
     let session=load_session()?.context("Inicia sesión con el correo de compra antes de continuar")?;validate_session(&session)
@@ -400,8 +412,20 @@ pub fn revoke_computer(session:&Session,id:&str)->Result<()> {
     crate::auto_update::http_request("POST",&format!("{}/v1/auth/devices/revoke",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("Content-Type".into(),"application/json".into())],&body,65536)?;Ok(())
 }
 pub fn forget_session()->Result<()> {
+    let _lease=crate::storage::operation_lease_for_import(&crate::storage::root())?;
     let path=crate::storage::root().join("cloud-session.dpapi");crate::storage::safe_chain(&path)?;
     if path.exists() {fs::remove_file(path)?;}Ok(())
+}
+pub fn forget_rejected_session(rejected:&Session)->Result<()> {
+    forget_rejected_session_at(&crate::storage::root(),rejected)
+}
+fn forget_rejected_session_at(root:&Path,rejected:&Session)->Result<()> {
+    let _lease=crate::storage::operation_lease_for_import(root)?;
+    // Do not erase a newer login saved by another running app instance.
+    if load_session_at(root)?.is_some_and(|current| current.server==rejected.server && current.user_id==rejected.user_id && current.access_token==rejected.access_token) {
+        fs::remove_file(root.join("cloud-session.dpapi"))?;
+    }
+    Ok(())
 }
 fn computer_id()->Result<String> {
     let root=crate::storage::root();crate::storage::safe_chain(&root)?;fs::create_dir_all(&root)?;
@@ -432,6 +456,7 @@ fn finish_login(server:&str,body:serde_json::Value,operation:&str,initial_link_c
     anyhow::ensure!(!reply.access_token.is_empty() && reply.access_token.len()<=8192 && reply.access_token.bytes().all(|b|(0x21..=0x7e).contains(&b)) &&
         !reply.user_id.is_empty() && reply.user_id.len()<=64 && reply.user_id.bytes().all(|b| b.is_ascii_alphanumeric() || b==b'-'),"invalid account response");
     let session=Session { server,access_token:reply.access_token,user_id:reply.user_id };
+    let _lease=crate::storage::operation_lease_for_import(&root)?;
     bind_owner_at(&root,&session,initial_link_consent)?;
     let encrypted=protect(&serde_json::to_vec(&session)?,false)?;
     let path=root.join("cloud-session.dpapi"); crate::storage::write_mutable(&path,&encrypted)?; Ok(session)
@@ -548,10 +573,25 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn restored_device_session_survives_transient_startup_and_rejection_only_removes_exact_token() {
+        let root=fixture_root();std::fs::create_dir_all(&root).unwrap();
+        let current=Session {server:"https://example.test".into(),access_token:"synthetic-current-token".into(),user_id:"account-a".into()};
+        let path=root.join("cloud-session.dpapi");let protected=protect(&serde_json::to_vec(&current).unwrap(),false).unwrap();
+        crate::storage::write_new(&path,&protected).unwrap();
+        let loaded=load_session_at(&root).unwrap().unwrap();assert_eq!(loaded.access_token,current.access_token);
+        let offline=anyhow::anyhow!("timeout").context(SyncFailure::Session);
+        assert!(retained_session_after_failure(&offline));assert!(!authenticated_after_sync_failure(&offline,false));
+        assert_eq!(std::fs::read(&path).unwrap(),protected);
+        let obsolete=Session {access_token:"synthetic-obsolete-token".into(),..current.clone()};
+        forget_rejected_session_at(&root,&obsolete).unwrap();assert_eq!(std::fs::read(&path).unwrap(),protected);
+        forget_rejected_session_at(&root,&current).unwrap();assert!(load_session_at(&root).unwrap().is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn transient_sync_failures_do_not_log_out_a_verified_account() {
         let offline=anyhow::anyhow!("synthetic private transport detail").context(SyncFailure::Session);
         assert!(authenticated_after_sync_failure(&offline,true));
         assert!(!authenticated_after_sync_failure(&offline,false));
+        assert!(retained_session_after_failure(&offline));
         assert!(!sync_failure_message(&offline).contains("private transport"));
         let unavailable=anyhow::Error::new(crate::auto_update::HttpStatus(503)).context(SyncFailure::Session);
         assert!(authenticated_after_sync_failure(&unavailable,true));
@@ -560,11 +600,13 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
             for stage in [SyncFailure::Session,SyncFailure::Inventory,SyncFailure::Upload] {
                 let rejected=anyhow::Error::new(crate::auto_update::HttpStatus(code)).context(stage);
                 assert!(!authenticated_after_sync_failure(&rejected,true));
+                assert!(!retained_session_after_failure(&rejected));
                 assert!(sync_failure_message(&rejected).contains("servidor rechazó"));
             }
         }
         let wrong_identity=anyhow::Error::new(SessionRejected).context(SyncFailure::Session);
         assert!(!authenticated_after_sync_failure(&wrong_identity,true));
+        assert!(!retained_session_after_failure(&wrong_identity));
         let inventory=anyhow::anyhow!("synthetic inventory failure").context(SyncFailure::Inventory);
         assert!(authenticated_after_sync_failure(&inventory,false),"session check already passed before inventory request");
     }
