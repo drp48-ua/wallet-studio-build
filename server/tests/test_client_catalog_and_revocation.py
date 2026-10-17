@@ -1,6 +1,6 @@
-"""Verification of all 50 commercial designs and refund revocation workflow.
+"""Verification of shared catalog metadata, legacy 50 designs and revocation.
 Tests verify:
-1. Catalog integrity for all 50 designs in design-catalog.json (ids, hashes, dimensions, sizes).
+1. Catalog integrity for all current designs in design-catalog.json (ids, hashes, dimensions, sizes).
 2. End-to-end client catalog retrieval and individual download of all 50 designs under authenticated session.
 3. Strict revocation on Shopify refunds/create webhook (entitlement flipped to false, downloads return 403).
 4. Unauthenticated access denial (HTTP 401).
@@ -92,14 +92,14 @@ class ClientCatalogAndRevocationTests(unittest.TestCase):
             email, code, 'secure-pass-2026', 'secure-pass-2026', '1' * 64, '127.0.0.1'
         )
 
-    def test_catalog_manifest_contains_50_valid_designs(self):
+    def test_catalog_manifest_contains_56_valid_designs(self):
         catalog_path = pathlib.Path(__file__).resolve().parents[1] / 'design-catalog.json'
         self.assertTrue(catalog_path.is_file(), 'design-catalog.json must exist in server directory')
         catalog = load_catalog(catalog_path)
         self.assertEqual(catalog.get('schema'), 1)
         self.assertEqual(catalog.get('pack_id'), 'studio-50-v1')
         designs = catalog.get('designs', [])
-        self.assertEqual(len(designs), 50, 'Catalog must contain exactly 50 designs')
+        self.assertEqual(len(designs), 56, 'Current shared catalog must contain 56 designs')
 
         ids = set()
         hashes = set()
@@ -120,9 +120,9 @@ class ClientCatalogAndRevocationTests(unittest.TestCase):
             hashes.add(item['sha256'])
             filenames.add(item['filename'])
 
-        self.assertEqual(len(ids), 50, 'All 50 IDs must be distinct')
-        self.assertEqual(len(hashes), 50, 'All 50 SHA-256 hashes must be distinct')
-        self.assertEqual(len(filenames), 50, 'All 50 filenames must be distinct')
+        self.assertEqual(len(ids), 56, 'All IDs must be distinct')
+        self.assertEqual(len(hashes), 56, 'All SHA-256 hashes must be distinct')
+        self.assertEqual(len(filenames), 56, 'All filenames must be distinct')
 
     def test_client_can_fetch_all_50_designs_and_refund_revokes_access(self):
         # Build 50 simulated unique design images

@@ -336,7 +336,7 @@ impl AirCardApp {
             let root=crate::storage::root().join("demo-library").join("pack");
             if std::fs::create_dir_all(&root).is_ok() {
                 if let Ok(designs)=crate::design_library::discover(&PathBuf::from(source)) {
-                    for (index,design) in designs.into_iter().take(50).enumerate() {
+                    for (index,design) in designs.into_iter().take(crate::design_library::MAX_INCLUDED_DESIGNS).enumerate() {
                         if let Ok(bytes)=crate::design_library::read_image(&design.path) {
                             if let Ok(hash)=crate::bank_backup::sha256(&bytes) {
                                 let item=crate::design_library::PurchasedDesign {id:format!("ws-{:03}",index+1),title:design.title,filename:format!("ws-{:03}.png",index+1),sha256:hash,bytes:bytes.len(),width:320,height:200};
@@ -667,7 +667,7 @@ impl AirCardApp {
             library_designs: Vec::new(),
             library_selection: crate::library_loader::Selection::default(),
             library_error: None,
-            library_textures:HashMap::new(),purchased_designs:Vec::new(),purchased_status:"Wallet Studio incluye 50 diseños. Actualiza tu biblioteca para consultarlos.".into(),purchased_rx:None,purchased_use_rx:None,library_owner:String::new(),library_previews:crate::library_loader::Previews::default(),
+            library_textures:HashMap::new(),purchased_designs:Vec::new(),purchased_status:"Wallet Studio incluye una biblioteca de diseños. Actualízala para consultarlos.".into(),purchased_rx:None,purchased_use_rx:None,library_owner:String::new(),library_previews:crate::library_loader::Previews::default(),
             source_image: None,
             source_texture: None,
             crop_focus: [0.5, 0.5],
@@ -887,13 +887,13 @@ impl AirCardApp {
     fn show_library_tab(&mut self,ctx:&egui::Context,ui:&mut egui::Ui) {
         let owner=if crate::storage::is_demo() {"demo".into()} else {self.cloud_session.as_ref().map(|s|format!("{}|{}",s.server,s.user_id)).unwrap_or_default()};
         if owner!=self.library_owner {
-            self.library_owner=owner.clone();self.library_designs.clear();self.library_textures.clear();self.library_selection.reset();self.purchased_designs.clear();self.purchased_status="Wallet Studio incluye 50 diseños. Actualiza tu biblioteca para consultarlos.".into();self.purchased_rx=None;self.purchased_use_rx=None;self.library_previews.reset();self.refresh_design_library();
+            self.library_owner=owner.clone();self.library_designs.clear();self.library_textures.clear();self.library_selection.reset();self.purchased_designs.clear();self.purchased_status="Wallet Studio incluye una biblioteca de diseños. Actualízala para consultarlos.".into();self.purchased_rx=None;self.purchased_use_rx=None;self.library_previews.reset();self.refresh_design_library();
             self.start_purchased_refresh(ctx);
         }
         match self.purchased_rx.as_ref().map(|rx|rx.try_recv()) {
             Some(Ok((key,result)))=>{
                 self.purchased_rx=None;
-                if key==owner {match result {Ok(items)=> {self.purchased_status=if items.is_empty() {"Tu compra de Wallet Studio incluye 50 diseños. Si no aparecen, actualiza la biblioteca o revisa el estado de tu cuenta.".into()} else {"50 diseños incluidos con Wallet Studio. Se verifica tu acceso al usar un diseño.".into()};self.purchased_designs=items;},Err(error)=>{self.purchased_status=error;}}}
+                if key==owner {match result {Ok(items)=> {self.purchased_status=if items.is_empty() {"Tu compra de Wallet Studio incluye diseños. Si no aparecen, actualiza la biblioteca o revisa el estado de tu cuenta.".into()} else {format!("{} diseños incluidos con Wallet Studio. Se verifica tu acceso al usar un diseño.",items.len())};self.purchased_designs=items;},Err(error)=>{self.purchased_status=error;}}}
             },
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected))=>{self.purchased_rx=None;self.purchased_status="No se pudo actualizar la biblioteca. Vuelve a intentarlo.".into();},
             _=>{},
@@ -945,7 +945,7 @@ impl AirCardApp {
         ui.add_space(12.0);ui.label(egui::RichText::new("TUS DISEÑOS").strong());
         if self.library_designs.is_empty() {ui.label("Todavía no tienes diseños guardados. Importa una imagen o guarda tu diseño actual.");}
         let own=self.library_designs.clone();self.library_grid(ctx,ui,own.into_iter().map(|d|(d.title,d.path,None)).collect(),selection_top);
-        ui.add_space(20.0);ui.label(egui::RichText::new("50 DISEÑOS INCLUIDOS").strong());ui.label(&self.purchased_status);
+        ui.add_space(20.0);ui.label(egui::RichText::new(if self.purchased_designs.is_empty() {"DISEÑOS INCLUIDOS".into()} else {format!("{} DISEÑOS INCLUIDOS",self.purchased_designs.len())}).strong());ui.label(&self.purchased_status);
         if self.purchased_rx.is_some() || self.purchased_use_rx.is_some() || self.library_previews.busy() {ctx.request_repaint_after(std::time::Duration::from_millis(100));}
         let paid=self.purchased_designs.iter().map(|(item,path)|(item.title.clone(),path.clone(),Some(item.clone()))).collect();self.library_grid(ctx,ui,paid,selection_top);
     }

@@ -2,7 +2,7 @@
 import argparse,contextlib,hashlib,hmac,json,os,pathlib,re,secrets,sqlite3,threading,time,uuid,zipfile,io,getpass,sys
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from accounts import Accounts,AccountError
-from designs import DesignCatalog
+from designs import DesignCatalog,catalog_for_client,EXPANDED_CATALOG_HEADER
 from remote import PgDatabase,SupabaseBlobs,RemoteError,MAX_REMOTE_BUNDLE,StartupError,startup_stage
 
 HEX=re.compile(r'^[0-9a-f]{64}$')
@@ -182,7 +182,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.error(403,'design_pack_required')
             try:
                 catalog=self.server.store.design_catalog.catalog()
-                if self.path=='/v1/designs':return self.reply(200,dict(catalog,entitled=True))
+                if self.path=='/v1/designs':return self.reply(200,catalog_for_client(catalog,self.headers.get(EXPANDED_CATALOG_HEADER)))
                 ident=self.path.removeprefix('/v1/designs/')
                 item=next((item for item in catalog['designs'] if item['id']==ident),None)
                 if not item:return self.error(404,'not_found')
