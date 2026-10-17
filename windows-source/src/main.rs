@@ -4,6 +4,7 @@ mod afc;
 mod animated_input;
 mod animated_artwork;
 mod design_library;
+mod library_loader;
 mod crop_editor;
 mod update_info;
 mod auto_update;
