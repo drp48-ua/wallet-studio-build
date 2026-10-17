@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "pack_id": "studio-50-v1",
-  "title": "50 diseños",
+  "title": "56 diseños",
   "designs": [
     {
       "id": "ws-001",
@@ -450,6 +450,60 @@
       "filename": "ws-050.png",
       "sha256": "edc1aea9395b7546e9e80b3d0eef7bb6e2e44bf2b9c47014dccc3448505a2a01",
       "bytes": 183949,
+      "width": 320,
+      "height": 200
+    },
+    {
+      "id": "ws-051",
+      "title": "Sakura Fuji plata",
+      "filename": "ws-051.png",
+      "sha256": "f68168668d26f9de76c2466d5d3b4922f68b77b71db6c5fb4996dbb01bfe69b6",
+      "bytes": 120945,
+      "width": 320,
+      "height": 200
+    },
+    {
+      "id": "ws-052",
+      "title": "Telaraña roja y oro",
+      "filename": "ws-052.png",
+      "sha256": "ce7913524917b59b0833c35fc2841af28b9b9472fefd556ce53015852b1cf86c",
+      "bytes": 174038,
+      "width": 320,
+      "height": 200
+    },
+    {
+      "id": "ws-053",
+      "title": "Mármol blanco y oro",
+      "filename": "ws-053.png",
+      "sha256": "bab3d4e5c7a71eb1b575523c9ef0e6b04509fc15d59df209c15f7285c21f1b6c",
+      "bytes": 114465,
+      "width": 320,
+      "height": 200
+    },
+    {
+      "id": "ws-054",
+      "title": "Topografía esmeralda",
+      "filename": "ws-054.png",
+      "sha256": "2f4923a181983b84268846da3017743a9c8d0aa48be72207c70f68bbd4b72f40",
+      "bytes": 139774,
+      "width": 320,
+      "height": 200
+    },
+    {
+      "id": "ws-055",
+      "title": "La gran ola japonesa",
+      "filename": "ws-055.png",
+      "sha256": "603553b43bb2c68df54598a4d7e0de9adba78d4e9b61e2768d81b1f82fe922dd",
+      "bytes": 163058,
+      "width": 320,
+      "height": 200
+    },
+    {
+      "id": "ws-056",
+      "title": "Clásica negra y oro",
+      "filename": "ws-056.png",
+      "sha256": "2b9dc4460f2986aa1efa2c38b4eebb49e9765ab28424091739190a1092504c63",
+      "bytes": 94230,
       "width": 320,
       "height": 200
     }

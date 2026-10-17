@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 pub const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PIXELS: u64 = 16 * 1024 * 1024;
 pub const MAX_DESIGNS: usize = 100;
+pub const MAX_INCLUDED_DESIGNS: usize = 100;
 
 #[derive(Clone, Debug)]
 pub struct Design {
@@ -243,10 +244,14 @@ pub fn account_dir(session:&crate::cloud_sync::Session)->Result<PathBuf> {
 }
 pub fn purchased_catalog(session:&crate::cloud_sync::Session)->Result<PurchasedCatalog> {
     anyhow::ensure!(crate::cloud_sync::valid_server(&session.server),"Servicio no válido");
-    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],65536)
+    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("X-Wallet-Studio-Catalog".into(),"expanded-v1".into())],&[],65536)
         .context("No se pudo actualizar el pack: revisa tu conexión o actualiza el servidor")?;
+    parse_purchased_catalog(&bytes)
+}
+fn parse_purchased_catalog(bytes:&[u8])->Result<PurchasedCatalog> {
+    anyhow::ensure!(bytes.len()<=65536,"Catálogo demasiado grande");
     let catalog:PurchasedCatalog=serde_json::from_slice(&bytes)?;
-    anyhow::ensure!(catalog.schema==1 && catalog.pack_id=="studio-50-v1" && ((!catalog.entitled && catalog.designs.is_empty()) || (catalog.entitled && catalog.designs.len()==50)),"Catálogo no compatible");
+    anyhow::ensure!(catalog.schema==1 && catalog.pack_id=="studio-50-v1" && ((!catalog.entitled && catalog.designs.is_empty()) || (catalog.entitled && (50..=MAX_INCLUDED_DESIGNS).contains(&catalog.designs.len()))),"Catálogo no compatible");
     for (index,item) in catalog.designs.iter().enumerate() {
         anyhow::ensure!(item.id==format!("ws-{:03}",index+1) && item.filename==format!("{}.png",item.id) && item.sha256.len()==64 && item.sha256.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) && item.bytes>0 && item.bytes<=1024*1024 && (item.width,item.height)==(320,200) && !item.title.is_empty() && item.title.len()<=320 && !item.title.chars().any(char::is_control),"Metadatos de diseño no válidos");
     } Ok(catalog)
@@ -292,6 +297,26 @@ pub fn cached_purchased(session:&crate::cloud_sync::Session,item:&PurchasedDesig
 #[cfg(test)]
 mod paid_tests {
     use super::*;
+    #[test] fn expanded_catalog_accepts_legacy_and_new_counts_without_truncation_and_rejects_invalid_sequences() {
+        let mut value:serde_json::Value=serde_json::from_slice(include_bytes!("../../server/design-catalog.json")).unwrap();
+        value["entitled"]=serde_json::json!(true);
+        let expanded=parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(expanded.designs.len(),56);assert_eq!(expanded.designs[50].id,"ws-051");assert_eq!(expanded.designs[55].id,"ws-056");
+        let originals=value["designs"].as_array().unwrap().clone();
+        for count in [50,56,MAX_INCLUDED_DESIGNS] {
+            let items:Vec<_>=(1..=count).map(|index| {let mut item=originals[0].clone();item["id"]=serde_json::json!(format!("ws-{index:03}"));item["filename"]=serde_json::json!(format!("ws-{index:03}.png"));item}).collect();
+            value["designs"]=serde_json::json!(items);
+            assert_eq!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).unwrap().designs.len(),count);
+        }
+        for count in [49,MAX_INCLUDED_DESIGNS+1] {
+            let items:Vec<_>=(1..=count).map(|index| {let mut item=originals[0].clone();item["id"]=serde_json::json!(format!("ws-{index:03}"));item["filename"]=serde_json::json!(format!("ws-{index:03}.png"));item}).collect();
+            value["designs"]=serde_json::json!(items);assert!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        value["designs"]=serde_json::json!(originals);value["designs"][51]=value["designs"][50].clone();
+        assert!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["entitled"]=serde_json::json!(false);value["designs"]=serde_json::json!([]);
+        assert!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).unwrap().designs.is_empty());
+    }
     fn fixture()->(PurchasedDesign,Vec<u8>) {
         let mut bytes=Vec::new();image::DynamicImage::new_rgb8(320,200).write_to(&mut Cursor::new(&mut bytes),image::ImageFormat::Png).unwrap();
         (PurchasedDesign {id:"ws-001".into(),title:"Fixture".into(),filename:"ws-001.png".into(),sha256:crate::bank_backup::sha256(&bytes).unwrap(),bytes:bytes.len(),width:320,height:200},bytes)

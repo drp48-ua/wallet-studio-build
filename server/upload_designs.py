@@ -3,11 +3,17 @@ import argparse,json,os,pathlib,sys
 from designs import load_catalog,verify_asset,PACK,MAX_ASSET
 from remote import SupabaseBlobs,RemoteError
 
-def provision(config,source,catalog_path,request=None):
+def provision(config,source,catalog_path,request=None,only_ids=None):
     catalog=load_catalog(catalog_path);root=pathlib.Path(source)
+    items=catalog['designs']
+    if only_ids is not None:
+        if not isinstance(only_ids,(list,tuple)) or not only_ids or any(not isinstance(ident,str) for ident in only_ids) or len(set(only_ids))!=len(only_ids):raise ValueError('invalid_design_selection')
+        selected=set(only_ids)
+        if not selected.issubset({item['id'] for item in items}):raise ValueError('unknown_design_selection')
+        items=[item for item in items if item['id'] in selected]
     if root.is_symlink() or not root.is_dir():raise ValueError('invalid_asset_directory')
     root=root.resolve();assets=[]
-    for item in catalog['designs']:
+    for item in items:
         path=root/item['filename']
         if path.is_symlink() or not path.is_file() or path.resolve().parent!=root or path.stat().st_size>MAX_ASSET:raise ValueError('invalid_asset_file')
         data=path.read_bytes();verify_asset(item,data);assets.append((item,data))
@@ -30,9 +36,9 @@ def provision(config,source,catalog_path,request=None):
     return len(assets)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--source',required=True);parser.add_argument('--catalog',default=str(pathlib.Path(__file__).with_name('design-catalog.json')));args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--source',required=True);parser.add_argument('--catalog',default=str(pathlib.Path(__file__).with_name('design-catalog.json')));parser.add_argument('--only',nargs='+',metavar='DESIGN_ID',help='Validate and provision only these exact catalog IDs');args=parser.parse_args()
     try:
-        count=provision(os.environ,args.source,args.catalog)
+        count=provision(os.environ,args.source,args.catalog,only_ids=args.only)
     except Exception:
         print('Private catalog provisioning failed; no credentials or asset paths logged.',file=sys.stderr);sys.exit(1)
     print(f'Private catalog verified: {count} designs.')
