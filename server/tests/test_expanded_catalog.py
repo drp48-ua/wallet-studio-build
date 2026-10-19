@@ -8,7 +8,8 @@ import test_designs as fixtures
 from test_designs import fixture_catalog,png
 from upload_designs import provision
 
-CATALOG=pathlib.Path(__file__).resolve().parents[1]/'design-catalog.json'
+CATALOG=pathlib.Path(__file__).resolve().parents[1]/'design-catalog.legacy.json'
+NATIVE_CATALOG=pathlib.Path(__file__).resolve().parents[1]/'design-catalog.json'
 EXTRAS=[
  ('sakura-fuji-plata.png','Sakura Fuji plata'),
  ('telarana-roja-oro.png','Telaraña roja y oro'),
@@ -28,7 +29,6 @@ class ExpandedCatalogTests(unittest.TestCase):
 
  def test_existing_fifty_entries_are_unchanged_and_six_have_immutable_new_ids(self):
   catalog=load_catalog(CATALOG)
-  catalog['designs']=[{k:v for k,v in item.items() if k!='native'} for item in catalog['designs']]
   canonical=json.dumps(catalog['designs'][:50],sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
   self.assertEqual(hashlib.sha256(canonical).hexdigest(),'2faf24ec90345b325a6c0a32d471172826b6484bdcd61f57ec21d31d0fa1ed40')
   self.assertEqual(len(catalog['designs']),56)
@@ -39,6 +39,9 @@ class ExpandedCatalogTests(unittest.TestCase):
   self.assertEqual(expanded['designs'],catalog['designs']);self.assertEqual(expanded['title'],'56 diseños')
   self.assertEqual(catalog_for_client(catalog,'unknown-future-value')['designs'],legacy['designs'])
   self.assertEqual(len(catalog['designs']),56,'Legacy response must not truncate shared state')
+  native=load_catalog(NATIVE_CATALOG)
+  self.assertEqual(len(native['designs']),56)
+  self.assertTrue(all(item['width']==1536 and item['height']==969 for item in native['designs']))
 
  def test_expanded_catalog_validation_rejects_missing_duplicate_reordered_and_excessive_entries(self):
   original=load_catalog(CATALOG)
@@ -61,7 +64,7 @@ class ExpandedCatalogTests(unittest.TestCase):
   self.configure();session=self.activate_order();token=session['access_token'];user=session['user_id']
   data=png();catalog=fixture_catalog(data);template=catalog['designs'][0]
   catalog['designs']=[dict(template,id=f'ws-{i:03}',filename=f'ws-{i:03}.png') for i in range(1,57)]
-  self.store.design_catalog.catalog=lambda:catalog;self.store.design_catalog.read=lambda item:data
+  self.store.design_catalog.catalog=lambda capability=None:catalog;self.store.design_catalog.read=lambda item,capability=None:data
   server=Server(('127.0.0.1',0),self.store);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
   def request(path,token=token,capability=None):
    headers={} if token is None else {'Authorization':'Bearer '+token}

@@ -2,7 +2,7 @@
 import argparse,contextlib,hashlib,hmac,json,os,pathlib,re,secrets,sqlite3,threading,time,uuid,zipfile,io,getpass,sys
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from accounts import Accounts,AccountError
-from designs import DesignCatalog,catalog_for_client,design_for_client,EXPANDED_CATALOG_HEADER
+from designs import DesignCatalog,catalog_for_client,EXPANDED_CATALOG_HEADER
 from remote import PgDatabase,SupabaseBlobs,RemoteError,MAX_REMOTE_BUNDLE,StartupError,startup_stage
 
 HEX=re.compile(r'^[0-9a-f]{64}$')
@@ -181,15 +181,18 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path=='/v1/designs':return self.reply(200,{'schema':1,'pack_id':'studio-50-v1','entitled':False,'designs':[]})
                 return self.error(403,'design_pack_required')
             try:
-                catalog=self.server.store.design_catalog.catalog()
-                if self.path=='/v1/designs':return self.reply(200,catalog_for_client(catalog,self.headers.get(EXPANDED_CATALOG_HEADER)))
+                capability=self.headers.get(EXPANDED_CATALOG_HEADER)
+                catalog=self.server.store.design_catalog.catalog(capability)
+                if self.path=='/v1/designs':return self.reply(200,catalog_for_client(catalog,capability))
                 ident=self.path.removeprefix('/v1/designs/')
-                thumbnail=ident.endswith('/thumbnail')
-                if thumbnail:ident=ident.removesuffix('/thumbnail')
+                if ident.endswith('/thumbnail'):
+                    ident=ident.removesuffix('/thumbnail')
+                    # Preserve requests made from a pre-refresh v2 thumbnail manifest.
+                    catalog=self.server.store.design_catalog.catalog()
                 item=next((item for item in catalog['designs'] if item['id']==ident),None)
                 if not item:return self.error(404,'not_found')
-                item=design_for_client(item,self.headers.get(EXPANDED_CATALOG_HEADER),thumbnail)
-                return self.reply(200,body=self.server.store.design_catalog.read(item),content_type='image/png')
+                body=self.server.store.design_catalog.read(item,capability=capability)
+                return self.reply(200,body=body,content_type='image/png')
             except (ValueError,OSError,KeyError,RemoteError):return self.error(503,'design_catalog_unavailable')
         if self.path in ('/v1/auth/session','/v1/auth/account'):return self.reply(200,{'user_id':user,'app_licensed':self.server.store.allow_registration or self.server.store.accounts.app_entitled(user),'devices':self.server.store.accounts.devices(user)})
         if self.path=='/v1/bundles':
@@ -256,12 +259,10 @@ class Server(ThreadingHTTPServer):
         self.store=store;self.slots=threading.BoundedSemaphore(int(maximum));super().__init__(address,Handler)
     def process_request(self,request,address):
         if not self.slots.acquire(blocking=False):
-            # Small bounded reply, no handler/thread or request-body allocation.
+            # Preserve the bounded-overload fix already deployed in 0.6.10.
             try:
                 body=b'{"error":"server_busy"}'
                 request.settimeout(0.2)
-                # Drain only bounded headers so closing a socket with an unread
-                # GET does not reset/discard the 503 on Windows TCP stacks.
                 header=bytearray();deadline=time.monotonic()+0.2
                 while b'\r\n\r\n' not in header and len(header)<8192:
                     remaining=deadline-time.monotonic()
@@ -271,7 +272,7 @@ class Server(ThreadingHTTPServer):
                     if not chunk:break
                     header.extend(chunk)
                 request.sendall(b'HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 1\r\nCache-Control: no-store\r\nContent-Type: application/json\r\nContent-Length: '+str(len(body)).encode()+b'\r\n\r\n'+body)
-                request.shutdown(1) # SHUT_WR: finish the bounded reply before close.
+                request.shutdown(1)
             except OSError:pass
             finally:request.close()
             return
