@@ -13,9 +13,12 @@ EXPANDED_CATALOG_HEADER='X-Wallet-Studio-Catalog'
 EXPANDED_CATALOG_CAPABILITY='expanded-v1'
 NATIVE_2K_CAPABILITY='native-2k-v1'
 NATIVE_VARIANT_CAPABILITY='native-2k-v2'
-NATIVE_PREFIX='native-2k-v1/'
-def native_geometry(width,height):
-    return type(width) is int and type(height) is int and 640<=width<=4096 and 400<=height<=4096 and width*height<=16*1024*1024
+# Released v1 clients sent this header only when listing, not downloading.
+# Keep their metadata legacy; v2 negotiates originals on both requests.
+NATIVE_CAPABILITIES=(NATIVE_VARIANT_CAPABILITY,)
+
+DEFAULT_CATALOG_PATH=pathlib.Path(__file__).with_name('design-catalog.json')
+DEFAULT_LEGACY_CATALOG_PATH=pathlib.Path(__file__).with_name('design-catalog.legacy.json')
 
 def validate_png(data):
     if not 0<len(data)<=MAX_ASSET or not data.startswith(b'\x89PNG\r\n\x1a\n'):raise ValueError('invalid_design_png')
@@ -27,7 +30,7 @@ def validate_png(data):
         if header is None:
             if kind!=b'IHDR' or size!=13:raise ValueError('invalid_design_png')
             header=struct.unpack('>IIBBBBB',chunk)
-            limit=LEGACY_ASSET if header[:2]==LEGACY_SIZE else (MAX_ASSET if native_geometry(*header[:2]) else None)
+            limit=ASSET_LIMITS.get(header[:2])
             if limit is None or len(data)>limit or header[2]!=8 or header[3] not in (2,6) or header[4:]!=(0,0,0):raise ValueError('invalid_design_dimensions')
         elif kind==b'IDAT':compressed.extend(chunk)
         elif kind==b'IEND':
@@ -52,12 +55,20 @@ def load_catalog(path):
         ident=f'ws-{index:03}'
         if not isinstance(item,dict) or item.get('id')!=ident or item.get('filename')!=ident+'.png' or not isinstance(item.get('title'),str) or not 1<=len(item['title'])<=80 or any(ord(c)<32 for c in item['title']) or not re.fullmatch('[0-9a-f]{64}',item.get('sha256','')):raise ValueError('invalid_design_catalog')
         limit=ASSET_LIMITS.get((item.get('width'),item.get('height')))
-        # The first 50 entries are also served to pre-0.6.9 clients: keep them 320x200/1MiB forever.
-        if limit is None or type(item.get('bytes')) is not int or not 0<item['bytes']<=limit or (index<=LEGACY_COUNT and (item.get('width'),item.get('height'))!=LEGACY_SIZE):raise ValueError('invalid_design_catalog')
-        if 'native' in item:
-            native=item['native']
-            if not isinstance(native,dict) or set(native)!={'filename','sha256','bytes','width','height'} or native['filename']!=ident+'.png' or not isinstance(native['sha256'],str) or not re.fullmatch('[0-9a-f]{64}',native['sha256']) or type(native['bytes']) is not int or not 0<native['bytes']<=MAX_ASSET or not native_geometry(native['width'],native['height']):raise ValueError('invalid_native_design')
+        if limit is None or type(item.get('bytes')) is not int or not 0<item['bytes']<=limit:raise ValueError('invalid_design_catalog')
     return value
+
+def object_key(item,capability=None):
+    if (item.get('width'),item.get('height'))==NATIVE_SIZE:
+        return f'{PACK}/native/{item["id"]}-{item["sha256"]}.png'
+    return f'{PACK}/{item["filename"]}'
+
+def load_legacy_catalog(path):
+    catalog=load_catalog(path)
+    for item in catalog['designs']:
+        if (item.get('width'),item.get('height'))!=LEGACY_SIZE or item.get('bytes',0)>LEGACY_ASSET:
+            raise ValueError('invalid_legacy_catalog')
+    return catalog
 
 def legacy_designs(designs):
     # 0.6.5–0.6.8 clients only parse 320x200/1MiB entries and require contiguous ids from ws-001.
@@ -68,34 +79,42 @@ def legacy_designs(designs):
 def catalog_for_client(catalog,capability):
     # Versions 0.6.5–0.6.7 reject any catalogue whose count differs from 50.
     designs=catalog['designs']
-    if capability==NATIVE_VARIANT_CAPABILITY:served=[design_for_client(item,capability) for item in designs]
-    elif capability==NATIVE_2K_CAPABILITY:served=designs
-    elif capability==EXPANDED_CATALOG_CAPABILITY:served=legacy_designs(designs)
-    else:served=designs[:LEGACY_COUNT]
-    return dict(catalog,title=f'{len(served)} diseños',designs=[{key:value for key,value in item.items() if key not in ('native','_native')} for item in served],entitled=True)
-
-def design_for_client(item,capability,thumbnail=False):
-    legacy={key:value for key,value in item.items() if key!='native'}
-    if not thumbnail and capability==NATIVE_VARIANT_CAPABILITY and 'native' in item:
-        return dict(legacy,**item['native'],thumbnail=legacy,_native=True)
-    return legacy
+    # 0.6.10 sends v2 and accepts original-only metadata without a thumbnail.
+    # Do not treat it as an unknown client and silently return 50 legacy entries.
+    if capability in NATIVE_CAPABILITIES:served=designs
+    elif capability in (EXPANDED_CATALOG_CAPABILITY,NATIVE_2K_CAPABILITY):served=legacy_designs(designs)
+    else:served=legacy_designs(designs)[:LEGACY_COUNT]
+    return dict(catalog,title=f'{len(served)} diseños',designs=served,entitled=True)
 
 def verify_asset(item,data):
-    if len(data)!=item['bytes'] or hashlib.sha256(data).hexdigest()!=item['sha256']:raise ValueError('design_integrity_error')
-    if validate_png(data)!=(item['width'],item['height']):raise ValueError('design_dimensions_mismatch')
+    limit=ASSET_LIMITS.get((item.get('width'),item.get('height')))
+    if limit is None or len(data)>limit:raise ValueError('invalid_design_dimensions')
+    if len(data)!=item.get('bytes') or hashlib.sha256(data).hexdigest()!=item.get('sha256'):raise ValueError('design_integrity_error')
+    width,height=validate_png(data)
+    if (width,height)!=(item.get('width'),item.get('height')):raise ValueError('invalid_design_dimensions')
 
 class DesignCatalog:
     def __init__(self,config):
         self.config=config
-    def catalog(self):return load_catalog(self.config.get('WALLET_DESIGN_CATALOG',str(pathlib.Path(__file__).with_name('design-catalog.json'))))
+    def native_catalog_path(self):
+        return pathlib.Path(self.config.get('WALLET_DESIGN_CATALOG',str(DEFAULT_CATALOG_PATH)))
+    def legacy_catalog_path(self):
+        return pathlib.Path(self.config.get('WALLET_DESIGN_LEGACY_CATALOG',str(DEFAULT_LEGACY_CATALOG_PATH)))
+    def catalog(self,capability=None):
+        if capability in NATIVE_CAPABILITIES:
+            return load_catalog(self.native_catalog_path())
+        legacy_path=self.legacy_catalog_path()
+        if legacy_path.is_file():
+            return load_legacy_catalog(legacy_path)
+        return load_legacy_catalog(self.native_catalog_path())
     def blobs(self):return SupabaseBlobs(self.config['SUPABASE_URL'],self.config['SUPABASE_SERVICE_ROLE_KEY'],'wallet-designs')
-    def read(self,item):
+    def read(self,item,capability=None):
         blobs=self.blobs()
         status,body=blobs.request(blobs.base+'/bucket/wallet-designs','GET',blobs.headers,maximum=65536)
         if status!=200:raise RemoteError('design_bucket_unavailable_or_public')
         metadata=json.loads(body)
         if not isinstance(metadata,dict) or metadata.get('public') is not False:raise RemoteError('design_bucket_unavailable_or_public')
-        prefix=NATIVE_PREFIX if item.get('_native') else ''
-        status,data=blobs.request(blobs.base+'/object/authenticated/wallet-designs/'+PACK+'/'+prefix+item['filename'],'GET',blobs.headers,maximum=MAX_ASSET)
+        key=object_key(item,capability)
+        status,data=blobs.request(blobs.base+'/object/authenticated/wallet-designs/'+key,'GET',blobs.headers,maximum=MAX_ASSET)
         if status!=200:raise RemoteError('design_unavailable')
         verify_asset(item,data);return data

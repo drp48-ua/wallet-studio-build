@@ -18,25 +18,25 @@ class OriginalVariants(unittest.TestCase):
  order=fixtures.PaidDesignTests.order
  webhook=fixtures.PaidDesignTests.webhook
  def fixture(self):
-  legacy=png();native=png_at(736,460)
-  catalog=fixture_catalog(legacy)
-  catalog['designs'][0]['native']=dict(filename='ws-001.png',sha256=hashlib.sha256(native).hexdigest(),bytes=len(native),width=736,height=460)
+  legacy=png();native=png_at(1536,969)
+  catalog=fixture_catalog(native)
+  for item in catalog['designs']:item.update(width=1536,height=969)
   return catalog,legacy,native
  def test_original_dimensions_and_hashes_are_exact_and_old_clients_keep_legacy(self):
   catalog,legacy,native=self.fixture();path=pathlib.Path(self.tmp.name)/'catalog.json';path.write_text(json.dumps(catalog))
   load_catalog(path)
   for capability in [None,EXPANDED_CATALOG_CAPABILITY,NATIVE_2K_CAPABILITY]:
-   self.assertEqual(catalog_for_client(catalog,capability)['designs'][0],{k:v for k,v in catalog['designs'][0].items() if k!='native'})
+   self.assertEqual(catalog_for_client(fixture_catalog(legacy),capability)['designs'][0],fixture_catalog(legacy)['designs'][0])
   item=catalog_for_client(catalog,NATIVE_VARIANT_CAPABILITY)['designs'][0]
-  self.assertEqual((item['width'],item['height']),(736,460));verify_asset(item,native);verify_asset(item['thumbnail'],legacy)
+  self.assertEqual((item['width'],item['height']),(1536,969));verify_asset(item,native);verify_asset(fixture_catalog(legacy)['designs'][0],legacy)
   with self.assertRaises(ValueError):verify_asset(item,legacy)
-  for width,height in [(639,460),(736,399),(4097,460),(4096,4097),(320,200)]:
-   changed=copy.deepcopy(catalog);changed['designs'][0]['native'].update(width=width,height=height);path.write_text(json.dumps(changed))
+  for width,height in [(639,460),(736,399),(4097,460),(4096,4097)]:
+   changed=copy.deepcopy(catalog);changed['designs'][0].update(width=width,height=height);path.write_text(json.dumps(changed))
    with self.assertRaises(ValueError):load_catalog(path)
  def test_authenticated_variant_and_thumbnail_use_matching_bytes_and_revocation_still_denies(self):
   self.configure();session=self.activate_order();catalog,legacy,native=self.fixture();seen=[]
-  self.store.design_catalog.catalog=lambda:catalog
-  def read(item):seen.append(bool(item.get('_native')));return native if item.get('_native') else legacy
+  self.store.design_catalog.catalog=lambda capability=None:catalog if capability==NATIVE_VARIANT_CAPABILITY else fixture_catalog(legacy)
+  def read(item,capability=None):seen.append(item['width']==1536);return native if item['width']==1536 else legacy
   self.store.design_catalog.read=read
   server=Server(('127.0.0.1',0),self.store);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
   def get(path,capability,token=session['access_token']):
@@ -56,7 +56,7 @@ class OriginalVariants(unittest.TestCase):
   def request(url,method,headers,body=None,maximum=0):
    calls.append((url,method))
    if '/bucket/' in url:return 200,b'{"public":false}'
-   self.assertIn('/studio-50-v1/native-2k-v1/ws-001.png',url)
+   self.assertIn('/studio-50-v1/native/ws-001-'+catalog['designs'][0]['sha256']+'.png',url)
    return (201,b'{}') if method=='POST' else (200,native)
   self.assertEqual(provision({'SUPABASE_URL':'https://fixture.supabase.co','SUPABASE_SERVICE_ROLE_KEY':'fixture-service'},source,path,request=request,only_ids=['ws-001'],native=True),1)
   calls.clear();(source/'ws-001.png').write_bytes(legacy)

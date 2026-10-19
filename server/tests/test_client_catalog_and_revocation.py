@@ -108,10 +108,10 @@ class ClientCatalogAndRevocationTests(unittest.TestCase):
             expected_id = f'ws-{idx:03}'
             self.assertEqual(item['id'], expected_id)
             self.assertEqual(item['filename'], f'{expected_id}.png')
-            self.assertEqual(item['width'], 320)
-            self.assertEqual(item['height'], 200)
+            self.assertEqual(item['width'], 1536)
+            self.assertEqual(item['height'], 969)
             self.assertGreater(item['bytes'], 0)
-            self.assertLessEqual(item['bytes'], 1024 * 1024)
+            self.assertLessEqual(item['bytes'], 4 * 1024 * 1024)
             self.assertEqual(len(item['sha256']), 64)
             self.assertTrue(all(c in '0123456789abcdef' for c in item['sha256']))
             self.assertTrue(1 <= len(item['title']) <= 80)
@@ -123,6 +123,23 @@ class ClientCatalogAndRevocationTests(unittest.TestCase):
         self.assertEqual(len(ids), 56, 'All IDs must be distinct')
         self.assertEqual(len(hashes), 56, 'All SHA-256 hashes must be distinct')
         self.assertEqual(len(filenames), 56, 'All filenames must be distinct')
+
+    def test_legacy_catalog_manifest_contains_56_valid_designs(self):
+        catalog_path = pathlib.Path(__file__).resolve().parents[1] / 'design-catalog.legacy.json'
+        self.assertTrue(catalog_path.is_file(), 'design-catalog.legacy.json must exist in server directory')
+        catalog = load_catalog(catalog_path)
+        self.assertEqual(catalog.get('schema'), 1)
+        self.assertEqual(catalog.get('pack_id'), 'studio-50-v1')
+        designs = catalog.get('designs', [])
+        self.assertEqual(len(designs), 56)
+        for idx, item in enumerate(designs, 1):
+            expected_id = f'ws-{idx:03}'
+            self.assertEqual(item['id'], expected_id)
+            self.assertEqual(item['filename'], f'{expected_id}.png')
+            self.assertEqual(item['width'], 320)
+            self.assertEqual(item['height'], 200)
+            self.assertGreater(item['bytes'], 0)
+            self.assertLessEqual(item['bytes'], 1024 * 1024)
 
     def test_client_can_fetch_all_50_designs_and_refund_revokes_access(self):
         # Build 50 simulated unique design images
@@ -151,8 +168,8 @@ class ClientCatalogAndRevocationTests(unittest.TestCase):
             'designs': catalog_designs,
         }
 
-        self.store.design_catalog.catalog = lambda: mock_catalog
-        self.store.design_catalog.read = lambda item: simulated_assets[item['id']]
+        self.store.design_catalog.catalog = lambda capability=None: mock_catalog
+        self.store.design_catalog.read = lambda item, capability=None: simulated_assets[item['id']]
 
         server = Server(('127.0.0.1', 0), self.store)
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
