@@ -1,10 +1,14 @@
 param([switch]$TestOnly)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'distribution-common.ps1')
+$version = Get-WalletVersion $projectRoot
+& (Join-Path $PSScriptRoot 'check-windows-dependencies.ps1') -Mode Build -RequireReady
+$resourcePath = $null
 Push-Location $projectRoot
 try {
     if ($TestOnly) {
-        cargo test --release --locked --manifest-path windows-source/Cargo.toml -- --skip test_usbmux_query --skip test_list_connected_devices --skip test_syslog_service_receive --skip test_saved_cards_purging
+        cargo +stable test --release --locked --manifest-path windows-source/Cargo.toml -- --skip test_usbmux_query --skip test_list_connected_devices --skip test_syslog_service_receive --skip test_saved_cards_purging
         if ($LASTEXITCODE -ne 0) { throw 'Las pruebas fallaron' }
         return
     }
@@ -14,8 +18,12 @@ try {
     $resourcePath = Join-Path $env:TEMP ('wallet-studio-' + [Guid]::NewGuid().ToString('N') + '.res')
     rc.exe /nologo /fo $resourcePath wallet-studio.rc
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo compilar el recurso Windows' }
-    cargo rustc --release --locked --manifest-path windows-source/Cargo.toml --bin aircard -- -C "link-arg=$resourcePath"
+    cargo +stable rustc --release --locked --manifest-path windows-source/Cargo.toml --bin aircard -- -C "link-arg=$resourcePath"
     if ($LASTEXITCODE -ne 0) { throw 'La compilación falló' }
+    if ((Get-Item -LiteralPath 'windows-source/target/release/aircard.exe').VersionInfo.FileVersion -ne $version) { throw 'El recurso Windows no coincide con Cargo' }
     Copy-Item -LiteralPath 'windows-source/target/release/aircard.exe' -Destination 'windows/Wallet Studio.exe' -Force
-} finally { Pop-Location }
+} finally {
+    if ($resourcePath -and (Test-Path -LiteralPath $resourcePath)) { Remove-Item -LiteralPath $resourcePath }
+    Pop-Location
+}
 

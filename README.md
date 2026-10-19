@@ -1,7 +1,5 @@
-# Wallet Studio: código y diagnósticos de compilación
+# Wallet Studio: preparación comercial Windows
 
-Repositorio público de compilación separado, publicado con autorización del propietario. Contiene el código Windows 0.5.3 con recorte y guardado automático, sus dependencias fijadas y licencias, y el diagnóstico iOS sintético v11. No incluye ejecutables existentes, copias bancarias, estado personal, diseños personales, conversaciones ni reportes de teléfono.
+Repositorio público de código. La versión de producto de partida es 0.5.3; Cargo, Cargo.lock, la interfaz y los recursos Windows deben coincidir. El paquete se prepara localmente con scripts/build-windows.ps1 y scripts/package-windows.ps1. El workflow comprueba pruebas, compilación y empaquetado de borrador, sin subir artefactos Windows.
 
-La compilación Windows 0.5.3 y sus pruebas se ejecutan mediante el workflow Windows checks. Los ZIP portables estarán en los artefactos de las ejecuciones correctas. Hasta que termine una ejecución correcta, este código no representa un binario validado.
-
-La animación en Wallet sigue sin demostrarse. Los diagnósticos iOS acceden exclusivamente a objetos sintéticos y al directorio de su propia aplicación.
+Consulta PREPARACION-COMERCIAL.md para los bloqueos de lanzamiento, las condiciones comerciales y la propuesta de licencias. No se ha implementado la activación de dos equipos ni se ha validado un nuevo binario en este equipo. No publiques paquetes comerciales sin autorización expresa. Los artefactos públicos históricos, si existen, no se retiran automáticamente con este cambio.

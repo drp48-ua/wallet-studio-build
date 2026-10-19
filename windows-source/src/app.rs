@@ -2434,16 +2434,10 @@ impl AirCardApp {
         m3_card(ui, |ui| {
             ui.label(egui::RichText::new("Actualizaciones").strong().size(16.0).color(md3::ON_SURFACE));
             ui.label(format!("Versión instalada: {}", crate::update_info::VERSION));
-            ui.label(if crate::update_info::PUBLIC_CHANNEL_PUBLISHED {
-                "Consulta la versión publicada y descarga la actualización en el navegador."
-            } else {
-                "El canal público de descargas todavía no está publicado. No hay búsqueda automática de versiones."
-            });
-            if ui.add_enabled(crate::update_info::PUBLIC_CHANNEL_PUBLISHED,
-                egui::Button::new("Buscar actualizaciones")).clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(crate::update_info::PUBLIC_DOWNLOAD_URL));
-            }
-            ui.label(egui::RichText::new("Actualización manual: cierra la aplicación y sustituye los archivos del programa. Conserva designs y las copias originales locales; no borres los datos de Wallet Studio.").size(11.0).color(md3::ON_SURFACE_VARIANT));
+            ui.label("Actualizaciones incluidas sin suscripción. Entrega manual para compradores; no hay búsqueda ni instalación automática.");
+            ui.add_enabled(false, egui::Button::new("Buscar actualizaciones"));
+            ui.label(format!("Soporte y recuperación de acceso: {}", crate::update_info::SUPPORT_EMAIL));
+            ui.label(egui::RichText::new("Antes de actualizar, verifica versión, firma y SHA-256 siguiendo ACTUALIZACIONES.md. Cierra la app, conserva designs y las copias originales locales; no borres los datos de Wallet Studio.").size(11.0).color(md3::ON_SURFACE_VARIANT));
         });
         ui.add_space(12.0);
         ui.columns(2, |cols| {

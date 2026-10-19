@@ -1,0 +1,12 @@
+{
+  "files": [
+    {"source": "windows/Wallet Studio.exe", "destination": "Wallet Studio.exe"},
+    {"source": "windows/ABRIR-WALLET-STUDIO.cmd", "destination": "ABRIR-WALLET-STUDIO.cmd"},
+    {"source": "windows/LICENSE-AirCard-Windows.txt", "destination": "LICENSE-AirCard-Windows.txt"},
+    {"source": "LICENSE", "destination": "LICENSE"},
+    {"source": "LEEME.md", "destination": "LEEME.md"},
+    {"source": "INSTALACION.md", "destination": "INSTALACION.md"},
+    {"source": "ACTUALIZACIONES.md", "destination": "ACTUALIZACIONES.md"},
+    {"source": "scripts/verify-download.ps1", "destination": "VERIFICAR-DESCARGA.ps1"}
+  ]
+}

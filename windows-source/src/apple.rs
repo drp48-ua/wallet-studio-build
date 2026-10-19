@@ -160,7 +160,7 @@ pub fn get_apple_libraries() -> Result<Arc<AppleLibraries>> {
     }
 
     let dir = locate_support_dir().context(
-        "Apple Mobile Device Support was not found. Install 64-bit iTunes package from Apple.",
+        "Faltan componentes compatibles de Apple Mobile Device Support: CoreFoundation.dll, MobileDevice.dll y AirTrafficHost.dll deben estar juntos en la carpeta de soporte de Apple. Instala o repara el software de Apple para Windows desde https://support.apple.com/es-es/118290 y reinicia Wallet Studio. Si sigue fallando, consulta INSTALACION.md o javicarmelosomanager@gmail.com. No descargues DLL sueltas.",
     )?;
 
     // Configure Windows DLL search directory so dependent DLLs (e.g. objc, pthread, SQLite) are resolved
@@ -174,15 +174,15 @@ pub fn get_apple_libraries() -> Result<Arc<AppleLibraries>> {
     let ath_path = dir.join("AirTrafficHost.dll");
 
     unsafe {
-        let cf_lib = Library::new(&cf_path).context("Failed to load CoreFoundation.dll")?;
-        let md_lib = Library::new(&md_path).context("Failed to load MobileDevice.dll")?;
-        let ath_lib = Library::new(&ath_path).context("Failed to load AirTrafficHost.dll")?;
+        let cf_lib = Library::new(&cf_path).context("No se pudo cargar CoreFoundation.dll. Repara los componentes Apple de 64 bits desde https://support.apple.com/es-es/118290; consulta INSTALACION.md. No descargues DLL sueltas.")?;
+        let md_lib = Library::new(&md_path).context("No se pudo cargar MobileDevice.dll. Repara los componentes Apple de 64 bits desde https://support.apple.com/es-es/118290; consulta INSTALACION.md. No descargues DLL sueltas.")?;
+        let ath_lib = Library::new(&ath_path).context("No se pudo cargar AirTrafficHost.dll. Repara los componentes Apple de 64 bits desde https://support.apple.com/es-es/118290; consulta INSTALACION.md. No descargues DLL sueltas.")?;
 
         macro_rules! load_sym {
             ($lib:expr, $name:expr) => {{
                 let symbol: Symbol<_> = $lib
                     .get($name.as_bytes())
-                    .context(concat!("Missing symbol: ", $name))?;
+                    .context(concat!("Componentes Apple incompatibles; repara la instalación oficial. Falta la función: ", $name))?;
                 *symbol
             }};
         }
@@ -458,5 +458,5 @@ impl AppleLibraries {
 pub fn verify_support() -> Result<String> {
     let _libs = get_apple_libraries()?;
     let dir = locate_support_dir().unwrap_or_default();
-    Ok(format!("Apple Mobile Device Support ready: {}", dir.display()))
+    Ok(format!("Componentes de Apple Mobile Device Support cargados: {}", dir.display()))
 }
