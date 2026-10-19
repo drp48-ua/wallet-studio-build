@@ -3,6 +3,9 @@ use crate::app::md3;
 
 pub const CODE_LIFETIME:u64=600;
 pub const RESEND_COOLDOWN:u64=60;
+pub fn actions_available(configured:bool,storage_ready:bool,busy:bool,demo:bool)->bool {
+    configured && storage_ready && !busy && !demo
+}
 pub fn remaining(started:Option<std::time::Instant>,now:std::time::Instant,limit:u64)->u64 {
     started.map(|instant|limit.saturating_sub(now.saturating_duration_since(instant).as_secs())).unwrap_or(0)
 }
@@ -88,6 +91,14 @@ pub fn notice(ui:&mut egui::Ui,text:&str,busy:bool) {
 }
 
 #[cfg(test)] mod tests {
+    #[test] fn startup_actions_enable_only_after_successful_preparation_and_remain_gated_while_busy() {
+        assert!(!super::actions_available(true,false,true,false));
+        assert!(!super::actions_available(true,false,false,false));
+        assert!(super::actions_available(true,true,false,false));
+        assert!(!super::actions_available(true,true,true,false));
+        assert!(!super::actions_available(false,true,false,false));
+        assert!(!super::actions_available(true,true,false,true));
+    }
     use super::*;
     #[test] fn welcome_and_horizontal_benefits_fit_window_and_fullscreen() {
         for size in [egui::vec2(960.0,640.0),egui::vec2(1180.0,760.0),egui::vec2(1920.0,1080.0)] {

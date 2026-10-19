@@ -356,7 +356,8 @@ impl AirCardApp {
         thread::spawn(move || {
             let _=tx.send(CloudEvent::Progress("Comprobando y preparando las copias locales…"));ctx.request_repaint();
             let mut message=CloudMessage { authenticated:false,library_authenticated:false,session_pending:false,storage_ready:false,configured:true,synced:false,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación.".into(),session:None };
-            if crate::storage::migrate_legacy().is_ok() {
+            match crate::storage::migrate_legacy().and_then(|_|crate::storage::ensure_ready()) {
+              Ok(()) => {
                 message.storage_ready=true;
                 message.configured=crate::cloud_sync::account_expected_without_session(&endpoint);
                 match crate::cloud_sync::load_session() {
@@ -368,6 +369,8 @@ impl AirCardApp {
                     Ok(None)=>message.status=if message.configured {"Inicia sesión y comprueba tus copias en la nube antes de capturar un original ausente. Los originales locales verificados siguen disponibles."} else {"Almacenamiento local listo · vincula tu cuenta para sincronizar"}.into(),
                     Err(_)=> { message.configured=true; message.status="La sesión no se pudo verificar. Inicia sesión de nuevo; no se capturará un original ausente.".into(); }
                 }
+              }
+              Err(error)=>message.status=crate::storage::preparation_failure_message(&error).into(),
             }
             if message.storage_ready { message.storage_ready=crate::storage::ensure_ready().is_ok(); }
             let _=tx.send(CloudEvent::Complete(message)); ctx.request_repaint();
@@ -490,14 +493,15 @@ impl AirCardApp {
                 ui.add(egui::TextEdit::singleline(&mut self.account_server).hint_text("https://wallet-studio-accounts.onrender.com").desired_width(ui.available_width()));
             });
             ui.add_space(12.0); ui.label("Correo electrónico"); ui.add_enabled(self.account_stage!=2,egui::TextEdit::singleline(&mut self.account_email).hint_text("tu@correo.com").background_color(md3::SURFACE_CONTAINER_HIGH).margin(egui::vec2(12.0,10.0)).desired_width(ui.available_width())); ui.add_space(10.0);
-            let available=!self.account_server.is_empty() && self.storage_ready && self.cloud_rx.is_none() && self.activation_rx.is_none() && !self.is_busy && !self.scanning_syslog && !crate::storage::is_demo();
+            let available=crate::auth_ui::actions_available(!self.account_server.is_empty(),self.storage_ready,
+                self.cloud_rx.is_some() || self.activation_rx.is_some() || self.is_busy || self.scanning_syslog,crate::storage::is_demo());
             if !available && !self.auth_preview {
                 let reason=if self.account_server.is_empty() {
                     "El servicio de cuentas no está configurado. Introduce la dirección en la configuración avanzada."
-                } else if !self.storage_ready {
-                    "Preparando almacenamiento local de copias…"
                 } else if self.cloud_rx.is_some() || self.activation_rx.is_some() || self.is_busy {
                     "Operación en curso, espera un momento…"
+                } else if !self.storage_ready {
+                    "El almacenamiento necesita revisión. Usa Volver a comprobar mis copias locales; el acceso se habilitará cuando termine correctamente."
                 } else if crate::storage::is_demo() {
                     "Modo demostración activo."
                 } else {

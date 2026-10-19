@@ -1,4 +1,4 @@
-# Wallet Studio 0.6.8 para Windows — biblioteca ampliada
+# Wallet Studio 0.6.9 para Windows — acceso y copias protegidas
 
 Extrae el ZIP completo y abre **Wallet Studio.exe**. Las copias originales se conservan en el almacenamiento personal de Windows, fuera de la carpeta del programa. La migración incorpora las copias anteriores sin reemplazar originales y conserva cualquier conflicto para revisión.
 
@@ -16,4 +16,4 @@ El editor muestra el último diseño confirmado localmente y una miniatura del o
 
 Conserva siempre las copias y diarios. Si hay una recuperación pendiente del mismo teléfono, una identidad ilegible o un conflicto de esa tarjeta, completa su revisión antes de escribir. Un conflicto conocido de otra tarjeta o una recuperación de otro iPhone no debe bloquear la tarjeta seleccionada.
 
-Consulta SEGURIDAD.md, PRUEBA-WINDOWS.md y NOVEDADES-0.6.8.md. La versión para macOS y la validación comercial en equipos limpios siguen pendientes.
+Consulta SEGURIDAD.md, PRUEBA-WINDOWS.md y NOVEDADES-0.6.9.md. La versión para macOS y la validación comercial en equipos limpios siguen pendientes.
