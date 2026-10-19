@@ -339,7 +339,7 @@ impl AirCardApp {
                     for (index,design) in designs.into_iter().take(crate::design_library::MAX_INCLUDED_DESIGNS).enumerate() {
                         if let Ok(bytes)=crate::design_library::read_image(&design.path) {
                             if let Ok(hash)=crate::bank_backup::sha256(&bytes) {
-                                let item=crate::design_library::PurchasedDesign {id:format!("ws-{:03}",index+1),title:design.title,filename:format!("ws-{:03}.png",index+1),sha256:hash,bytes:bytes.len(),width:320,height:200};
+                                let item=crate::design_library::PurchasedDesign {id:format!("ws-{:03}",index+1),title:design.title,filename:format!("ws-{:03}.png",index+1),sha256:hash,bytes:bytes.len(),width:320,height:200,thumbnail:None};
                                 if crate::design_library::verify_purchased(&item,&bytes).is_ok() {let path=root.join(&item.filename);if crate::storage::write_new(&path,&bytes).is_ok() {self.purchased_designs.push((item,path));}}
                             }
                         }
@@ -973,11 +973,16 @@ impl AirCardApp {
         if self.purchased_rx.is_some() || self.purchased_use_rx.is_some() || self.library_previews.busy() {ctx.request_repaint_after(std::time::Duration::from_millis(100));}
         let paid=self.purchased_designs.iter().map(|(item,path)|(item.title.clone(),path.clone(),Some(item.clone()))).collect();self.library_grid(ctx,ui,paid,selection_top);
     }
-    fn request_library_preview(&mut self,ctx:&egui::Context,path:&Path,paid:Option<crate::design_library::PurchasedDesign>) {
-        if self.library_textures.contains_key(path) {return;}
-        let path=path.to_owned();let read_path=path.clone();let session=self.cloud_session.clone();let demo=crate::storage::is_demo();
+    fn request_library_preview(&mut self,ctx:&egui::Context,path:&Path,paid:Option<crate::design_library::PurchasedDesign>,detailed:bool) {
+        let key=if detailed {path.with_extension("detail")} else {path.to_owned()};
+        if self.library_textures.contains_key(&key) {return;}
+        if paid.is_some() && (self.cloud_rx.is_some() || self.purchased_rx.is_some() || self.purchased_use_rx.is_some()) {return;}
+        let read_path=path.to_owned();let path=key;let session=self.cloud_session.clone();let demo=crate::storage::is_demo();
         self.library_previews.request(path,ctx,move|| {
-            if !demo {if let Some(item)=paid {crate::design_library::cached_purchased(&session.context("Inicia sesión para ver el pack")?,&item)?;}}
+            let read_path=if !demo {if let Some(item)=paid {
+                let session=session.context("Inicia sesión para ver el pack")?;
+                if detailed && crate::design_library::native_geometry(item.width,item.height) {crate::design_library::cached_purchased(&session,&item)?} else {crate::design_library::cached_thumbnail(&session,&item)?}
+            } else {read_path}} else {read_path};
             let image=crate::design_library::read_image(&read_path).and_then(|bytes|crate::design_library::decode_still(&bytes))?;
             let image=image.thumbnail(image.width().min(640),image.height().min(400)).to_rgba8();
             Ok(egui::ColorImage::from_rgba_unmultiplied([image.width() as usize,image.height() as usize],image.as_raw()))
@@ -990,17 +995,24 @@ impl AirCardApp {
             if let Some(path)=selected {
                 let paid=self.purchased_designs.iter().find(|(_,item)|item==&path).map(|(item,_)|item.clone());
                 let title=paid.as_ref().map(|item|item.title.clone()).or_else(||self.library_designs.iter().find(|item|item.path==path).map(|item|item.title.clone())).unwrap_or_else(||"Tu diseño".into());
-                self.request_library_preview(ctx,&path,paid.clone());
+                self.request_library_preview(ctx,&path,paid.clone(),true);
+                let preview_key=path.with_extension("detail");
                 let width=ui.available_width().min(480.0);let size=egui::vec2(width,width*0.625);
                 let (rect,_)=ui.allocate_exact_size(size,egui::Sense::hover());
-                paint_library_preview(ui,rect,&path,self.library_textures.get(&path),self.library_previews.failed(&path));
+                paint_library_preview(ui,rect,&preview_key,self.library_textures.get(&preview_key),self.library_previews.failed(&preview_key));
                 ui.label(title);
-                if self.library_previews.failed(&path) {
-                    ui.colored_label(md3::ERROR,if self.library_previews.exhausted(&path) {"No se pudo cargar la vista previa. Comprueba tu conexión y pulsa Reintentar imagen."} else {"No se pudo cargar la vista previa. Se reintentará automáticamente."});
-                    if studio_button(ui,"Reintentar imagen",!self.is_busy && !self.library_selection.busy(),false) {self.library_previews.retry(&path);}
-                    if !self.library_previews.exhausted(&path) {ctx.request_repaint_after(std::time::Duration::from_secs(1));}
+                if self.library_previews.failed(&preview_key) {
+                    ui.colored_label(md3::ERROR,if self.library_previews.exhausted(&preview_key) {"No se pudo cargar la vista previa. Comprueba tu conexión y pulsa Reintentar imagen."} else {"No se pudo cargar la vista previa. Se reintentará automáticamente."});
+                    if studio_button(ui,"Reintentar imagen",!self.is_busy && !self.library_selection.busy(),false) {self.library_previews.retry(&preview_key);self.library_previews.retry(&path);}
+                    if !self.library_previews.exhausted(&preview_key) {ctx.request_repaint_after(std::time::Duration::from_secs(1));}
                 }
-                if studio_button(ui,if self.library_selection.busy() {"Preparando diseño…"} else {"Usar diseño seleccionado"},!self.is_busy && !self.library_selection.busy(),true) {
+                let native_ready=paid.as_ref().is_none_or(|item|crate::design_library::native_geometry(item.width,item.height));
+                if !native_ready {ui.colored_label(md3::ERROR,"El servidor aún no publicó el original de este diseño. Actualiza la biblioteca; no se ampliará una miniatura para Wallet.");}
+                if let Some(item)=paid.as_ref().filter(|item|crate::design_library::native_geometry(item.width,item.height)) {
+                    ui.label(format!("Original: {} × {} · Wallet: 1536 × 969",item.width,item.height));
+                    if item.width<1536 || item.height<969 {ui.label("Este original es más pequeño que el formato de Wallet. Ampliarlo no añade detalle.");}
+                }
+                if studio_button(ui,if self.library_selection.busy() {"Preparando diseño…"} else {"Usar diseño seleccionado"},native_ready && !self.is_busy && !self.library_selection.busy(),true) {
                     if let Some(request)=self.library_selection.begin() {
                         self.library_error=None;
                         let (tx,rx)=channel();self.purchased_use_rx=Some(rx);
@@ -1025,7 +1037,7 @@ impl AirCardApp {
         for row in items.chunks(columns) {ui.horizontal(|ui| {for (title,path,paid) in row {
             ui.vertical(|ui| {ui.set_width(172.0);
                 let visible=ui.is_rect_visible(egui::Rect::from_min_size(ui.cursor().min,egui::vec2(172.0,150.0)));
-                if visible {self.request_library_preview(ctx,path,paid.clone());}
+                if visible {self.request_library_preview(ctx,path,paid.clone(),false);}
                 let selected=self.library_selection.path.as_ref()==Some(path);
                 let (rect,response)=ui.allocate_exact_size(egui::vec2(168.0,105.0),egui::Sense::click());
                 paint_library_preview(ui,rect,path,self.library_textures.get(path),self.library_previews.failed(path));
@@ -2994,6 +3006,18 @@ impl AirCardApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn original_resolution_library_design_is_rendered_from_source_not_a_320_thumbnail() {
+        let root=std::env::temp_dir().join(format!("ws-original-use-{}",crate::flasher::generate_token()));std::fs::create_dir_all(&root).unwrap();
+        let source=DynamicImage::ImageRgb8(image::RgbImage::from_fn(736,460,|x,y|if (x+y)%2==0 {image::Rgb([255,0,0])} else {image::Rgb([0,0,255])}));
+        let path=root.join("original.png");source.save(&path).unwrap();
+        let prepared=prepare_library_design(path).unwrap();
+        assert_eq!((prepared.source_image.width(),prepared.source_image.height()),(736,460));
+        let direct=PreparedSkin::from_image_with_focus(source.clone(),0.5,0.5).unwrap();
+        let thumbnail=PreparedSkin::from_image_with_focus(source.resize_exact(320,200,image::imageops::FilterType::Lanczos3),0.5,0.5).unwrap();
+        let digest=|bytes:&[u8]|crate::bank_backup::sha256(bytes).unwrap();
+        assert_eq!(digest(&prepared.skin.png),digest(&direct.png));assert_ne!(digest(&prepared.skin.png),digest(&thumbnail.png));
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn selected_library_design_is_prepared_before_editor_installation_and_invalid_file_fails() {
         let root=std::env::temp_dir().join(format!("ws-library-use-{}",crate::flasher::generate_token()));std::fs::create_dir_all(&root).unwrap();
         let path=root.join("selected.png");let mut bytes=Vec::new();

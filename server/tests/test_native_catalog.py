@@ -27,7 +27,7 @@ class NativeAssetValidationTests(unittest.TestCase):
   self.assertEqual(ASSET_LIMITS,{LEGACY_SIZE:LEGACY_ASSET,NATIVE_SIZE:MAX_ASSET})
  def test_validate_png_accepts_the_native_canvas_and_rejects_unknown_or_oversized_assets(self):
   validate_png(png_at(1536,969))
-  for width,height in [(1536,968),(1537,969),(320,201),(321,200),(640,480)]:
+  for width,height in [(639,969),(4097,969),(320,201),(321,200),(640,399)]:
    with self.subTest(geometry=(width,height)),self.assertRaises(ValueError):validate_png(png_at(width,height))
   with self.assertRaises(ValueError):validate_png(png_at(320,200)+b'\0'*LEGACY_ASSET)
   with self.assertRaises(ValueError):validate_png(b'\x89PNG\r\n\x1a\n'+b'\0'*MAX_ASSET)

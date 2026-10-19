@@ -2,7 +2,7 @@
 import argparse,contextlib,hashlib,hmac,json,os,pathlib,re,secrets,sqlite3,threading,time,uuid,zipfile,io,getpass,sys
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from accounts import Accounts,AccountError
-from designs import DesignCatalog,catalog_for_client,EXPANDED_CATALOG_HEADER
+from designs import DesignCatalog,catalog_for_client,design_for_client,EXPANDED_CATALOG_HEADER
 from remote import PgDatabase,SupabaseBlobs,RemoteError,MAX_REMOTE_BUNDLE,StartupError,startup_stage
 
 HEX=re.compile(r'^[0-9a-f]{64}$')
@@ -98,9 +98,9 @@ class Handler(BaseHTTPRequestHandler):
         try:super().handle()
         except (ConnectionError,TimeoutError):pass # Normal client disconnect; never print peer identifiers.
     def setup(self):super().setup();self.connection.settimeout(15)
-    def reply(self,status,value=None,body=None):
+    def reply(self,status,value=None,body=None,content_type=None):
         raw=body if body is not None else json.dumps(value or {}).encode()
-        self.send_response(status);self.send_header('Content-Type','application/octet-stream' if body is not None else 'application/json');self.send_header('Content-Length',str(len(raw)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(raw)
+        self.send_response(status);self.send_header('Content-Type',content_type or ('application/octet-stream' if body is not None else 'application/json'));self.send_header('Content-Length',str(len(raw)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(raw)
     def error(self,status,code):
         # A rejected request may still have an unread body: do not reuse its connection.
         self.close_connection=True
@@ -184,9 +184,12 @@ class Handler(BaseHTTPRequestHandler):
                 catalog=self.server.store.design_catalog.catalog()
                 if self.path=='/v1/designs':return self.reply(200,catalog_for_client(catalog,self.headers.get(EXPANDED_CATALOG_HEADER)))
                 ident=self.path.removeprefix('/v1/designs/')
+                thumbnail=ident.endswith('/thumbnail')
+                if thumbnail:ident=ident.removesuffix('/thumbnail')
                 item=next((item for item in catalog['designs'] if item['id']==ident),None)
                 if not item:return self.error(404,'not_found')
-                return self.reply(200,body=self.server.store.design_catalog.read(item))
+                item=design_for_client(item,self.headers.get(EXPANDED_CATALOG_HEADER),thumbnail)
+                return self.reply(200,body=self.server.store.design_catalog.read(item),content_type='image/png')
             except (ValueError,OSError,KeyError,RemoteError):return self.error(503,'design_catalog_unavailable')
         if self.path in ('/v1/auth/session','/v1/auth/account'):return self.reply(200,{'user_id':user,'app_licensed':self.server.store.allow_registration or self.server.store.accounts.app_entitled(user),'devices':self.server.store.accounts.devices(user)})
         if self.path=='/v1/bundles':
@@ -252,7 +255,26 @@ class Server(ThreadingHTTPServer):
         if maximum not in ('1','2','3','4'):raise ValueError('WALLET_MAX_CONCURRENT_REQUESTS must be an integer from 1 to 4')
         self.store=store;self.slots=threading.BoundedSemaphore(int(maximum));super().__init__(address,Handler)
     def process_request(self,request,address):
-        if not self.slots.acquire(blocking=False):request.close();return
+        if not self.slots.acquire(blocking=False):
+            # Small bounded reply, no handler/thread or request-body allocation.
+            try:
+                body=b'{"error":"server_busy"}'
+                request.settimeout(0.2)
+                # Drain only bounded headers so closing a socket with an unread
+                # GET does not reset/discard the 503 on Windows TCP stacks.
+                header=bytearray();deadline=time.monotonic()+0.2
+                while b'\r\n\r\n' not in header and len(header)<8192:
+                    remaining=deadline-time.monotonic()
+                    if remaining<=0:break
+                    request.settimeout(remaining)
+                    chunk=request.recv(8192-len(header))
+                    if not chunk:break
+                    header.extend(chunk)
+                request.sendall(b'HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 1\r\nCache-Control: no-store\r\nContent-Type: application/json\r\nContent-Length: '+str(len(body)).encode()+b'\r\n\r\n'+body)
+                request.shutdown(1) # SHUT_WR: finish the bounded reply before close.
+            except OSError:pass
+            finally:request.close()
+            return
         try:super().process_request(request,address)
         except BaseException:self.slots.release();raise
     def process_request_thread(self,request,address):
