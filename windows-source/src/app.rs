@@ -481,7 +481,10 @@ impl AirCardApp {
             }
             if !self.storage_ready && self.cloud_rx.is_none() && !crate::storage::is_demo() {
                 ui.label("Si acabas de cerrar otra versión, puedes volver a comprobar el almacenamiento sin borrar ninguna copia.");
-                if studio_button(ui,"Volver a comprobar mis copias locales",!self.is_busy && self.activation_rx.is_none(),false) {self.start_cloud_startup(ctx.clone());}
+                if studio_button(ui,"Volver a comprobar mis copias locales",!self.is_busy && self.activation_rx.is_none(),false) {
+                    let _ = std::fs::remove_file(crate::storage::root().join(".migration.lock"));
+                    self.start_cloud_startup(ctx.clone());
+                }
             }
             if self.account_stage==2 { ui.label("Introduce el código que te enviamos a ese correo y elige tu contraseña."); }
             if self.account_server.is_empty() && !self.auth_preview { ui.add_space(8.0); ui.label(egui::RichText::new("El servicio de cuentas aún no está configurado. El acceso estará disponible cuando se active. Tus copias locales se conservan.").color(md3::ON_SURFACE_VARIANT)); }
@@ -491,11 +494,16 @@ impl AirCardApp {
             });
             ui.add_space(12.0); ui.label("Correo electrónico"); ui.add_enabled(self.account_stage!=2,egui::TextEdit::singleline(&mut self.account_email).hint_text("tu@correo.com").background_color(md3::SURFACE_CONTAINER_HIGH).margin(egui::vec2(12.0,10.0)).desired_width(ui.available_width())); ui.add_space(10.0);
             let available=!self.account_server.is_empty() && self.storage_ready && self.cloud_rx.is_none() && self.activation_rx.is_none() && !self.is_busy && !self.scanning_syslog && !crate::storage::is_demo();
+            let login_available=!self.account_server.is_empty() && self.cloud_rx.is_none() && self.activation_rx.is_none() && !self.is_busy && !self.scanning_syslog && !crate::storage::is_demo();
             if !available && !self.auth_preview {
                 let reason=if self.account_server.is_empty() {
                     "El servicio de cuentas no está configurado. Introduce la dirección en la configuración avanzada."
                 } else if !self.storage_ready {
-                    "Preparando almacenamiento local de copias…"
+                    if self.account_stage == 1 {
+                        "Almacenamiento local en revisión. Puedes iniciar sesión con tu cuenta."
+                    } else {
+                        "Preparando almacenamiento local de copias…"
+                    }
                 } else if self.cloud_rx.is_some() || self.activation_rx.is_some() || self.is_busy {
                     "Operación en curso, espera un momento…"
                 } else if crate::storage::is_demo() {
@@ -550,7 +558,8 @@ impl AirCardApp {
             } else {
                 (12..=128).contains(&self.account_password.chars().count())
             };
-            let action=if self.account_stage>0 && studio_button(ui,if activation {"Verificar y crear mi cuenta"} else {"Iniciar sesión"},available && matching,true) {Some(activation)} else {None};
+            let can_submit=if activation {available} else {login_available};
+            let action=if self.account_stage>0 && studio_button(ui,if activation {"Verificar y crear mi cuenta"} else {"Iniciar sesión"},can_submit && matching,true) {Some(activation)} else {None};
             if let Some(register)=action {
                 let server=self.account_server.clone(); let email=self.account_email.clone(); let password=std::mem::take(&mut self.account_password);
                 let confirmation=std::mem::take(&mut self.account_confirmation);let code=std::mem::take(&mut self.account_code);

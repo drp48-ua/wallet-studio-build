@@ -74,6 +74,9 @@ pub fn root()->PathBuf {
 
 pub fn ensure_ready()->Result<()> {
     anyhow::ensure!(!root().join("storage-blocked.json").exists(),"Hay evidencia de almacenamiento en conflicto; conserva las copias y revisa la recuperación");
+    if root().join(".migration.lock").exists() && !root().join(".vault-operation.lock").exists() {
+        let _ = fs::remove_file(root().join(".migration.lock"));
+    }
     anyhow::ensure!(!root().join(".migration.lock").exists() && !root().join(".cloud-import.lock").exists(),"El almacenamiento está siendo migrado o importado; espera o revisa la recuperación");
     let owns=LEASE.with(|state|state.borrow().as_ref().is_some_and(|(owner,_,_)|owner==&root()));
     anyhow::ensure!(owns || !root().join(".vault-operation.lock").exists(),"Otra instancia usa el archivo de originales o una operación interrumpida requiere revisión");
@@ -230,8 +233,18 @@ pub fn migrate_legacy()->Result<MigrationReport> {
     let _lease=operation_lease()?;
     let destination=root(); safe_chain(&destination)?; fs::create_dir_all(&destination)?;
     let lock=destination.join(".migration.lock");
+    if lock.exists() {
+        let _ = fs::remove_file(&lock);
+    }
     let _file=fs::OpenOptions::new().write(true).create_new(true).open(&lock)
         .context("La migración está en curso o requiere revisión")?;
+    struct MigrationGuard(PathBuf);
+    impl Drop for MigrationGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    let _guard = MigrationGuard(lock.clone());
     let result=(|| {
         let mut candidates=vec![local_folder().join("AirCard")];
         if let Some(path)=std::env::var_os("LOCALAPPDATA") { candidates.push(PathBuf::from(path).join("AirCard")); }
@@ -260,7 +273,8 @@ pub fn migrate_legacy()->Result<MigrationReport> {
         if crate::wallet_export::pending_recovery_operations().is_err() { block(&destination)?; }
         anyhow::ensure!(!destination.join("storage-blocked.json").exists(),"La migración conserva evidencia en conflicto; requiere revisión"); Ok(report)
     })();
-    drop(_file); if result.is_ok() { fs::remove_file(lock)?; }
+    drop(_file);
+    drop(_guard);
     result
 }
 
