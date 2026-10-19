@@ -7,6 +7,13 @@ pub const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PIXELS: u64 = 16 * 1024 * 1024;
 pub const MAX_DESIGNS: usize = 100;
 pub const MAX_INCLUDED_DESIGNS: usize = 100;
+/// Paid catalogue: legacy 320x200 assets keep their 1 MiB bound, native card assets (1536x969) may reach 4 MiB.
+const LEGACY_ASSET_BYTES: usize = 1024 * 1024;
+const MAX_ASSET_BYTES: usize = 4 * 1024 * 1024;
+const LEGACY_DESIGN_SIZE: (u32, u32) = (320, 200);
+const NATIVE_DESIGN_SIZE: (u32, u32) = (crate::image_skin::CARD_WIDTH, crate::image_skin::CARD_HEIGHT);
+/// Keep in sync with NATIVE_2K_CAPABILITY in server/designs.py.
+const NATIVE_CATALOG_CAPABILITY: &str = "native-2k-v1";
 
 #[derive(Clone, Debug)]
 pub struct Design {
@@ -237,6 +244,12 @@ mod tests {
 pub struct PurchasedDesign { pub id:String,pub title:String,pub filename:String,pub sha256:String,pub bytes:usize,pub width:u32,pub height:u32 }
 #[derive(serde::Deserialize)]
 pub struct PurchasedCatalog { pub schema:u32,pub pack_id:String,pub entitled:bool,pub designs:Vec<PurchasedDesign> }
+/// Per-profile bound from the shared catalogue contract; unknown geometry is rejected.
+fn asset_limit(width:u32,height:u32)->Option<usize> {
+    if (width,height)==LEGACY_DESIGN_SIZE {Some(LEGACY_ASSET_BYTES)}
+    else if (width,height)==NATIVE_DESIGN_SIZE {Some(MAX_ASSET_BYTES)}
+    else {None}
+}
 pub fn account_dir(session:&crate::cloud_sync::Session)->Result<PathBuf> {
     anyhow::ensure!(crate::cloud_sync::valid_server(&session.server) && !session.user_id.is_empty(),"Cuenta no válida");
     let key=crate::bank_backup::sha256(format!("{}|{}",session.server,session.user_id).as_bytes())?;
@@ -244,7 +257,7 @@ pub fn account_dir(session:&crate::cloud_sync::Session)->Result<PathBuf> {
 }
 pub fn purchased_catalog(session:&crate::cloud_sync::Session)->Result<PurchasedCatalog> {
     anyhow::ensure!(crate::cloud_sync::valid_server(&session.server),"Servicio no válido");
-    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("X-Wallet-Studio-Catalog".into(),"expanded-v1".into())],&[],65536)
+    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("X-Wallet-Studio-Catalog".into(),NATIVE_CATALOG_CAPABILITY.into())],&[],65536)
         .context("No se pudo actualizar el pack: revisa tu conexión o actualiza el servidor")?;
     parse_purchased_catalog(&bytes)
 }
@@ -253,17 +266,18 @@ fn parse_purchased_catalog(bytes:&[u8])->Result<PurchasedCatalog> {
     let catalog:PurchasedCatalog=serde_json::from_slice(&bytes)?;
     anyhow::ensure!(catalog.schema==1 && catalog.pack_id=="studio-50-v1" && ((!catalog.entitled && catalog.designs.is_empty()) || (catalog.entitled && (50..=MAX_INCLUDED_DESIGNS).contains(&catalog.designs.len()))),"Catálogo no compatible");
     for (index,item) in catalog.designs.iter().enumerate() {
-        anyhow::ensure!(item.id==format!("ws-{:03}",index+1) && item.filename==format!("{}.png",item.id) && item.sha256.len()==64 && item.sha256.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) && item.bytes>0 && item.bytes<=1024*1024 && (item.width,item.height)==(320,200) && !item.title.is_empty() && item.title.len()<=320 && !item.title.chars().any(char::is_control),"Metadatos de diseño no válidos");
+        anyhow::ensure!(item.id==format!("ws-{:03}",index+1) && item.filename==format!("{}.png",item.id) && item.sha256.len()==64 && item.sha256.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) && item.bytes>0 && asset_limit(item.width,item.height).is_some_and(|limit|item.bytes<=limit) && !item.title.is_empty() && item.title.len()<=320 && !item.title.chars().any(char::is_control),"Metadatos de diseño no válidos");
     } Ok(catalog)
 }
 pub fn verify_purchased(item:&PurchasedDesign,bytes:&[u8])->Result<()> {
-    anyhow::ensure!(bytes.len()==item.bytes && bytes.len()<=1024*1024 && bytes.starts_with(b"\x89PNG\r\n\x1a\n") && crate::bank_backup::sha256(bytes)?==item.sha256,"El diseño descargado no pasó la verificación");
-    let image=decode_still(bytes)?;anyhow::ensure!((image.width(),image.height())==(320,200),"Tamaño de diseño no válido");Ok(())
+    let limit=asset_limit(item.width,item.height).context("Tamaño de diseño no válido")?;
+    anyhow::ensure!(bytes.len()==item.bytes && bytes.len()<=limit && bytes.starts_with(b"\x89PNG\r\n\x1a\n") && crate::bank_backup::sha256(bytes)?==item.sha256,"El diseño descargado no pasó la verificación");
+    let image=decode_still(bytes)?;anyhow::ensure!((image.width(),image.height())==(item.width,item.height),"Tamaño de diseño no válido");Ok(())
 }
 pub fn download_purchased(session:&crate::cloud_sync::Session,item:&PurchasedDesign)->Result<PathBuf> {
     anyhow::ensure!(crate::cloud_sync::valid_server(&session.server) && item.id.len()==6 && item.id.starts_with("ws-") && item.id[3..].bytes().all(|b|b.is_ascii_digit()),"Diseño no válido");
     // Always ask the service when using a paid design, including cached designs.
-    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs/{}",session.server,item.id),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],1024*1024)?;
+    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs/{}",session.server,item.id),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],MAX_ASSET_BYTES)?;
     verify_purchased(item,&bytes)?;
     let path=purchased_cache_path(session,item)?;
     store_purchased_cache(&path,item,&bytes)?;
@@ -320,6 +334,29 @@ mod paid_tests {
     fn fixture()->(PurchasedDesign,Vec<u8>) {
         let mut bytes=Vec::new();image::DynamicImage::new_rgb8(320,200).write_to(&mut Cursor::new(&mut bytes),image::ImageFormat::Png).unwrap();
         (PurchasedDesign {id:"ws-001".into(),title:"Fixture".into(),filename:"ws-001.png".into(),sha256:crate::bank_backup::sha256(&bytes).unwrap(),bytes:bytes.len(),width:320,height:200},bytes)
+    }
+    fn native_fixture()->(PurchasedDesign,Vec<u8>) {
+        let mut bytes=Vec::new();image::DynamicImage::new_rgb8(NATIVE_DESIGN_SIZE.0,NATIVE_DESIGN_SIZE.1).write_to(&mut Cursor::new(&mut bytes),image::ImageFormat::Png).unwrap();
+        (PurchasedDesign {id:"ws-051".into(),title:"Nativo".into(),filename:"ws-051.png".into(),sha256:crate::bank_backup::sha256(&bytes).unwrap(),bytes:bytes.len(),width:NATIVE_DESIGN_SIZE.0,height:NATIVE_DESIGN_SIZE.1},bytes)
+    }
+    #[test] fn native_card_assets_keep_their_four_mib_bound_and_capability_while_legacy_stays_one_mib() {
+        assert_eq!(NATIVE_CATALOG_CAPABILITY,"native-2k-v1");
+        assert_eq!((NATIVE_DESIGN_SIZE.0,NATIVE_DESIGN_SIZE.1),(crate::image_skin::CARD_WIDTH,crate::image_skin::CARD_HEIGHT));
+        let (mut item,bytes)=native_fixture();verify_purchased(&item,&bytes).unwrap();
+        let mut wrong=item.clone();wrong.width+=1;assert!(verify_purchased(&wrong,&bytes).is_err());
+        let mut value:serde_json::Value=serde_json::from_slice(include_bytes!("../../server/design-catalog.json")).unwrap();
+        value["entitled"]=serde_json::json!(true);
+        let mut native=value["designs"][50].clone();
+        native["width"]=serde_json::json!(1_536);native["height"]=serde_json::json!(969);native["bytes"]=serde_json::json!(3_500_000);
+        value["designs"][50]=native.clone();
+        assert_eq!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).unwrap().designs[50].width,1_536);
+        native["bytes"]=serde_json::json!(MAX_ASSET_BYTES+1);value["designs"][50]=native.clone();
+        assert!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).is_err());
+        native["bytes"]=serde_json::json!(1024);native["width"]=serde_json::json!(1_537);value["designs"][50]=native.clone();
+        assert!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).is_err());
+        let mut oversized=value["designs"][0].clone();oversized["bytes"]=serde_json::json!(LEGACY_ASSET_BYTES+1);value["designs"][0]=oversized;
+        assert!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).is_err());
+        item.bytes+=1;assert!(verify_purchased(&item,&bytes).is_err());
     }
     #[test] fn purchased_png_requires_exact_hash_size_format_and_dimensions() {
         let (mut item,bytes)=fixture();verify_purchased(&item,&bytes).unwrap();
