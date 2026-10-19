@@ -380,7 +380,8 @@ mod paid_tests {
         let session=crate::cloud_sync::Session {server:"https://example.invalid".into(),user_id:"fixture".into(),access_token:"fixture".into()};
         assert!(download_purchased(&session,&legacy).unwrap_err().to_string().contains("no se ampliará"));
         let mut value:serde_json::Value=serde_json::from_slice(include_bytes!("../../server/design-catalog.json")).unwrap();value["entitled"]=serde_json::json!(true);
-        let thumbnail=value["designs"][0].clone();value["designs"][0]["width"]=736.into();value["designs"][0]["height"]=460.into();value["designs"][0]["thumbnail"]=thumbnail;
+        let legacy_catalog:serde_json::Value=serde_json::from_slice(include_bytes!("../../server/design-catalog.legacy.json")).unwrap();
+        let thumbnail=legacy_catalog["designs"][0].clone();value["designs"][0]["width"]=736.into();value["designs"][0]["height"]=460.into();value["designs"][0]["thumbnail"]=thumbnail;
         let parsed=parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).unwrap();
         assert_eq!(parsed.designs[0].width,736);assert_eq!(parsed.designs[0].thumbnail.as_ref().unwrap().width,320);
         value["designs"][0]["thumbnail"]["id"]="ws-002".into();
