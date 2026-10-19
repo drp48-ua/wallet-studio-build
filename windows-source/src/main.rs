@@ -30,6 +30,7 @@ mod bank_backup;
 mod bank_changes;
 mod bank_runtime;
 mod transport_probe;
+mod glassmorphism;
 
 fn main() -> eframe::Result<()> {
     if std::env::args().any(|arg|arg=="--wallet-studio-design-check" || arg=="--wallet-studio-design-check-all") {
