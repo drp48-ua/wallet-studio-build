@@ -76,7 +76,8 @@ class Capacity(unittest.TestCase):
    try:
     with concurrent.futures.ThreadPoolExecutor(1) as pool:
      first=pool.submit(request,'/slow');self.assertTrue(entered.wait(2))
-     with self.assertRaises(urllib.error.HTTPError) as error:request('/health')
+     with request('/health') as response:self.assertEqual(response.status,200)
+     with self.assertRaises(urllib.error.HTTPError) as error:request('/v1/designs')
      self.assertEqual(error.exception.code,503);self.assertEqual(error.exception.headers['Retry-After'],'1');self.assertLess(len(error.exception.read()),128)
      release.set();first.result().close()
     with request('/health') as response:self.assertEqual(response.status,200)

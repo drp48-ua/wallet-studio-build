@@ -41,9 +41,25 @@ el manifiesto atómicamente. No conecta con Supabase ni requiere credenciales.
 6. Con una cuenta autorizada, verificar en la Biblioteca las 56 vistas sin errores,
    su vista ampliada, tamaños de ventana pequeño/grande y escalado DPI.
 
-La vista ampliada conserva una textura nativa por selección; la cuadrícula usa
-miniaturas ligeras. Al cambiar/deseleccionar se libera la textura anterior.
-La textura de un diseño comprado vuelve a validar sus bytes antes de mostrarse.
+El cliente 0.6.10 acepta un catálogo v2 sin miniatura separada: en ese caso utiliza
+el original tanto en Biblioteca como al aplicar el diseño. El servidor conserva
+las miniaturas legacy para clientes anteriores y peticiones pendientes anteriores
+a la actualización del catálogo. El cliente valida dimensiones, bytes y SHA-256.
+
+## Publicación autorizada del 20 de octubre
+
+Los 56 originales se cargaron en el bucket privado, bajo `studio-50-v1/native/`,
+con nombres content-addressed. El despliegue `6bc7094` devolvió 56 originales
+nativos y verificó ws-001, ws-026, ws-030 y ws-056 a 1536 × 969 desde el cliente
+oficial 0.6.10. La prueba masiva posterior detectó errores HTTP 502, por lo que
+esa muestra inicial no constituye aceptación completa.
+
+Se corrigió además la retención de trabajadores por conexiones HTTP keep-alive:
+las respuestas cierran la conexión y liberan la plaza al terminar. La comprobación
+de salud responde durante una descarga, con el mismo límite de lectura de 8192
+bytes/0,2 segundos y sin crear trabajadores adicionales. Las rutas protegidas
+mantienen 503 y Retry-After cuando no hay capacidad. No cambian los controles
+de acceso, las licencias ni la privacidad del bucket.
 
 ## Evidencia y límites
 
