@@ -485,13 +485,26 @@ impl AirCardApp {
             }
             if self.account_stage==2 { ui.label("Introduce el código que te enviamos a ese correo y elige tu contraseña."); }
             if self.account_server.is_empty() && !self.auth_preview { ui.add_space(8.0); ui.label(egui::RichText::new("El servicio de cuentas aún no está configurado. El acceso estará disponible cuando se active. Tus copias locales se conservan.").color(md3::ON_SURFACE_VARIANT)); }
-            #[cfg(debug_assertions)]
-            egui::CollapsingHeader::new("Configuración avanzada del servicio").default_open(false).show(ui,|ui| {
+            egui::CollapsingHeader::new("Configuración avanzada del servicio").default_open(self.account_server.is_empty()).show(ui,|ui| {
                 ui.label("Servicio de sincronización (HTTPS)");
-                ui.add(egui::TextEdit::singleline(&mut self.account_server).hint_text("https://tu-servicio.example").desired_width(ui.available_width()));
+                ui.add(egui::TextEdit::singleline(&mut self.account_server).hint_text("https://wallet-studio-accounts.onrender.com").desired_width(ui.available_width()));
             });
             ui.add_space(12.0); ui.label("Correo electrónico"); ui.add_enabled(self.account_stage!=2,egui::TextEdit::singleline(&mut self.account_email).hint_text("tu@correo.com").background_color(md3::SURFACE_CONTAINER_HIGH).margin(egui::vec2(12.0,10.0)).desired_width(ui.available_width())); ui.add_space(10.0);
             let available=!self.account_server.is_empty() && self.storage_ready && self.cloud_rx.is_none() && self.activation_rx.is_none() && !self.is_busy && !self.scanning_syslog && !crate::storage::is_demo();
+            if !available && !self.auth_preview {
+                let reason=if self.account_server.is_empty() {
+                    "El servicio de cuentas no está configurado. Introduce la dirección en la configuración avanzada."
+                } else if !self.storage_ready {
+                    "Preparando almacenamiento local de copias…"
+                } else if self.cloud_rx.is_some() || self.activation_rx.is_some() || self.is_busy {
+                    "Operación en curso, espera un momento…"
+                } else if crate::storage::is_demo() {
+                    "Modo demostración activo."
+                } else {
+                    "Servicio no disponible temporalmente."
+                };
+                ui.label(egui::RichText::new(reason).size(11.5).color(md3::ON_SURFACE_VARIANT));
+            }
             if self.account_stage==0 {
                 if studio_button(ui,"Activar mi acceso",available,true) {
                     self.account_recovery=false;self.activation_requested=Some(Instant::now());
@@ -499,7 +512,7 @@ impl AirCardApp {
                     self.cloud_status="Solicitando código de activación…".into();
                     thread::spawn(move|| {let ok=crate::cloud_sync::start_activation(&server,&email).is_ok();let _=tx.send(ok);ctx.request_repaint();});
                 }
-                if studio_button(ui,"Iniciar sesión con mi contraseña",available,false) {self.account_stage=1;}
+                if studio_button(ui,"Iniciar sesión con mi contraseña",!self.is_busy,false) {self.account_stage=1;}
                 if studio_button(ui,"He olvidado mi contraseña",available,false) {
                     self.account_recovery=true;self.activation_requested=Some(Instant::now());let (tx,rx)=channel();self.activation_rx=Some(rx);let server=self.account_server.clone();let email=self.account_email.clone();let ctx=ctx.clone();
                     self.cloud_status="Enviando código al correo de compra para recuperar el acceso…".into();
@@ -522,6 +535,9 @@ impl AirCardApp {
                     if self.activation_requested.is_some() {ctx.request_repaint_after(std::time::Duration::from_secs(1));}
                 }
                 ui.label("Contraseña (12–128 caracteres)");ui.add(egui::TextEdit::singleline(&mut self.account_password).password(!self.password_visible).background_color(md3::SURFACE_CONTAINER_HIGH).margin(egui::vec2(12.0,10.0)).desired_width(ui.available_width()));ui.add_space(10.0);
+                if self.account_stage==1 && !self.account_password.is_empty() && self.account_password.len()<12 {
+                    ui.colored_label(md3::ERROR,"La contraseña debe tener al menos 12 caracteres.");
+                }
                 if self.account_stage==2 {ui.label("Repite la contraseña");ui.add(egui::TextEdit::singleline(&mut self.account_confirmation).password(!self.password_visible).background_color(md3::SURFACE_CONTAINER_HIGH).margin(egui::vec2(12.0,10.0)).desired_width(ui.available_width()));ui.add_space(10.0);}
                 ui.checkbox(&mut self.password_visible,"Mostrar contraseña");
                 if self.account_stage==2 && !self.account_confirmation.is_empty() && self.account_password!=self.account_confirmation {ui.colored_label(md3::ERROR,"Las contraseñas todavía no coinciden.");}
@@ -529,7 +545,11 @@ impl AirCardApp {
             }
             if self.account_stage>0 {ui.checkbox(&mut self.account_link_consent,"Vincular las copias de este perfil a mi cuenta").on_hover_text("Confirmo que todas las copias e historiales de este perfil me pertenecen. Se sincronizarán con esta cuenta; su propietario no podrá cambiarse desde esta instalación.");}
             let activation=self.account_stage==2;
-            let matching=!activation || (self.account_password==self.account_confirmation && (12..=128).contains(&self.account_password.chars().count()) && self.account_code.len()==6 && self.account_code.bytes().all(|b|b.is_ascii_digit()));
+            let matching=if activation {
+                self.account_password==self.account_confirmation && (12..=128).contains(&self.account_password.chars().count()) && self.account_code.len()==6 && self.account_code.bytes().all(|b|b.is_ascii_digit())
+            } else {
+                (12..=128).contains(&self.account_password.chars().count())
+            };
             let action=if self.account_stage>0 && studio_button(ui,if activation {"Verificar y crear mi cuenta"} else {"Iniciar sesión"},available && matching,true) {Some(activation)} else {None};
             if let Some(register)=action {
                 let server=self.account_server.clone(); let email=self.account_email.clone(); let password=std::mem::take(&mut self.account_password);
@@ -554,7 +574,7 @@ impl AirCardApp {
                     let _=tx.send(CloudEvent::Complete(message)); ctx.request_repaint();
                 });
             }
-            if self.account_stage>0 && studio_button(ui,"Volver al correo",available,false) {self.account_stage=0;self.activation_requested=None;self.password_visible=false;self.account_password.clear();self.account_confirmation.clear();self.account_code.clear();}
+            if self.account_stage>0 && studio_button(ui,"Volver al correo",!self.is_busy,false) {self.account_stage=0;self.activation_requested=None;self.password_visible=false;self.account_password.clear();self.account_confirmation.clear();self.account_code.clear();}
             ui.add_space(12.0);
             egui::CollapsingHeader::new("Sobre tu cuenta y tus copias").show(ui,|ui| {
                 ui.label("La nube conserva originales bancarios verificados e historial por iPhone y tarjeta. Las copias del formato antiguo y los diarios inciertos se conservan localmente.");
@@ -638,7 +658,7 @@ impl AirCardApp {
             account_recovery:false,account_reset_devices:false,
             auth_preview:crate::storage::is_demo() && (std::env::args().any(|arg|arg=="--wallet-studio-auth-demo") || std::env::current_exe().ok().and_then(|path|path.file_stem().map(|stem|matches!(stem.to_string_lossy().to_ascii_uppercase().as_str(),"WSDEMOAU"|"WSDEMOA9"|"WSDEMOAF"))).unwrap_or(false)),
             cloud_rx:None,cloud_session:None,cloud_sync_queued:false,last_cloud_sync:Instant::now(),storage_ready:false,cloud_configured:true,cloud_synced:false,
-            cloud_status:"Preparando almacenamiento seguro…".into(),account_server:option_env!("WALLET_STUDIO_CLOUD_URL").unwrap_or("").into(),account_email:String::new(),account_password:String::new(),account_link_consent:false,
+            cloud_status:"Preparando almacenamiento seguro…".into(),account_server:option_env!("WALLET_STUDIO_CLOUD_URL").unwrap_or("https://wallet-studio-accounts.onrender.com").into(),account_email:String::new(),account_password:String::new(),account_link_consent:false,
             update_rx:None,update_status:"Actualizaciones automáticas".into(),
             brand,
             current_tab: AppTab::Wallet,
