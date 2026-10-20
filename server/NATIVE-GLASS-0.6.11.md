@@ -40,3 +40,11 @@ El primer candidato mostraba únicamente el fondo: la capa personalizada `Order:
 
 
 La revisión dirigida posterior a la corrección ejecutó las cinco pruebas de `glass` correctamente (incluye el orden final de pintura). El primer intento de enlazar coincidió con el diagnóstico host utilizando el EXE de pruebas y falló por bloqueo de archivo; tras terminar ese proceso, se repitió el enlace y pasó. El lead ejecutó el diagnóstico protegido con la cuenta existente: 112/112 GET verificados, 56 originales nativos y 56 vistas previas, sin errores, en 184,66 s. Una ejecución agregada anterior tuvo fallos transitorios; este resultado no garantiza disponibilidad futura ni sustituye la validación de cada descarga. No se relajó ninguna comprobación.
+
+
+## Candidato corregido final — fuente `8640431`
+
+- EXE `windows/Wallet Studio.exe`: 12.714.496 bytes, FileVersion/ProductVersion `0.6.11`, SHA-256 `9794bcda063a3af7ba2bc441cc2b0436141fdfe1c55936c9fa1a11c376df4c0f`.
+- ZIP `dist/Wallet-Studio-0.6.11-Windows.zip`: 8.351.077 bytes, SHA-256 `63a263011799f8dfa526fdd1be7150d3063908016c81a94e326d583fc52c8c42`.
+- Compilación corregida final: 5 min 58 s, correcta. Recepción final: CRC, igualdad exacta del EXE empaquetado, exclusión de 112 hashes privados y runtime personal/web, documentación/versiones correctas. Los hashes de esta sección sustituyen al primer candidato retirado. No hubo cambios funcionales después del código congelado.
+- Pruebas: suite requerida 170 + 1, integración sintética de escritorio, catálogo final 12 y pruebas visuales dirigidas posteriores a la corrección 5, todas correctas. Diagnóstico real protegido del lead: 112/112 descargas verificadas. La revisión visual final del host corresponde al lead; no se declara aceptada aquí. Sin consultas ni operaciones de teléfono por el worker.

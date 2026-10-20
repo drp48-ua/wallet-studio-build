@@ -24,10 +24,17 @@ La suite Python integrada final pasó 80 pruebas, con dos omisiones opcionales. 
 
 El primer candidato compilado tenía una capa de fondo que ocultaba los controles, aunque existían en accesibilidad. Fue rechazado en el host. Se corrige pintando sobre la capa de fondo predeterminada de egui antes de los paneles; una regresión comprueba el orden de pintura. No distribuir los hashes del primer candidato como definitivos.
 
-Pendiente de registrar al terminar: hashes del candidato corregido, revisión visual pequeña y grande, selección de diseño y traslado al editor, apertura de producción y comparación final de huellas de las copias originales. No hay autorización nueva para transferencias al teléfono en esta revisión.
+El candidato corregido se verificó visualmente en una demostración aislada de 1180×760: navegación y cuadrícula visibles con el nuevo estilo. Se abrió el mismo ejecutable en producción, en ventana maximizada: preparó el almacenamiento, recuperó la sesión existente y entró en Biblioteca con 56 diseños. Las primeras filas cargaron imágenes reales. El usuario interactuó con ambas ventanas; se evitó interrumpir repetidamente sus acciones. No se automatizó su contraseña.
+
+La selección y aplicación física en el teléfono no se repitieron: no había un iPhone conectado. El traslado al editor está cubierto por las pruebas conservadas; no se presenta como nueva prueba manual. No se certifica una transferencia real por esta revisión visual.
+
+EXE final SHA-256: `9794bcda063a3af7ba2bc441cc2b0436141fdfe1c55936c9fa1a11c376df4c0f`.
+ZIP final SHA-256: `63a263011799f8dfa526fdd1be7150d3063908016c81a94e326d583fc52c8c42`.
+Paquete local de entrega: `C:/Users/danir/Documents/Codex/Wallet-Studio-0.6.11-Windows.zip`.
+Proceso de producción abierto desde `windows/Wallet Studio.exe`. La demostración usa la extracción independiente en `outputs/wallet-studio-0.6.11-glass` y no contiene el perfil real. El servidor Node de la maqueta fue detenido.
 
 ## Privacidad y cuota
 
-No incluir imágenes comerciales, copias bancarias, sesiones, tokens, identidades ni registros privados en Git o en el ZIP. El snapshot privado anterior a abrir producción contiene 20 archivos de copias bancarias. Comparar solo conteos y huellas.
+No incluir imágenes comerciales, copias bancarias, sesiones, tokens, identidades ni registros privados en Git o en el ZIP. Comparación antes/después de abrir producción: 20 archivos bancarios antes, 20 después, cero diferencias de longitud o SHA-256. El ZIP comprobado excluye los hashes privados y los runtimes web.
 
 Consultar límites en los puntos de control. Con 3 % restante, guardar y subir esta rama; con 1 %, parar trabajo. No usar el crédito de reinicio.
