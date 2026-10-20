@@ -2501,19 +2501,13 @@ impl AirCardApp {
         if self.saved_cards.is_empty() {
             m3_card(ui,|ui| {ui.label("Aún no tienes tarjetas guardadas. Pulsa Añadir tarjeta con el iPhone conectado para empezar.");});
         } else {
-            let (_,tile_width)=crate::glass::gallery_layout(ui.available_width(),self.saved_cards.len());
             let cards=self.saved_cards.clone();
-            ui.scope(|ui| {
-                ui.spacing_mut().item_spacing=egui::vec2(16.0,16.0);
-                ui.horizontal_wrapped(|ui| {
-                    for card in &cards {
-                        let current=self.applied_thumbnail(ctx,&card.hash);let original=self.original_thumbnail(ctx,&card.hash);
-                        let verified=self.original_verified(&card.hash);let foreign=self.snapshot(&card.hash).is_some_and(|snapshot|snapshot.reference_device.is_some());
-                            if card_gallery::draw_card_tile(ui,tile_width,&card.name,&card.hash,current.as_ref(),original.as_ref(),verified,foreign,self.card_hash==card.hash,language) && !self.is_busy {
-                                self.select_saved_card(&card.hash);ctx.request_repaint();
-                            }
-                    }
-                });
+            crate::glass::gallery_rows(ui,&cards,|ui,card,tile_width| {
+                let current=self.applied_thumbnail(ctx,&card.hash);let original=self.original_thumbnail(ctx,&card.hash);
+                let verified=self.original_verified(&card.hash);let foreign=self.snapshot(&card.hash).is_some_and(|snapshot|snapshot.reference_device.is_some());
+                if card_gallery::draw_card_tile(ui,tile_width,&card.name,&card.hash,current.as_ref(),original.as_ref(),verified,foreign,self.card_hash==card.hash,language) && !self.is_busy {
+                    self.select_saved_card(&card.hash);ctx.request_repaint();
+                }
             });
         }
         ui.add_space(12.0);

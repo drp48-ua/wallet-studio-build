@@ -13,6 +13,15 @@ pub fn gallery_layout(available:f32,count:usize)->(usize,f32) {
  (columns,(width-16.0*(columns-1) as f32)/columns as f32)
 }
 
+/// Explicit rows avoid greedy wrapping dropping a column after fractional layout.
+pub fn gallery_rows<T>(ui:&mut egui::Ui,items:&[T],mut draw:impl FnMut(&mut egui::Ui,&T,f32)) {
+ ui.scope(|ui| {
+  ui.spacing_mut().item_spacing=egui::vec2(16.0,16.0);
+  let (columns,width)=gallery_layout(ui.available_width(),items.len());
+  for row in items.chunks(columns) {ui.horizontal(|ui| {for item in row {draw(ui,item,width);}});}
+ });
+}
+
 fn blend(a:Color32,b:Color32,t:f32)->Color32 {
  let a=a.to_array();let b=b.to_array();let v=std::array::from_fn::<_,4,_>(|i|((a[i] as f32)*(1.0-t)+(b[i] as f32)*t).round() as u8);
  Color32::from_rgba_premultiplied(v[0],v[1],v[2],v[3])
@@ -89,23 +98,27 @@ fn icon(p:&egui::Painter,r:Rect,index:usize,color:Color32) {
    assert!((tile*columns as f32+16.0*(columns-1) as f32-width).abs()<0.01);
   }
  }
- #[test] fn actual_saved_card_gallery_wraps_and_fills_each_complete_row() {
-  for screen_width in [900.0,1180.0,1600.0] {
+ #[test] fn actual_saved_card_gallery_fills_explicit_rows_with_sidebar_scrollbar_and_fractional_widths() {
+  for screen_width in [1180.0,1180.35,1920.0] {for count in [3,8] {
    let ctx=egui::Context::default();let mut bounds=Rect::NOTHING;let mut tile=0.0;let mut columns=0;
    let input=egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(screen_width,2000.0))),..Default::default()};
-   let mut output=egui::FullOutput::default();
-   for _ in 0..2 {output=ctx.run(input.clone(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|{
-    bounds=ui.available_rect_before_wrap();(columns,tile)=gallery_layout(ui.available_width(),8);
-    ui.spacing_mut().item_spacing=egui::vec2(16.0,16.0);
-    ui.horizontal_wrapped(|ui|{for index in 0..8 {crate::card_gallery::draw_card_tile(ui,tile,"Tarjeta de prueba",&format!("fixture-{index}"),None,None,false,false,false,crate::i18n::Language::Spanish);}});
-   });});}
-   // egui rounds allocated rectangle edges to physical pixels.
+   let mut output=egui::FullOutput::default();let items:Vec<usize>=(0..count).collect();
+   for _ in 0..3 {output=ctx.run(input.clone(),|ctx|{
+    egui::SidePanel::left("fixture-sidebar").exact_width(190.0).show(ctx,|ui|{ui.label("Tarjetas");});
+    egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(20,16))).show(ctx,|ui|{
+     egui::ScrollArea::vertical().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).show(ui,|ui|{
+      bounds=ui.available_rect_before_wrap();(columns,tile)=gallery_layout(ui.available_width(),count);
+      gallery_rows(ui,&items,|ui,index,width|{crate::card_gallery::draw_card_tile(ui,width,"Tarjeta de prueba",&format!("fixture-{index}"),None,None,false,false,false,crate::i18n::Language::Spanish);});
+     });
+    });
+   });}
    let height=(tile-24.0)*969.0/1536.0+124.0;
    let cards:Vec<Rect>=output.shapes.iter().filter_map(|shape|match &shape.shape {Shape::Rect(rect) if (rect.rect.width()-tile).abs()<=1.0 && (rect.rect.height()-height).abs()<=1.0=>Some(rect.rect),_=>None}).collect();
-   assert_eq!(cards.len(),8);assert!((cards[0].left()-bounds.left()).abs()<0.1);
+   assert_eq!(cards.len(),count);assert!((cards[0].left()-bounds.left()).abs()<0.1);
    assert!((cards[columns-1].right()-bounds.right()).abs()<0.1,"full row must reach right content edge");
-   assert!((cards[columns-1].top()-cards[0].top()).abs()<0.1);assert!(cards[columns].top()>cards[0].bottom());
-  }
+   assert!((cards[columns-1].top()-cards[0].top()).abs()<0.1);
+   if count>columns {assert!(cards[columns].top()>cards[0].bottom());}
+  }}
  }
  #[test] fn glass_panels_and_controls_stay_inside_compact_and_large_content() {
   for size in [egui::vec2(900.0,640.0),egui::vec2(1440.0,900.0)] {
