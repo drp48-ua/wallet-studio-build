@@ -2,13 +2,9 @@
 use anyhow::{Context, Result};
 use std::{fs, io::Write, path::{Path, PathBuf}};
 thread_local! { static LEASE:std::cell::RefCell<Option<(PathBuf,usize,std::rc::Rc<LeaseFile>)>>=const {std::cell::RefCell::new(None)}; }
-struct LeaseFile { root:PathBuf, file:Option<fs::File>,token:Vec<u8> }
-impl Drop for LeaseFile {
-    fn drop(&mut self) { self.file.take(); if !std::thread::panicking() {
-        let path=self.root.join(".vault-operation.lock");
-        if fs::read(&path).is_ok_and(|bytes|bytes==self.token) { let _=fs::remove_file(path); }
-    }}
-}
+// Ownership belongs to an OS handle, never the marker's mere presence. Legacy
+// bytes are archived before Windows arms atomic cleanup on handle release.
+struct LeaseFile { _file:fs::File }
 pub struct StorageLease { _file:std::rc::Rc<LeaseFile> }
 impl Drop for StorageLease {
     fn drop(&mut self) {
@@ -23,13 +19,63 @@ fn operation_lease_at(root:&Path)->Result<StorageLease> {
         if let Some((owner,depth,file))=state.as_mut() { anyhow::ensure!(owner==root,"storage root changed inside an operation"); *depth+=1; return Ok(Some(file.clone())); } Ok(None) })?;
     if let Some(file)=nested { return Ok(StorageLease {_file:file}); }
     safe_chain(root)?; fs::create_dir_all(root)?;
-    let token=crate::flasher::generate_token().into_bytes();
-    let mut file=fs::OpenOptions::new().write(true).create_new(true).open(root.join(".vault-operation.lock"))
-        .context("Otra instancia usa las copias o quedó una operación interrumpida; no se iniciará otra transferencia")?;
-    file.write_all(&token)?; file.sync_all()?;
-    let file=std::rc::Rc::new(LeaseFile {root:root.into(),file:Some(file),token});
+    let file=std::rc::Rc::new(LeaseFile {_file:open_operation_lock(root,true)?});
     LEASE.with(|state|*state.borrow_mut()=Some((root.into(),1,file.clone())));
     Ok(StorageLease {_file:file})
+}
+
+fn open_operation_lock(root:&Path,create:bool)->Result<fs::File> {
+    let path=root.join(".vault-operation.lock"); safe_chain(&path)?;
+    let mut options=fs::OpenOptions::new();
+    options.read(true).write(true).create(create).truncate(false);
+    // Also excludes pre-0.6.9 clients which held the marker open without an OS
+    // advisory lock. The original token is never truncated or replaced.
+    #[cfg(windows)] { use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0).custom_flags(0x00200000);
+        if create { options.access_mode(0xC0010000); } // GENERIC_READ|WRITE|DELETE
+    }
+    let file=options.open(&path).context("Otra instancia está usando las copias locales; ciérrala y vuelve a comprobar")?;
+    file.try_lock().context("Otra instancia está usando las copias locales; ciérrala y vuelve a comprobar")?;
+    let metadata=file.metadata()?;
+    anyhow::ensure!(metadata.is_file() && metadata.len()<=64,"El registro de exclusión local requiere revisión");
+    #[cfg(windows)] { use std::os::windows::fs::MetadataExt; anyhow::ensure!(metadata.file_attributes()&0x400==0,"El registro de exclusión local contiene un enlace"); }
+    // Empty is the new format; nonempty legacy tokens remain byte-for-byte.
+    let mut reader=&file; let mut token=Vec::new();
+    std::io::Read::read_to_end(&mut reader,&mut token)?;
+    anyhow::ensure!(token.is_empty() || (token.len()==20 && token.iter().all(u8::is_ascii_hexdigit)),
+        "El registro de exclusión local requiere revisión");
+    if create {
+        if !token.is_empty() { preserve_legacy_lock(root,&token)?; }
+        #[cfg(windows)] arm_lock_cleanup(&file)?;
+    }
+    Ok(file)
+}
+
+fn preserve_legacy_lock(root:&Path,token:&[u8])->Result<()> {
+    let path=root.join("lock-recovery").join(format!("{}.legacy-lock",crate::bank_backup::sha256(token)?));
+    safe_chain(&path)?;
+    if path.exists() {
+        let metadata=fs::symlink_metadata(&path)?;
+        anyhow::ensure!(metadata.is_file() && metadata.len()==token.len() as u64 && fs::read(&path)?==token,
+            "La evidencia del bloqueo anterior requiere revisión");
+    } else { write_new(&path,token)?; }
+    anyhow::ensure!(fs::read(path)?==token,"No se pudo verificar la evidencia del bloqueo anterior");
+    Ok(())
+}
+
+#[cfg(windows)]
+fn arm_lock_cleanup(file:&fs::File)->Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    #[link(name="kernel32")] unsafe extern "system" {
+        fn SetFileInformationByHandle(handle:*mut std::ffi::c_void,class:u32,info:*const u8,size:u32)->i32;
+    }
+    // FILE_DISPOSITION_INFO is one BOOLEAN. The same exclusive handle keeps
+    // the path unavailable until Windows closes+deletes it, including a kill.
+    let delete:u8=1;
+    if unsafe {SetFileInformationByHandle(file.as_raw_handle(),4,&delete,1)}==0 {
+        return Err(std::io::Error::last_os_error()).context("No se pudo preparar la exclusión segura de las copias");
+    }
+    Ok(())
 }
 static DEMO_ROOT:std::sync::OnceLock<PathBuf>=std::sync::OnceLock::new();
 pub fn is_demo()->bool { DEMO_ROOT.get().is_some() }
@@ -73,11 +119,29 @@ pub fn root()->PathBuf {
 }
 
 pub fn ensure_ready()->Result<()> {
-    anyhow::ensure!(!root().join("storage-blocked.json").exists(),"Hay evidencia de almacenamiento en conflicto; conserva las copias y revisa la recuperación");
-    anyhow::ensure!(!root().join(".migration.lock").exists() && !root().join(".cloud-import.lock").exists(),"El almacenamiento está siendo migrado o importado; espera o revisa la recuperación");
-    let owns=LEASE.with(|state|state.borrow().as_ref().is_some_and(|(owner,_,_)|owner==&root()));
-    anyhow::ensure!(owns || !root().join(".vault-operation.lock").exists(),"Otra instancia usa el archivo de originales o una operación interrumpida requiere revisión");
+    ensure_ready_at(&root())
+}
+fn ensure_ready_at(root:&Path)->Result<()> {
+    safe_chain(root)?;
+    anyhow::ensure!(!root.join("storage-blocked.json").exists(),"Hay evidencia de almacenamiento en conflicto; conserva las copias y revisa la recuperación");
+    anyhow::ensure!(!root.join(".migration.lock").exists() && !root.join(".cloud-import.lock").exists(),"El almacenamiento está siendo migrado o importado; espera o revisa la recuperación");
+    let owns=LEASE.with(|state|state.borrow().as_ref().is_some_and(|(owner,_,_)|owner.as_path()==root));
+    if !owns && root.join(".vault-operation.lock").exists() { let _probe=open_operation_lock(root,false)?; }
     Ok(())
+}
+
+/// Public, bounded diagnostic text: never display paths, token bytes or the
+/// contents of personal recovery evidence from an internal error chain.
+pub fn preparation_failure_message(error:&anyhow::Error)-> &'static str {
+    if error.chain().any(|cause|cause.downcast_ref::<std::io::Error>()
+        .is_some_and(|io|matches!(io.raw_os_error(),Some(32|33)))) {
+        "Otra versión de Wallet Studio está usando las copias. Ciérrala y pulsa Volver a comprobar mis copias locales. [almacenamiento-ocupado]"
+    } else if error.chain().any(|cause|cause.downcast_ref::<std::io::Error>()
+        .is_some_and(|io|io.kind()==std::io::ErrorKind::PermissionDenied)) {
+        "No se pudo acceder al almacenamiento personal. Comprueba los permisos de Windows y vuelve a comprobar las copias. [almacenamiento-permisos]"
+    } else {
+        "La preparación del almacenamiento terminó con un error. Se conservan tus copias y registros; vuelve a comprobarlos o revisa la recuperación. [almacenamiento-revision]"
+    }
 }
 fn card_key(udid:&str,hash:&str)->Result<String> {
     anyhow::ensure!(!udid.is_empty() && udid.len()<=256 && udid.trim()==udid && crate::wallet_export::is_exact_card_hash(hash),"invalid original identity");
@@ -227,18 +291,21 @@ fn merge_cards(source:&Path,destination:&Path,root:&Path,report:&mut MigrationRe
 
 pub fn migrate_legacy()->Result<MigrationReport> {
     if is_demo() { return Ok(MigrationReport::default()); }
-    let _lease=operation_lease()?;
-    let destination=root(); safe_chain(&destination)?; fs::create_dir_all(&destination)?;
+    let mut candidates=vec![local_folder().join("AirCard")];
+    if let Some(path)=std::env::var_os("LOCALAPPDATA") { candidates.push(PathBuf::from(path).join("AirCard")); }
+    if let Some(path)=std::env::var_os("USERPROFILE") { let profile=PathBuf::from(path);
+        candidates.push(profile.join("AppData/Local/AirCard"));
+        candidates.push(profile.join("AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/AirCard")); }
+    candidates.sort(); candidates.dedup();
+    migrate_legacy_at(&root(),&candidates)
+}
+fn migrate_legacy_at(destination:&Path,candidates:&[PathBuf])->Result<MigrationReport> {
+    let _lease=operation_lease_at(destination)?;
+    safe_chain(destination)?; fs::create_dir_all(destination)?;
     let lock=destination.join(".migration.lock");
     let _file=fs::OpenOptions::new().write(true).create_new(true).open(&lock)
         .context("La migración está en curso o requiere revisión")?;
     let result=(|| {
-        let mut candidates=vec![local_folder().join("AirCard")];
-        if let Some(path)=std::env::var_os("LOCALAPPDATA") { candidates.push(PathBuf::from(path).join("AirCard")); }
-        if let Some(path)=std::env::var_os("USERPROFILE") { let profile=PathBuf::from(path);
-            candidates.push(profile.join("AppData/Local/AirCard"));
-            candidates.push(profile.join("AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/AirCard")); }
-        candidates.sort(); candidates.dedup();
         let mut report=MigrationReport::default();
         for source in candidates { safe_chain(&source)?; if source.is_dir() && source!=destination {
             for name in ["bank-backups","bank-change-intents","wallet-backups","wallet-export-recovery","transport-probe-recovery","cards.json","settings.json"] {
@@ -257,7 +324,7 @@ pub fn migrate_legacy()->Result<MigrationReport> {
         if crate::bank_changes::review_persistence_store_at(&destination.join("bank-change-intents"),&destination).is_err() {
             block(&destination)?;
         }
-        if crate::wallet_export::pending_recovery_operations().is_err() { block(&destination)?; }
+        if crate::wallet_export::pending_recovery_operations_at(&destination.join("wallet-export-recovery")).is_err() { block(&destination)?; }
         anyhow::ensure!(!destination.join("storage-blocked.json").exists(),"La migración conserva evidencia en conflicto; requiere revisión"); Ok(report)
     })();
     drop(_file); if result.is_ok() { fs::remove_file(lock)?; }
@@ -266,6 +333,105 @@ pub fn migrate_legacy()->Result<MigrationReport> {
 
 #[cfg(test)] mod tests {
     use super::*;
+    fn fixture_root(label:&str)->PathBuf {
+        std::env::temp_dir().join(format!("ws-{label}-{}",crate::flasher::generate_token()))
+    }
+    #[cfg(windows)] #[test]
+    fn startup_reclaims_legacy_lock_only_after_exact_evidence_and_restores_old_client_compatibility() {
+        let root=fixture_root("orphan"); let path=root.join(".vault-operation.lock");
+        let bytes=b"abcdef1234567890abcd"; write_new(&path,bytes).unwrap();
+        migrate_legacy_at(&root,&[]).unwrap(); ensure_ready_at(&root).unwrap();
+        let audit=root.join("lock-recovery").join(format!("{}.legacy-lock",crate::bank_backup::sha256(bytes).unwrap()));
+        assert_eq!(fs::read(audit).unwrap(),bytes); assert!(!path.exists());
+        let legacy=fs::OpenOptions::new().write(true).create_new(true).open(&path).unwrap();
+        assert!(operation_lease_at(&root).is_err()); assert!(ensure_ready_at(&root).is_err());
+        drop(legacy); // An empty interrupted marker is also safe to reacquire.
+        let lease=operation_lease_at(&root).unwrap(); ensure_ready_at(&root).unwrap();
+        assert!(fs::OpenOptions::new().write(true).create_new(true).open(&path).is_err());
+        drop(lease);
+        let legacy_again=fs::OpenOptions::new().write(true).create_new(true).open(&path).unwrap();
+        drop(legacy_again);fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(windows)] #[test]
+    fn startup_malformed_or_unpreservable_lock_remains_untouched() {
+        for audit_failure in [false,true] {
+            let root=fixture_root("lock-refusal");let path=root.join(".vault-operation.lock");
+            let bytes:&[u8]=if audit_failure {b"abcdef1234567890abcd"} else {b"not a valid marker"};
+            write_new(&path,bytes).unwrap();
+            if audit_failure {write_new(&root.join("lock-recovery"),b"conflicting evidence").unwrap();}
+            assert!(operation_lease_at(&root).is_err());assert_eq!(fs::read(&path).unwrap(),bytes);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[cfg(windows)] #[test]
+    fn startup_legacy_recovery_does_not_clear_migration_import_global_or_card_blocks() {
+        let hash="OM6NYhwXMZrAw0sRUjR62wmF4ZQ=";
+        for marker in [".migration.lock",".cloud-import.lock","storage-blocked.json"] {
+            let root=fixture_root("gates");write_new(&root.join(marker),b"retained fixture evidence").unwrap();
+            let lease=operation_lease_at(&root).unwrap(); assert!(ensure_ready_at(&root).is_err());drop(lease);
+            assert_eq!(fs::read(root.join(marker)).unwrap(),b"retained fixture evidence");fs::remove_dir_all(root).unwrap();
+        }
+        let root=fixture_root("card-gate");block_card_at(&root,"synthetic",hash).unwrap();
+        migrate_legacy_at(&root,&[]).unwrap();assert!(ensure_card_ready_at(&root,"synthetic",hash).is_err());
+        fs::remove_dir_all(root).unwrap();
+        let root=fixture_root("bad-journal");
+        let state=root.join("wallet-export-recovery/abcdef1234567890abcd/state-0001-prepared.json");
+        write_new(&state,b"malformed journal fixture").unwrap();
+        assert!(migrate_legacy_at(&root,&[]).is_err());assert!(ensure_ready_at(&root).is_err());
+        assert_eq!(fs::read(state).unwrap(),b"malformed journal fixture");fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(windows)] #[test]
+    fn startup_valid_pending_journal_survives_lock_recovery_and_still_blocks_its_device() {
+        let root=fixture_root("pending-journal");let token="abcdef1234567890abcd";
+        let books:std::collections::BTreeMap<_,Option<Vec<u8>>>=crate::airlift::TRACKED_BOOKS_FILES.iter()
+            .map(|path|(path.to_string(),None)).collect();
+        let state=serde_json::to_vec(&serde_json::json!({"version":1,"revision":1,"token":token,
+            "udid":"synthetic-device","card_hash":"OM6NYhwXMZrAw0sRUjR62wmF4ZQ=",
+            "bundle_suffix":".pkpass","leaf":"cardBackgroundCombined@3x.png","phase":"export-uncertain",
+            "original_sha256":null,"books":books,"device_tokens":[token]})).unwrap();
+        let path=root.join("wallet-export-recovery").join(token).join("state-0001-export-uncertain.json");
+        write_new(&path,&state).unwrap();write_new(&root.join(".vault-operation.lock"),token.as_bytes()).unwrap();
+        migrate_legacy_at(&root,&[]).unwrap();ensure_ready_at(&root).unwrap();
+        let pending=crate::wallet_export::pending_recovery_operations_at(&root.join("wallet-export-recovery")).unwrap();
+        assert_eq!(pending.len(),1);assert!(pending[0].original_path.is_none());
+        assert!(crate::wallet_export::pending_recovery_blocks_device(Ok(&pending),Some("synthetic-device")));
+        assert_eq!(fs::read(path).unwrap(),state);fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn startup_failure_diagnostics_are_bounded_and_do_not_expose_private_error_context() {
+        let error=anyhow::anyhow!("private identity and path fixture");
+        let message=preparation_failure_message(&error);
+        assert!(message.contains("almacenamiento-revision"));assert!(!message.contains("private identity"));
+        let error=anyhow::Error::new(std::io::Error::from_raw_os_error(32));
+        assert!(preparation_failure_message(&error).contains("almacenamiento-ocupado"));
+    }
+    #[cfg(windows)] #[test] #[ignore="Subprocess helper invoked only by startup_process_termination test"]
+    fn startup_child_lock_holder() {
+        let root=PathBuf::from(std::env::var_os("WALLET_STUDIO_LOCK_CHILD_ROOT").expect("parent fixture required"));
+        assert!(root.is_absolute() && root.starts_with(std::env::temp_dir()));safe_chain(&root).unwrap();
+        let _lease=operation_lease_at(&root).unwrap();write_new(&root.join("child-ready"),b"ready").unwrap();
+        loop {std::thread::park();}
+    }
+    #[cfg(windows)] #[test]
+    fn startup_process_termination_releases_os_lock_without_external_marker_deletion() {
+        struct ChildGuard(std::process::Child);
+        impl Drop for ChildGuard {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
+        let root=fixture_root("killed-lock");
+        let child=std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","storage::tests::startup_child_lock_holder","--ignored"])
+            .env("WALLET_STUDIO_LOCK_CHILD_ROOT",&root).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .spawn().unwrap();let mut child=ChildGuard(child);
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
+        while !root.join("child-ready").exists() {
+            assert!(std::time::Instant::now()<deadline,"child did not acquire fixture lease");
+            assert!(child.0.try_wait().unwrap().is_none(),"child exited before holding lease");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(operation_lease_at(&root).is_err());
+        child.0.kill().unwrap();child.0.wait().unwrap();
+        assert!(!root.join(".vault-operation.lock").exists());
+        let lease=operation_lease_at(&root).unwrap();drop(lease);fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn customer_lease_excludes_threads_and_retains_nested_guard() {
         let base=std::env::temp_dir().join(format!("ws-lease-{}",crate::flasher::generate_token()));
         let outer=operation_lease_at(&base).unwrap(); let inner=operation_lease_at(&base).unwrap();

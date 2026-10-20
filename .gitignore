@@ -11,3 +11,4 @@ server/data/
 *.pem
 *.key
 ios-diagnostics/shader-probe/build/
+test-assets/

@@ -18,9 +18,9 @@ Los eventos completos de pedido calculan derechos por unidades restantes de cada
 
 ## Bucket y catálogo
 
-Solo se versiona `server/design-catalog.json`: schema1, pack_id `studio-50-v1`, título y 50 objetos `designs` con id `ws-001`..`ws-050`, filename `ws-001.png`..`ws-050.png`, title, sha256, bytes, width320, height200. Cada PNG debe ser RGB/RGBA8 sin entrelazado ni animación y máximo1MiB. Los CRC de chunks, tamaño de píxeles descomprimidos, hash y tamaño se verifican. El catálogo tiene máximo64KiB. No introducir imágenes de pago en Git, `windows/designs` ni instaladores.
+Solo se versiona `server/design-catalog.json`: schema1, pack_id estable `studio-50-v1`, título y actualmente 56 objetos `designs` con id `ws-001`..`ws-056`, filename correspondiente, title, sha256, bytes, width320, height200. Los 50 objetos anteriores conservan todos sus metadatos y recursos. La validación admite entre50 y100 objetos consecutivos para permitir ampliaciones acotadas. Cada PNG debe ser RGB/RGBA8 sin entrelazado ni animación y máximo1MiB. Los CRC de chunks, tamaño de píxeles descomprimidos, hash y tamaño se verifican. El catálogo tiene máximo64KiB. No introducir imágenes de pago en Git, `windows/designs` ni instaladores.
 
-Usar el bucket **privado** `wallet-designs`, claves `studio-50-v1/ws-001.png`..`ws-050.png`, MIME `image/png`, límite al menos1MiB. No crear políticas de lectura/escritura de ese bucket para anon/authenticated ni enlaces públicos. El servidor usa exclusivamente la service role mediante `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY`, ya configuradas para copias; esas credenciales nunca llegan al cliente. El bucket bancario existente no cambia. `WALLET_DESIGN_CATALOG` es opcional; por defecto se carga `design-catalog.json` junto a app.py, copiado por Docker. El arranque no descarga imágenes ni exige consultar Storage para este pack; ausencia/corrupción del catálogo o bucket se informa como503 en su API.
+Usar el bucket **privado** `wallet-designs`, claves `studio-50-v1/ws-001.png`..`ws-056.png`, MIME `image/png`, límite al menos1MiB. No crear políticas de lectura/escritura de ese bucket para anon/authenticated ni enlaces públicos. El servidor usa exclusivamente la service role mediante `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY`, ya configuradas para copias; esas credenciales nunca llegan al cliente. El bucket bancario existente no cambia. `WALLET_DESIGN_CATALOG` es opcional; por defecto se carga `design-catalog.json` junto a app.py, copiado por Docker. El arranque no descarga imágenes ni exige consultar Storage para este pack; ausencia/corrupción del catálogo o bucket se informa como503 en su API.
 
 Aprovisionamiento desde carpeta privada, con secretos únicamente en variables de entorno:
 
@@ -28,11 +28,19 @@ Aprovisionamiento desde carpeta privada, con secretos únicamente en variables d
 python server/upload_designs.py --source 'RUTA_PRIVADA/studio-50-v1' --catalog server/design-catalog.json
 ```
 
-Primero valida los50 archivos. Crea bucket privado PNG si falta; rechaza bucket público; sube sin sobrescritura y descarga de nuevo para verificar cada objeto. Repetir es idempotente si bytes/hash coinciden; un conflicto no sustituye el objeto existente. El script solo imprime un conteo o un error genérico, sin secretos ni rutas. No ejecutarlo contra otro proyecto ni pegar secretos en terminal/chats. Las pruebas usan fixtures temporales y adaptador HTTP simulado.
+Sin filtro, primero valida todos los archivos del catálogo. Crea bucket privado PNG si falta; rechaza bucket público; sube sin sobrescritura y descarga de nuevo para verificar cada objeto. Repetir es idempotente si bytes/hash coinciden; un conflicto no sustituye el objeto existente. El script solo imprime un conteo o un error genérico, sin secretos ni rutas. No ejecutarlo contra otro proyecto ni pegar secretos en terminal/chats. Las pruebas usan fixtures temporales y adaptador HTTP simulado.
+
+Para añadir únicamente los seis diseños nuevos, prepara una carpeta privada con `ws-051.png`..`ws-056.png` y utiliza:
+
+```sh
+python server/upload_designs.py --source 'RUTA_PRIVADA/nuevos-seis' --catalog server/design-catalog.json --only ws-051 ws-052 ws-053 ws-054 ws-055 ws-056
+```
+
+El filtro valida el catálogo completo y todos los archivos seleccionados antes de cualquier llamada remota. Rechaza IDs desconocidos o repetidos y conserva el modo de creación sin sobrescritura y la lectura posterior. No exige tener en esa carpeta los50archivos anteriores. Publicar los nuevos objetos debe preceder al despliegue que anuncia56diseños. Esta documentación no ejecuta la subida ni el despliegue.
 
 ## API y caché
 
-- GET `/v1/designs`: Bearer de sesión vigente; con licencia app activa devuelve los50metadatos, también para compradores anteriores. Una cuenta con derechos históricos de pack los conserva sin recibir licencia app. Sin derecho al catálogo responde schema1/entitledfalse/designs vacío. No expone URL de Storage.
+- GET `/v1/designs`: Bearer de sesión vigente; con licencia app activa y cabecera `X-Wallet-Studio-Catalog: expanded-v1` devuelve el catálogo ampliado, actualmente56metadatos, también para compradores anteriores. Sin esa capacidad exacta devuelve los primeros50metadatos para conservar compatibilidad con0.6.5–0.6.7. La cabecera no cambia los derechos. Una cuenta con derechos históricos de pack los conserva sin recibir licencia app. Sin derecho al catálogo responde schema1/entitledfalse/designs vacío. No expone URL de Storage. La app0.6.8 admite tanto una respuesta anterior de50 como la ampliada, con máximo100objetos y64KiB.
 - GET `/v1/designs/ws-001`: Bearer y derecho al pack vigentes; devuelve PNG verificado. No acepta user_id, producto, bucket ni rutas del cliente. Un cliente sin sesión recibe401; sin derecho al catálogo recibe403 en descarga. Revocar el equipo invalida su sesión.
 - GET/PUT `/v1/bundles` y GET `/v1/auth/session` continúan exigiendo licencia app. GET `/v1/auth/account` devuelve identidad, licencia app y equipos para Biblioteca/Cuenta.
 

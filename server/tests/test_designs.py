@@ -67,7 +67,7 @@ class PaidDesignTests(unittest.TestCase):
   session=self.activate_order();self.configure();self.assertEqual(self.auth.subject(session['access_token']),session['user_id']);self.assertTrue(self.auth.pack_entitled(session['user_id']))
  def test_authenticated_http_account_isolation_and_pack_only_no_bundle_access(self):
   self.configure();app=self.activate_order();pack=self.activate_order(789,'pack@example.test',2);bundle=self.activate_order(456,'bundle@example.test',3)
-  data=png();catalog=fixture_catalog(data);self.store.design_catalog.catalog=lambda:catalog;self.store.design_catalog.read=lambda item:data
+  data=png();catalog=fixture_catalog(data);self.store.design_catalog.catalog=lambda capability=None:catalog;self.store.design_catalog.read=lambda item,capability=None:data
   server=Server(('127.0.0.1',0),self.store);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
   def request(path,token=None):
    headers={} if token is None else {'Authorization':'Bearer '+token}
@@ -86,7 +86,7 @@ class PaidDesignTests(unittest.TestCase):
    self.webhook(self.order(ident=2,product=789,updated='2026-10-15T12:03:00Z',status='refunded'),'revoke','orders/updated')
    self.assertEqual(request('/v1/designs/ws-001',pack['access_token'])[0],401)
    self.assertEqual(request('/v1/designs/ws-001',bundle['access_token']),(200,data))
-   self.store.design_catalog.read=lambda item:(_ for _ in ()).throw(ValueError('corrupt fixture'))
+   self.store.design_catalog.read=lambda item,capability=None:(_ for _ in ()).throw(ValueError('corrupt fixture'))
    self.assertEqual(request('/v1/designs/ws-001',bundle['access_token'])[0],503)
   finally:server.shutdown();server.server_close();thread.join()
  def test_catalog_png_and_provisioning_are_bounded_private_and_verified(self):
