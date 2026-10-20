@@ -15,6 +15,7 @@ mod airtraffic;
 mod card_gallery;
 mod app;
 mod auth_ui;
+mod glass;
 mod brand;
 mod apple;
 mod device;
@@ -32,6 +33,10 @@ mod bank_runtime;
 mod transport_probe;
 
 fn main() -> eframe::Result<()> {
+    if std::env::args().any(|arg|arg=="--wallet-studio-design-check" || arg=="--wallet-studio-design-check-all") {
+        println!("{}",design_library::diagnose_account_designs(std::env::args().any(|arg|arg=="--wallet-studio-design-check-all")));
+        return Ok(());
+    }
     if let Some(result)=run_emergency_return_if_requested() {
         if let Err(error)=result {eprintln!("RECUPERACION_ERROR: {error:#}");std::process::exit(2);}
         return Ok(());
