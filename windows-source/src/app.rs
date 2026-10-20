@@ -63,7 +63,7 @@ enum CardCacheMessage {
 
 fn thumbnail(bytes: &[u8]) -> Option<egui::ColorImage> {
     let decoded = crate::design_library::decode_still(bytes).ok()?;
-    let image = decoded.resize(decoded.width().min(1536),decoded.height().min(969),image::imageops::FilterType::Lanczos3).to_rgba8();
+    let image = decoded.resize(decoded.width().min(768), decoded.height().min(485), image::imageops::FilterType::Lanczos3).to_rgba8();
     Some(egui::ColorImage::from_rgba_unmultiplied([image.width() as usize,image.height() as usize],image.as_raw()))
 }
 
@@ -165,7 +165,7 @@ fn prepare_library_design(path: PathBuf) -> anyhow::Result<LoadedLibraryDesign> 
         (image, frames)
     } else { (crate::design_library::decode_still(&bytes)?, Vec::new()) };
     let skin = PreparedSkin::from_image_with_focus(source_image.clone(), 0.5, 0.5)?;
-    let rgba = source_image.thumbnail(source_image.width().min(2048), source_image.height().min(2048)).to_rgba8();
+    let rgba = source_image.resize(source_image.width().min(768), source_image.height().min(485), image::imageops::FilterType::Lanczos3).to_rgba8();
     let preview = egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
     Ok(LoadedLibraryDesign { path, source_image, frames, skin, preview })
 }
@@ -1025,8 +1025,8 @@ impl AirCardApp {
                 if detailed && crate::design_library::native_geometry(item.width,item.height) {crate::design_library::cached_purchased(&session,&item)?} else {crate::design_library::cached_thumbnail(&session,&item)?}
             } else {read_path}} else {read_path};
             let image=crate::design_library::read_image(&read_path).and_then(|bytes|crate::design_library::decode_still(&bytes))?;
-            let maximum=if detailed {1536} else {768};
-            let image=image.resize(image.width().min(maximum),image.height().min(maximum),image::imageops::FilterType::Lanczos3).to_rgba8();
+            let (max_w, max_h) = if detailed { (768, 485) } else { (384, 242) };
+            let image=image.resize(image.width().min(max_w),image.height().min(max_h),image::imageops::FilterType::Lanczos3).to_rgba8();
             Ok(egui::ColorImage::from_rgba_unmultiplied([image.width() as usize,image.height() as usize],image.as_raw()))
         });
     }
@@ -1169,7 +1169,7 @@ impl AirCardApp {
     }
 
     fn update_gif_texture(&mut self, ctx: &egui::Context, image: &DynamicImage) {
-        let rgba = image.thumbnail(2048, 2048).to_rgba8();
+        let rgba = image.resize(image.width().min(768), image.height().min(485), image::imageops::FilterType::Triangle).to_rgba8();
         let preview = egui::ColorImage::from_rgba_unmultiplied(
             [rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
         if let Some(texture) = self.source_texture.as_mut() {
@@ -2513,7 +2513,8 @@ impl AirCardApp {
         if self.prepared_texture.is_none() {
             if let Some(skin) = &self.skin {
                 if let Ok(image) = crate::design_library::decode_still(&skin.png) {
-                    let rgba = image.to_rgba8();
+                    let resized = image.resize(768, 485, image::imageops::FilterType::Lanczos3);
+                    let rgba = resized.to_rgba8();
                     let color_img = egui::ColorImage::from_rgba_unmultiplied(
                         [rgba.width() as usize, rgba.height() as usize],
                         rgba.as_raw(),
