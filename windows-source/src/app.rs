@@ -23,6 +23,17 @@ use crate::scanner::{SavedCard, load_saved_cards, scan_syslog_for_cards};
 mod ui_card_state;
 use ui_card_state::{AutoCapture, CapturePhase, OriginalState, SnapshotCache, capture_device_for_selection};
 
+// Retire the old receiver before starting a replacement worker. A scanner may
+// enqueue CardFound and Done together, or Done may arrive just after CardFound.
+fn retire_task_receiver<T>(receiver: &mut Option<Receiver<T>>, finished: bool, card_found: bool) -> bool {
+    if finished || card_found {
+        *receiver = None;
+        true
+    } else {
+        false
+    }
+}
+
 struct CardSnapshot {
     udid: Option<String>, known_device: Option<String>, original: OriginalState,
     reference_device:Option<String>,
@@ -123,6 +134,7 @@ enum AppTab {
     Help,
     Account,
 }
+
 fn cloud_sync_status(session:&crate::cloud_sync::Session,previously_authenticated:bool,tx:&std::sync::mpsc::Sender<CloudEvent>,ctx:&egui::Context)->(bool,bool,bool,bool,String) {
     match crate::cloud_sync::account_app_license(session) {
         Ok(false)=>return (false,true,false,false,"Tu cuenta conserva derechos históricos de diseños. Necesitas una licencia vigente de Wallet Studio para utilizar el iPhone y sus copias.".into()),
@@ -172,7 +184,7 @@ fn paint_library_preview(ui:&egui::Ui,rect:egui::Rect,path:&Path,texture:Option<
 enum BackgroundTaskMessage {
     Progress { step: usize, total: usize, message: String },
     Log(String),
-    CardFound { hash: String, name: String },
+    CardFound { udid: String, hash: String, name: String },
     DesignSaved(PathBuf),
     Done(Result<String, String>),
     OriginalBackupDone { udid: String, hash: String, result: Result<Option<String>, String> },
@@ -449,6 +461,16 @@ impl AirCardApp {
             ui.add_space(18.0);
             if self.account_authenticated || self.library_authenticated {
                 ui.label("Sesión guardada de forma segura en este equipo. Se comprobará al abrir la app; caduca tras 30 días sin uso o a los 90 días.");
+                ui.add_space(12.0);
+                let downloaded=self.purchased_designs.len();
+                let uploaded=self.library_designs.len();
+                let verified=if self.cloud_synced {downloaded} else {0};
+                ui.columns(3,|columns| {
+                    kpi_card(&mut columns[0],downloaded,"Descargadas",md3::PRIMARY);
+                    kpi_card(&mut columns[1],uploaded,"Subidas",md3::ON_SURFACE_VARIANT);
+                    kpi_card(&mut columns[2],verified,"Verificadas",if verified>0 {md3::SUCCESS} else {md3::ON_SURFACE_VARIANT});
+                });
+                ui.add_space(8.0);
                 let idle=self.account_devices_rx.is_none() && self.cloud_rx.is_none() && !self.is_busy && !self.scanning_syslog;
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(if self.cloud_synced {"Copias verificadas"} else {"Sincronización pendiente"}).strong().color(if self.cloud_synced {md3::SUCCESS} else {md3::PRIMARY}));
@@ -726,7 +748,7 @@ impl AirCardApp {
             logs: Vec::new(),
             show_logs_window: false,
             pending_recoveries: Vec::new(),
-            recovery_status_error: Some("Comprobando el estado local de recuperación…".into()),
+            recovery_status_error: None,
         };
 
         app.add_log("Wallet Studio initialized");
@@ -922,7 +944,11 @@ impl AirCardApp {
         match self.purchased_rx.as_ref().map(|rx|rx.try_recv()) {
             Some(Ok((key,result)))=>{
                 self.purchased_rx=None;
-                if key==owner {match result {Ok(items)=> {self.purchased_status=if items.is_empty() {"Tu compra de Wallet Studio incluye diseños. Si no aparecen, actualiza la biblioteca o revisa el estado de tu cuenta.".into()} else {format!("{} diseños incluidos con Wallet Studio. Se verifica tu acceso al usar un diseño.",items.len())};self.purchased_designs=items;},Err(error)=>{self.purchased_status=error;}}}
+                if key==owner {match result {Ok(items)=> {
+                    let native_2k=items.len()==56 && items.iter().all(|(item,_)| (item.width,item.height)==(crate::image_skin::CARD_WIDTH,crate::image_skin::CARD_HEIGHT));
+                    self.purchased_status=if native_2k {"56 diseños 2K verificados (1536 × 969). Se priorizan originales locales y se rechazan miniaturas obsoletas.".into()} else if items.is_empty() {"Tu compra de Wallet Studio incluye diseños. Si no aparecen, actualiza la biblioteca o revisa el estado de tu cuenta.".into()} else {format!("{} diseños incluidos con Wallet Studio. Se verifica tu acceso y la resolución al usar un diseño.",items.len())};
+                    self.purchased_designs=items;
+                },Err(error)=>{self.purchased_status=error;}}}
             },
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected))=>{self.purchased_rx=None;self.purchased_status="No se pudo actualizar la biblioteca. Vuelve a intentarlo.".into();},
             _=>{},
@@ -1012,7 +1038,7 @@ impl AirCardApp {
                         let session=self.cloud_session.clone();let key=self.library_owner.clone();let ctx=ctx.clone();let demo=crate::storage::is_demo();
                         thread::spawn(move|| {
                             let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||->anyhow::Result<_> {
-                                let path=if !demo {if let Some(item)=paid {crate::design_library::download_purchased(&session.context("Inicia sesión para usar el diseño")?,&item)?} else {path}} else {path};
+                                let path=if !demo {if let Some(item)=paid {crate::design_library::cached_purchased(&session.context("Inicia sesión para usar el diseño")?,&item)?} else {path}} else {path};
                                 prepare_library_design(path)
                             })).unwrap_or_else(|_|Err(anyhow::anyhow!("Preparación interrumpida"))).map_err(|_|"No se pudo preparar el diseño. Revisa la conexión, tu acceso y el archivo; tu selección y el diseño anterior se conservan. Vuelve a intentarlo.".into());
                             let _=tx.send((key,request,result));ctx.request_repaint();
@@ -1259,8 +1285,8 @@ impl AirCardApp {
                 udid.as_deref(),
                 connection_mode,
                 stop_flag,
-                move |hash, name| {
-                    let _ = tx_card.send(BackgroundTaskMessage::CardFound { hash, name });
+                move |card_udid, hash, name| {
+                    let _ = tx_card.send(BackgroundTaskMessage::CardFound { udid: card_udid, hash, name });
                 },
                 move |msg| {
                     let _ = tx_log.send(BackgroundTaskMessage::Log(msg));
@@ -1461,11 +1487,9 @@ impl AirCardApp {
     }
 
     fn capture_original_backup(&mut self) {
-        if self.session_pending {return;}
         if self.cloud_rx.is_some() { return; }
-        if !self.storage_ready || crate::storage::is_demo() || !crate::cloud_sync::missing_original_capture_allowed(self.cloud_configured,self.cloud_synced) { return; }
-        if self.is_busy || self.scanning_syslog || self.pending_recovery_blocks_selected()
-            || self.recovery_status_error.is_some() || !self.selected_usb_ready() {
+        if !self.storage_ready || crate::storage::is_demo() { return; }
+        if self.is_busy || self.scanning_syslog || self.pending_recovery_blocks_selected() || !self.selected_usb_ready() {
             return;
         }
         let Some(udid) = self.selected_udid.clone() else { return };
@@ -1473,6 +1497,13 @@ impl AirCardApp {
         if hash.is_empty() {
             self.status_msg = self.language.text("Selecciona una tarjeta antes de guardar su copia original.").to_string();
             return;
+        }
+        if let Some(request) = self.auto_capture.as_mut() {
+            if request.hash != hash || request.device.as_deref() != Some(udid.as_str())
+                || !matches!(request.phase, CapturePhase::Waiting | CapturePhase::Running) {
+                return;
+            }
+            request.phase = CapturePhase::Running;
         }
         self.is_busy = true;
         self.progress_step = 0;
@@ -1488,14 +1519,18 @@ impl AirCardApp {
             let result = (|| -> anyhow::Result<Option<String>> {
                 // Revalidate persistence, identity and recovery immediately before
                 // any device capture; presentation snapshots never authorize writes.
+                crate::storage::ensure_card_ready(&udid, &hash)?;
+                anyhow::ensure!(!crate::wallet_export::pending_recovery_blocks_device(
+                    Ok(&crate::wallet_export::pending_recovery_operations()?),Some(&udid)),
+                    "Resuelve la recuperación pendiente de este iPhone antes de capturar");
                 if crate::bank_backup::load_baseline(&udid,&hash)?.is_some() { return Ok(Some("verified".into())); }
                 if crate::wallet_backup::backup_evidence_exists(&udid,&hash) {
                     crate::wallet_backup::load_original_assets(&udid,&hash)?;
                     return Ok(Some("verified".into()));
                 }
-                anyhow::ensure!(!crate::wallet_export::pending_recovery_blocks_device(
-                    Ok(&crate::wallet_export::pending_recovery_operations()?),Some(&udid)),
-                    "Resuelve la recuperación pendiente de este iPhone antes de capturar");
+                anyhow::ensure!(crate::bank_backup::verified_baseline_device_for_card(&hash)
+                    .is_none_or(|known| known == udid),
+                    "Existe un original de otro iPhone; no se reutilizará como autorización de captura");
                 anyhow::ensure!(crate::bank_changes::load_latest_intent(&udid,&hash)?.is_none(),
                     "Existe historial de diseños sin original verificable; conserva la evidencia y resuelve la recuperación");
                 anyhow::ensure!(list_connected_devices()?.iter().any(|device| device.udid == udid && device.has_transport(DeviceTransport::Usb)),
@@ -1510,7 +1545,41 @@ impl AirCardApp {
     }
 
     fn refresh_recovery_status(&mut self) {
+        self.check_recovery_status(true);
+    }
+
+    // Completion checks must never turn a failed capture into an automatic retry.
+    fn check_recovery_status(&mut self, retry_capture: bool) {
+        match crate::wallet_export::pending_recovery_operations() {
+            Ok(pending) => {
+                let count = pending.len();
+                self.pending_recoveries = pending;
+                self.recovery_status_error = None;
+                if count == 0 {
+                    self.add_log("Comprobación de recuperaciones: ninguna operación pendiente.");
+                    if retry_capture {
+                        self.status_msg = "Sin recuperaciones pendientes. Comprobando la copia original seleccionada…".into();
+                    }
+                } else {
+                    self.add_log(format!("Comprobación de recuperaciones: {count} operación(es) pendiente(s)."));
+                    self.status_msg = format!("Se encontraron {count} recuperación(es) pendiente(s). Revisa Registro.");
+                }
+            }
+            Err(e) => {
+                let err = format!("{:#}", e);
+                self.add_log(format!("Error al comprobar recuperaciones: {err}"));
+                self.recovery_status_error = Some(err);
+            }
+        }
         self.invalidate_card_cache();
+        if retry_capture {
+            if let Some(capture) = &mut self.auto_capture {
+                capture.retry();
+            }
+            if !self.card_hash.is_empty() && !self.original_verified(&self.card_hash) && self.selected_usb_ready() && !self.is_busy {
+                self.capture_original_backup();
+            }
+        }
     }
 
     fn recover_pending_original(&mut self, operation_dir: PathBuf) {
@@ -1699,6 +1768,7 @@ impl AirCardApp {
         }
 
         let mut finished = false;
+        let mut card_found = false;
         for msg in messages {
             match msg {
                 BackgroundTaskMessage::Progress { step, total, message } => {
@@ -1713,10 +1783,19 @@ impl AirCardApp {
                 BackgroundTaskMessage::Log(log_line) => {
                     self.add_log(log_line);
                 }
-                BackgroundTaskMessage::CardFound { hash, name } => {
+                BackgroundTaskMessage::CardFound { udid, hash, name } => {
+                    card_found = true;
                     if let Some(flag)=self.scan_stop_flag.as_ref() {flag.store(true,Ordering::Release);}
                     self.scanning_syslog=false;
-                    self.progress_msg="Tarjeta detectada. Comprobando original y sincronización…".into();
+                    self.is_busy=false;
+                    self.progress_msg="Tarjeta detectada. Guardando copia original automáticamente…".into();
+                    self.selected_udid = Some(udid.clone());
+                    if !self.devices.iter().any(|d| d.udid.eq_ignore_ascii_case(&udid)) {
+                        match list_connected_devices() {
+                            Ok(devices) => self.devices = devices,
+                            Err(error) => self.add_log(format!("No se pudo comprobar el transporte del iPhone detectado: {error:#}")),
+                        }
+                    }
                     self.saved_cards = load_saved_cards();
                     self.invalidate_card_cache();
                     self.select_saved_card(&hash);
@@ -1724,8 +1803,10 @@ impl AirCardApp {
                         .find(|card| card.hash == hash)
                         .map(|card| card.name.clone())
                         .unwrap_or(name);
-                    self.add_log(format!("Card detected: {display_name} ({hash})"));
-                    self.status_msg = format!("{}: {display_name}", self.language.text("Card detected"));
+                    self.add_log(format!("Card detected: {display_name} ({hash}) on iPhone ({udid})"));
+                    self.status_msg = format!("{}: {} · guardando copia original…", self.language.text("Card detected"), display_name);
+
+                    // Start only after this scanner batch and its channel are retired.
                 }
                 BackgroundTaskMessage::DesignSaved(path) => {
                     self.refresh_design_library();
@@ -1785,9 +1866,9 @@ impl AirCardApp {
                 }
             }
         }
-        if finished {
-            self.task_rx = None;
-            self.refresh_recovery_status();
+        if retire_task_receiver(&mut self.task_rx, finished, card_found) {
+            if card_found { self.scan_stop_flag = None; }
+            self.check_recovery_status(card_found);
         }
     }
 }
@@ -1796,40 +1877,53 @@ pub mod md3 {
     use eframe::egui::Color32;
 
     // M3 Dark scheme
-    pub const SURFACE: Color32 = Color32::from_rgb(8, 14, 27);
-    pub const SURFACE_CONTAINER: Color32 = Color32::from_rgb(15, 25, 43);
-    pub const SURFACE_CONTAINER_HIGH: Color32 = Color32::from_rgb(23, 36, 57);
-    pub const SURFACE_CONTAINER_HIGHEST: Color32 = Color32::from_rgb(33, 48, 72);
-    pub const ON_SURFACE: Color32 = Color32::from_rgb(237, 244, 255);
-    pub const ON_SURFACE_VARIANT: Color32 = Color32::from_rgb(166, 185, 211);
-    pub const OUTLINE: Color32 = Color32::from_rgb(131, 143, 163);
-    pub const OUTLINE_VARIANT: Color32 = Color32::from_rgb(43, 62, 87);
+    pub const SURFACE: Color32 = Color32::from_rgb(8, 11, 18);
+    pub const SURFACE_CONTAINER: Color32 = Color32::from_rgb(17, 24, 39);
+    pub const SURFACE_CONTAINER_HIGH: Color32 = Color32::from_rgb(24, 34, 53);
+    pub const SURFACE_CONTAINER_HIGHEST: Color32 = Color32::from_rgb(31, 46, 70);
+    pub const ON_SURFACE: Color32 = Color32::from_rgb(248, 250, 252);
+    pub const ON_SURFACE_VARIANT: Color32 = Color32::from_rgb(148, 163, 184);
+    pub const OUTLINE: Color32 = Color32::from_rgb(100, 116, 139);
+    pub const OUTLINE_VARIANT: Color32 = Color32::from_rgb(42, 54, 75);
 
     // Primary
-    pub const PRIMARY: Color32 = Color32::from_rgb(145, 220, 255);
-    pub const ON_PRIMARY: Color32 = Color32::from_rgb(7, 22, 34);
-    pub const PRIMARY_CONTAINER: Color32 = Color32::from_rgb(26, 55, 78);
-    pub const ON_PRIMARY_CONTAINER: Color32 = Color32::from_rgb(212, 240, 255);
+    pub const PRIMARY: Color32 = Color32::from_rgb(56, 189, 248);
+    pub const ON_PRIMARY: Color32 = Color32::from_rgb(8, 11, 18);
+    pub const PRIMARY_CONTAINER: Color32 = Color32::from_rgb(22, 61, 91);
+    pub const ON_PRIMARY_CONTAINER: Color32 = Color32::from_rgb(186, 230, 253);
 
     // Secondary
-    pub const SECONDARY_CONTAINER: Color32 = Color32::from_rgb(39, 40, 66);
-    pub const ON_SECONDARY_CONTAINER: Color32 = Color32::from_rgb(210, 203, 255);
+    pub const SECONDARY_CONTAINER: Color32 = Color32::from_rgb(30, 41, 59);
+    pub const ON_SECONDARY_CONTAINER: Color32 = Color32::from_rgb(226, 232, 240);
 
     // Tertiary
-    pub const TERTIARY_CONTAINER: Color32 = Color32::from_rgb(99, 59, 72);
-    pub const ON_TERTIARY_CONTAINER: Color32 = Color32::from_rgb(255, 216, 228);
+    pub const TERTIARY_CONTAINER: Color32 = Color32::from_rgb(69, 35, 54);
+    pub const ON_TERTIARY_CONTAINER: Color32 = Color32::from_rgb(254, 205, 211);
 
     // Error
-    pub const ERROR: Color32 = Color32::from_rgb(242, 184, 181);
-    pub const ERROR_CONTAINER: Color32 = Color32::from_rgb(140, 29, 24);
+    pub const ERROR: Color32 = Color32::from_rgb(239, 68, 68);
+    pub const ERROR_CONTAINER: Color32 = Color32::from_rgb(78, 25, 35);
 
     // Extra
-    pub const SUCCESS: Color32 = Color32::from_rgb(108, 232, 196);
+    pub const SUCCESS: Color32 = Color32::from_rgb(16, 185, 129);
 }
 
 fn draw_status_dot(ui: &mut egui::Ui, color: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.0, color);
+}
+
+fn draw_nav_icon(ui: &mut egui::Ui, index: usize, active: bool) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+    let color = if active { md3::PRIMARY } else { md3::ON_SURFACE_VARIANT };
+    let p = ui.painter();
+    match index {
+        0 => { p.rect_stroke(rect.shrink(4.0), 4.0, egui::Stroke::new(1.6, color), egui::StrokeKind::Inside); p.line_segment([rect.left_center() + egui::vec2(5.0,0.0), rect.right_center() - egui::vec2(5.0,0.0)], egui::Stroke::new(1.4,color)); }
+        1 => { for i in 0..2 { for j in 0..2 { let r=egui::Rect::from_min_size(rect.min+egui::vec2(4.0+i as f32*8.0,4.0+j as f32*8.0),egui::vec2(5.0,5.0)); p.rect_filled(r,1.5,color); } } }
+        2 => { p.circle_stroke(rect.center(), 8.0, egui::Stroke::new(1.5,color)); p.circle_filled(rect.center(), 2.5, color); }
+        3 => { p.circle_stroke(rect.center(), 8.0, egui::Stroke::new(1.5,color)); p.circle_filled(rect.center(), 3.0, color); }
+        _ => { p.circle_stroke(rect.center(), 8.0, egui::Stroke::new(1.5,color)); p.line_segment([rect.center()-egui::vec2(4.0,0.0),rect.center()+egui::vec2(4.0,0.0)],egui::Stroke::new(1.4,color)); }
+    }
 }
 
 fn setup_custom_fonts(ctx: &egui::Context) {
@@ -1885,10 +1979,10 @@ fn setup_custom_theme(ctx: &egui::Context) {
     });
 }
 
-fn m3_card<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+fn glass_panel<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
-        .fill(md3::SURFACE_CONTAINER)
-        .stroke(egui::Stroke::new(1.0_f32, md3::OUTLINE_VARIANT))
+        .fill(md3::SURFACE_CONTAINER.linear_multiply(0.86))
+        .stroke(egui::Stroke::new(1.0, md3::OUTLINE_VARIANT))
         .corner_radius(14)
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
@@ -1898,41 +1992,99 @@ fn m3_card<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) 
         .inner
 }
 
+fn glass_card<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    glass_panel(ui, add_contents)
+}
+
+fn m3_card<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    glass_card(ui, add_contents)
+}
+
+fn gradient_button_with_width(ui: &mut egui::Ui, label: &str, enabled: bool, primary: bool, width: f32) -> bool {
+    let height = 44.0;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let response = ui.interact(rect, ui.id().with(("glass-button", label)), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+    let base = if primary { md3::PRIMARY } else { md3::SECONDARY_CONTAINER };
+    let accent = if primary { egui::Color32::from_rgb(37, 99, 235) } else { md3::SURFACE_CONTAINER_HIGHEST };
+    let fill = if enabled { base } else { md3::SURFACE_CONTAINER_HIGH.linear_multiply(0.55) };
+    let text = if enabled { if primary { md3::ON_PRIMARY } else { md3::ON_SECONDARY_CONTAINER } } else { md3::ON_SURFACE_VARIANT };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 10.0, fill);
+    if primary && enabled {
+        let right = egui::Rect::from_min_max(egui::pos2(rect.center().x, rect.min.y), rect.max);
+        painter.rect_filled(right, 10.0, accent.linear_multiply(0.92));
+        painter.rect_stroke(rect.expand(1.5), 11.0, egui::Stroke::new(3.0, md3::PRIMARY.linear_multiply(0.12)), egui::StrokeKind::Outside);
+    }
+    painter.rect_stroke(rect, 10.0, egui::Stroke::new(1.0, if primary && enabled { md3::PRIMARY.linear_multiply(0.65) } else { md3::OUTLINE_VARIANT }), egui::StrokeKind::Inside);
+    painter.text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(13.0), text);
+    response.clicked()
+}
+
+fn gradient_button(ui: &mut egui::Ui, label: &str, enabled: bool, primary: bool) -> bool {
+    gradient_button_with_width(ui, label, enabled, primary, ui.available_width().max(112.0))
+}
+
 fn m3_button_filled(ui: &mut egui::Ui, label: &str) -> bool {
-    let btn = egui::Button::new(
-        egui::RichText::new(label).size(13.0).color(md3::ON_PRIMARY),
-    )
-    .fill(md3::PRIMARY)
-    .corner_radius(10)
-    .stroke(egui::Stroke::NONE);
-    ui.add(btn.min_size(egui::vec2(112.0, 44.0))).clicked()
+    gradient_button_with_width(ui, label, true, true, 112.0)
 }
 
 fn m3_button_tonal(ui: &mut egui::Ui, label: &str) -> bool {
-    let btn = egui::Button::new(
-        egui::RichText::new(label).size(13.0).color(md3::ON_SECONDARY_CONTAINER),
-    )
-    .fill(md3::SECONDARY_CONTAINER)
-    .corner_radius(10)
-    .stroke(egui::Stroke::NONE);
-    ui.add(btn.min_size(egui::vec2(112.0, 44.0))).clicked()
+    gradient_button_with_width(ui, label, true, false, 112.0)
 }
 
 fn m3_button_outlined(ui: &mut egui::Ui, label: &str) -> bool {
-    let btn = egui::Button::new(
-        egui::RichText::new(label).size(12.5).color(md3::PRIMARY),
-    )
-    .fill(egui::Color32::TRANSPARENT)
-    .corner_radius(10)
-    .stroke(egui::Stroke::new(1.0_f32, md3::OUTLINE));
-    ui.add(btn.min_size(egui::vec2(112.0, 44.0))).clicked()
+    gradient_button_with_width(ui, label, true, false, 112.0)
 }
 
 fn studio_button(ui: &mut egui::Ui, label: &str, enabled: bool, primary: bool) -> bool {
-    ui.add_enabled(enabled, egui::Button::new(egui::RichText::new(label).strong().size(13.0)
-        .color(if primary { md3::ON_PRIMARY } else { md3::ON_SECONDARY_CONTAINER }))
-        .fill(if primary { md3::PRIMARY } else { md3::SECONDARY_CONTAINER })
-        .corner_radius(10).min_size(egui::vec2(ui.available_width(), 44.0))).clicked()
+    gradient_button(ui, label, enabled, primary)
+}
+
+fn toggle_switch(ui: &mut egui::Ui, value: &mut bool, label: &str) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 24.0), egui::Sense::hover());
+        let response = ui.interact(rect, ui.id().with(("toggle", label)), egui::Sense::click());
+        if response.clicked() { *value = !*value; changed = true; }
+        let track = if *value { md3::PRIMARY } else { md3::SURFACE_CONTAINER_HIGHEST };
+        ui.painter().rect_filled(rect, 12.0, track);
+        ui.painter().rect_stroke(rect, 12.0, egui::Stroke::new(1.0, if *value { md3::PRIMARY } else { md3::OUTLINE_VARIANT }), egui::StrokeKind::Inside);
+        let x = if *value { rect.right() - 12.0 } else { rect.left() + 12.0 };
+        ui.painter().circle_filled(egui::pos2(x, rect.center().y), 8.0, if *value { md3::ON_PRIMARY } else { md3::ON_SURFACE_VARIANT });
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new(label).strong().size(12.0).color(md3::ON_SURFACE));
+    });
+    changed
+}
+
+fn dashed_drop_box<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let frame = egui::Frame::new().fill(md3::SURFACE_CONTAINER.linear_multiply(0.55)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+        ui.vertical_centered(add_contents).inner
+    });
+    let rect = frame.response.rect;
+    let inner = frame.inner;
+    let painter = ui.painter();
+    let dash = egui::Stroke::new(1.0, md3::PRIMARY.linear_multiply(0.55));
+    let mut x = rect.left();
+    while x < rect.right() { painter.line_segment([egui::pos2(x, rect.top()), egui::pos2((x + 6.0).min(rect.right()), rect.top())], dash); painter.line_segment([egui::pos2(x, rect.bottom()), egui::pos2((x + 6.0).min(rect.right()), rect.bottom())], dash); x += 10.0; }
+    let mut y = rect.top();
+    while y < rect.bottom() { painter.line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.left(), (y + 6.0).min(rect.bottom()))], dash); painter.line_segment([egui::pos2(rect.right(), y), egui::pos2(rect.right(), (y + 6.0).min(rect.bottom()))], dash); y += 10.0; }
+    inner
+}
+
+fn kpi_card(ui: &mut egui::Ui, value: impl std::fmt::Display, label: &str, color: egui::Color32) {
+    glass_card(ui, |ui| {
+        ui.label(egui::RichText::new(value.to_string()).size(24.0).strong().color(color));
+        ui.label(egui::RichText::new(label).size(10.5).color(md3::ON_SURFACE_VARIANT));
+    });
+}
+
+fn floating_dock<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::new().fill(md3::SURFACE_CONTAINER.linear_multiply(0.96)).stroke(egui::Stroke::new(1.0, md3::PRIMARY.linear_multiply(0.20))).corner_radius(18).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| add_contents(ui)).inner
+}
+
+fn iphone_mockup_frame<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::new().fill(egui::Color32::from_rgb(5, 8, 14)).stroke(egui::Stroke::new(2.0, md3::OUTLINE_VARIANT)).corner_radius(22).inner_margin(12).show(ui, |ui| add_contents(ui)).inner
 }
 
 fn studio_artwork(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>, width: f32) {
@@ -2018,12 +2170,13 @@ impl eframe::App for AirCardApp {
         egui::TopBottomPanel::top("header")
             .frame(
                 egui::Frame::new()
-                    .fill(md3::SURFACE)
-                    .inner_margin(egui::Margin::symmetric(20, 10)),
+                    .fill(md3::SURFACE.linear_multiply(0.96))
+                    .stroke(egui::Stroke::new(1.0, md3::OUTLINE_VARIANT))
+                    .inner_margin(egui::Margin::symmetric(16, 7)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Image::new((self.brand.header.id(), egui::vec2(44.0, 44.0))));
+                    ui.add(egui::Image::new((self.brand.header.id(), egui::vec2(34.0, 34.0))).corner_radius(10));
                     ui.label(
                         egui::RichText::new("Wallet Studio")
                             .strong()
@@ -2216,21 +2369,22 @@ impl eframe::App for AirCardApp {
             });
 
         egui::SidePanel::left("studio-navigation").resizable(false).exact_width(148.0)
-            .frame(egui::Frame::new().fill(md3::SURFACE).inner_margin(egui::Margin::symmetric(12,16))).show(ctx,|ui| {
-                ui.label(egui::RichText::new("ESPACIOS").size(10.0).color(md3::ON_SURFACE_VARIANT));ui.add_space(12.0);
-                for (tab,label) in [(AppTab::Wallet,"Tarjetas"),(AppTab::Library,"Biblioteca"),(AppTab::Passcode,"Teclado"),(AppTab::Account,"Cuenta"),(AppTab::Help,"Ayuda")] {
-                    let selected=self.current_tab==tab;
-                    let button=egui::Button::new(egui::RichText::new(label).strong().color(if selected {md3::PRIMARY} else {md3::ON_SURFACE_VARIANT}))
-                        .fill(if selected {md3::PRIMARY_CONTAINER} else {egui::Color32::TRANSPARENT}).corner_radius(10);
-                    if ui.add_sized([ui.available_width(),44.0],button).clicked() {if tab==AppTab::Library {self.refresh_design_library();} self.current_tab=tab;}
-                }
-                ui.add_space(24.0);ui.separator();ui.add_space(12.0);
-                ui.label(egui::RichText::new("Tus originales").strong().size(12.0));
-                ui.label(egui::RichText::new(if self.cloud_configured {if self.cloud_synced {"Nube verificada"} else {"Pendiente de conexión"}} else {"Guardados en este PC"}).size(10.5).color(md3::ON_SURFACE_VARIANT));
-            });
+            .frame(egui::Frame::new().fill(md3::SURFACE.linear_multiply(0.92)).stroke(egui::Stroke::new(1.0, md3::OUTLINE_VARIANT)).inner_margin(egui::Margin::symmetric(12,16))).show(ctx,|ui| {
+                 ui.label(egui::RichText::new("ESPACIOS").size(10.0).color(md3::ON_SURFACE_VARIANT));ui.add_space(12.0);
+                 for (index,(tab,label)) in [(AppTab::Wallet,"Tarjetas"),(AppTab::Library,"Biblioteca"),(AppTab::Passcode,"Teclado"),(AppTab::Account,"Cuenta"),(AppTab::Help,"Ayuda")].into_iter().enumerate() {
+                     let selected=self.current_tab==tab;
+                     let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width(),44.0),egui::Sense::click());
+                     if selected {ui.painter().rect_filled(rect,10.0,md3::PRIMARY_CONTAINER.linear_multiply(0.72));ui.painter().rect_stroke(rect.expand(1.0),11.0,egui::Stroke::new(2.0,md3::PRIMARY.linear_multiply(0.22)),egui::StrokeKind::Outside);}
+                     ui.scope_builder(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(10.0,7.0))),|ui| {ui.horizontal(|ui| {draw_nav_icon(ui,index,selected);ui.add_space(8.0);ui.label(egui::RichText::new(label).strong().color(if selected {md3::PRIMARY} else {md3::ON_SURFACE_VARIANT}));});});
+                     if response.clicked() {if tab==AppTab::Library {self.refresh_design_library();} self.current_tab=tab;}
+                 }
+                 ui.add_space(24.0);ui.separator();ui.add_space(12.0);
+                 ui.label(egui::RichText::new("Tus originales").strong().size(12.0));
+                 ui.label(egui::RichText::new(if self.cloud_configured {if self.cloud_synced {"Nube verificada"} else {"Pendiente de conexión"}} else {"Guardados en este PC"}).size(10.5).color(md3::ON_SURFACE_VARIANT));
+             });
         if self.current_tab==AppTab::Wallet {
             egui::TopBottomPanel::bottom("studio-primary-actions")
-                .frame(egui::Frame::new().fill(md3::SURFACE_CONTAINER).inner_margin(egui::Margin::symmetric(20,12)))
+                .frame(egui::Frame::new().fill(md3::SURFACE_CONTAINER.linear_multiply(0.96)).stroke(egui::Stroke::new(1.0,md3::PRIMARY.linear_multiply(0.16))).corner_radius(18).inner_margin(egui::Margin::symmetric(20,10)))
                 .show(ctx,|ui| { self.show_wallet_primary_actions(ctx,ui); });
         }
 
@@ -2239,7 +2393,7 @@ impl eframe::App for AirCardApp {
             .frame(
                 egui::Frame::new()
                     .fill(md3::SURFACE)
-                    .inner_margin(egui::Margin::same(16)),
+                    .inner_margin(egui::Margin::same(18)),
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -2335,9 +2489,13 @@ impl AirCardApp {
             .unwrap_or_default();
         self.rename_error = None;
         let connected = self.selected_udid.as_deref().filter(|selected|
-            self.devices.iter().any(|device| device.udid == *selected));
-        let expected = capture_device_for_selection(connected,self.offline_baseline_device.get(hash).map(String::as_str));
+            self.devices.iter().any(|device| device.udid.eq_ignore_ascii_case(selected)));
+        let expected = capture_device_for_selection(connected,self.offline_baseline_device.get(hash).map(String::as_str))
+            .or_else(|| self.selected_udid.clone());
         self.auto_capture = if crate::storage::is_demo() {None} else {Some(AutoCapture::selected(hash.to_string(),expected))};
+
+        // The normal UI tick starts this request after snapshot safety checks.
+        // Syslog detection starts it after retiring the scanner's message batch.
     }
 
     fn save_current_card_name(&mut self) {
@@ -2370,7 +2528,6 @@ impl AirCardApp {
         self.original_thumbnails.clear();
         self.applied_thumbnails.clear();
         self.offline_baseline_device.clear();
-        self.recovery_status_error = Some("Comprobando el estado local de recuperación…".into());
     }
 
     fn snapshot(&self, hash: &str) -> Option<&CardSnapshot> {
@@ -2456,14 +2613,14 @@ impl AirCardApp {
     }
 
     fn tick_auto_capture(&mut self) {
-        if self.cloud_rx.is_some() || crate::storage::is_demo() || !self.storage_ready || !crate::cloud_sync::missing_original_capture_allowed(self.cloud_configured,self.cloud_synced) { return; }
+        if self.cloud_rx.is_some() || crate::storage::is_demo() || !self.storage_ready { return; }
         let Some(request) = self.auto_capture.as_ref() else { return; };
         if request.hash != self.card_hash { return; }
         let Some(snapshot) = self.snapshot(&request.hash) else { return; };
         let original = snapshot.original;
         let known = snapshot.known_device.clone();
         let safe = !self.is_busy && !self.scanning_syslog && self.selected_usb_ready()
-            && !self.pending_recovery_blocks_selected() && self.recovery_status_error.is_none()
+            && !self.pending_recovery_blocks_selected()
             && self.card_cache_rx.is_none() && snapshot.phase.is_ok();
         if self.auto_capture.as_mut().is_some_and(|request|
             request.should_start(self.selected_udid.as_deref(),known.as_deref(),original,safe)) {
@@ -2479,22 +2636,24 @@ impl AirCardApp {
         let idle=!self.is_busy && !self.scanning_syslog && self.cloud_rx.is_none();
         let can_apply=!self.session_pending && connected && idle && original && crate::flasher::BANK_APPLY_READY && self.skin.is_some() && self.gif_playback.is_none() && self.crop_draft.is_none() && !self.crop_dirty && plan!=crate::flasher::BankApplyPlan::Block;
         let can_restore=connected && idle && self.snapshot(&selected_hash).is_some_and(|snapshot|snapshot.restore);
-        ui.columns(3,|buttons| {
-            if studio_button(&mut buttons[0],"Elegir imagen…",idle,false) {self.select_skin(ctx);}
-            if studio_button(&mut buttons[1],if plan==crate::flasher::BankApplyPlan::RestoreThenApply {"Sustituir diseño"} else {"Aplicar diseño"},can_apply,true) {self.flash_card();}
-            if studio_button(&mut buttons[2],"Restaurar original",can_restore,false) {self.restore_original_card();}
+        floating_dock(ui, |ui| {
+            ui.columns(3,|buttons| {
+                if studio_button(&mut buttons[0],"Elegir imagen…",idle,false) {self.select_skin(ctx);}
+                if studio_button(&mut buttons[1],if plan==crate::flasher::BankApplyPlan::RestoreThenApply {"Sustituir diseño"} else {"Aplicar diseño"},can_apply,true) {self.flash_card();}
+                if studio_button(&mut buttons[2],"Restaurar original",can_restore,false) {self.restore_original_card();}
+            });
+            ui.add_space(6.0);
+            let message=if crate::storage::is_demo() {"Vista de demostración: no consulta ni modifica un teléfono."}
+                else if self.is_busy {self.progress_msg.as_str()}
+                else if !self.storage_ready {"Comprobando o recuperando el almacenamiento. Las transferencias esperan."}
+                else if self.pending_recovery_blocks_selected() {"Revisa la recuperación pendiente antes de transferir."}
+                else if self.cloud_rx.is_some() || (self.cloud_configured && !self.cloud_synced) {self.cloud_status.as_str()}
+                else if !original {"Selecciona una tarjeta y espera la verificación de su original. Un diseño personalizado no se certifica como original."}
+                else if !connected {"Original verificado en este PC · conecta el iPhone correcto para transferir."}
+                else {"Original verificado · mantén el USB conectado y cierra Wallet y Libros durante la transferencia."};
+            ui.label(egui::RichText::new(message).size(11.0).color(md3::ON_SURFACE_VARIANT));
+            if self.is_busy && self.progress_total>0 {ui.add(egui::ProgressBar::new(self.progress_step as f32/self.progress_total as f32));}
         });
-        ui.add_space(6.0);
-        let message=if crate::storage::is_demo() {"Vista de demostración: no consulta ni modifica un teléfono."}
-            else if self.is_busy {self.progress_msg.as_str()}
-            else if !self.storage_ready {"Comprobando o recuperando el almacenamiento. Las transferencias esperan."}
-            else if self.pending_recovery_blocks_selected() {"Revisa la recuperación pendiente antes de transferir."}
-            else if self.cloud_rx.is_some() || (self.cloud_configured && !self.cloud_synced) {self.cloud_status.as_str()}
-            else if !original {"Selecciona una tarjeta y espera la verificación de su original. Un diseño personalizado no se certifica como original."}
-            else if !connected {"Original verificado en este PC · conecta el iPhone correcto para transferir."}
-            else {"Original verificado · mantén el USB conectado y cierra Wallet y Libros durante la transferencia."};
-        ui.label(egui::RichText::new(message).size(11.0).color(md3::ON_SURFACE_VARIANT));
-        if self.is_busy && self.progress_total>0 {ui.add(egui::ProgressBar::new(self.progress_step as f32/self.progress_total as f32));}
     }
     fn show_wallet_tab(&mut self,ctx:&egui::Context,ui:&mut egui::Ui) {
         let language=self.language;
@@ -2724,7 +2883,12 @@ impl AirCardApp {
                 ui.label(egui::RichText::new(language.text("Theme Package")).strong().size(12.0).color(md3::ON_SURFACE));
                 ui.label(egui::RichText::new(language.text("Choose a .passthm archive containing dialer artwork")).size(11.0).color(md3::ON_SURFACE_VARIANT));
                 ui.add_space(4.0);
-                if m3_button_filled(ui, language.text("Choose .passthm...")) { self.select_theme_file(ctx); }
+                let choose_theme=dashed_drop_box(ui, |ui| {
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(language.text("Theme Package")).size(11.0).color(md3::ON_SURFACE_VARIANT));
+                    m3_button_filled(ui, language.text("Choose .passthm..."))
+                });
+                if choose_theme { self.select_theme_file(ctx); }
 
                 if let Some(theme) = &self.loaded_theme {
                     let fname = self.theme_path.as_ref()
@@ -2784,12 +2948,7 @@ impl AirCardApp {
                 ui.add_space(10.0);
 
                 // Bold Font Toggle
-                let mut bold_changed = false;
-                ui.horizontal(|ui| {
-                    if ui.checkbox(&mut self.passcode_bold, egui::RichText::new(language.text("Bold Text (iOS Accessibility)")).strong().size(12.0).color(md3::ON_SURFACE)).changed() {
-                        bold_changed = true;
-                    }
-                });
+                let bold_changed=toggle_switch(ui,&mut self.passcode_bold,language.text("Bold Text (iOS Accessibility)"));
                 ui.label(
                     egui::RichText::new(language.text("Generates *-bold.png for devices with Bold Text turned ON in iPhone Settings -> Display"))
                         .size(11.0)
@@ -2849,18 +3008,21 @@ impl AirCardApp {
                 let pass_w = (ui.available_width() - 8.0).clamp(240.0, 360.0);
                 let pass_h = 265.0;
 
-                ui.vertical_centered(|ui| {
+                iphone_mockup_frame(ui, |ui| {
+                    ui.vertical_centered(|ui| {
                     if self.keypad_textures.is_empty() {
                         let (rect, _) = ui.allocate_exact_size(egui::vec2(pass_w, pass_h), egui::Sense::hover());
                         let painter = ui.painter();
-                        painter.rect_filled(rect, 16.0, md3::SURFACE_CONTAINER_HIGH);
+                        painter.rect_filled(rect, 20.0, egui::Color32::from_rgb(5, 8, 14));
+                        painter.rect_stroke(rect, 20.0, egui::Stroke::new(2.0, md3::OUTLINE_VARIANT), egui::StrokeKind::Inside);
                         painter.text(rect.center(), egui::Align2::CENTER_CENTER,
                             language.text("No theme loaded"), egui::FontId::proportional(14.0), md3::ON_SURFACE_VARIANT);
                     } else {
                         let (rect, _) = ui.allocate_exact_size(egui::vec2(pass_w, pass_h), egui::Sense::hover());
                         let painter = ui.painter();
-                        painter.rect_filled(rect, 16.0, md3::SURFACE_CONTAINER_HIGH);
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                        painter.rect_filled(rect, 20.0, egui::Color32::from_rgb(5, 8, 14));
+                        painter.rect_stroke(rect, 20.0, egui::Stroke::new(2.0, md3::OUTLINE_VARIANT), egui::StrokeKind::Inside);
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(rect.shrink(8.0)), |ui| {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(10.0);
                                 const DIALER_LAYOUT: &[&[&str]] = &[
@@ -2906,6 +3068,7 @@ impl AirCardApp {
                             });
                         });
                     }
+                    });
                 });
 
                 ui.add_space(12.0);
@@ -2999,6 +3162,31 @@ impl AirCardApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scanner_handoff_retires_old_done_without_losing_capture_result() {
+        for done_in_same_batch in [false, true] {
+            let (scanner_tx, scanner_rx) = channel();
+            let mut receiver = Some(scanner_rx);
+            assert!(retire_task_receiver(&mut receiver, done_in_same_batch, true));
+            assert!(receiver.is_none());
+            let (capture_tx, capture_rx) = channel();
+            receiver = Some(capture_rx);
+            // A late scanner Done must not be routed to the capture channel.
+            assert!(scanner_tx.send("scanner-done").is_err());
+            capture_tx.send("original-backup-done").unwrap();
+            assert_eq!(receiver.as_ref().unwrap().try_recv().unwrap(), "original-backup-done");
+        }
+    }
+    #[test]
+    fn progress_batches_keep_the_active_capture_receiver() {
+        let (tx, rx) = channel();
+        let mut receiver = Some(rx);
+        assert!(!retire_task_receiver(&mut receiver, false, false));
+        tx.send("progress").unwrap();
+        assert_eq!(receiver.as_ref().unwrap().try_recv().unwrap(), "progress");
+        assert!(retire_task_receiver(&mut receiver, true, false));
+        assert!(receiver.is_none());
+    }
     #[test] fn selected_library_design_is_prepared_before_editor_installation_and_invalid_file_fails() {
         let root=std::env::temp_dir().join(format!("ws-library-use-{}",crate::flasher::generate_token()));std::fs::create_dir_all(&root).unwrap();
         let path=root.join("selected.png");let mut bytes=Vec::new();

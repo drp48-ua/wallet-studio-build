@@ -277,7 +277,11 @@ pub fn verify_purchased(item:&PurchasedDesign,bytes:&[u8])->Result<()> {
 pub fn download_purchased(session:&crate::cloud_sync::Session,item:&PurchasedDesign)->Result<PathBuf> {
     anyhow::ensure!(crate::cloud_sync::valid_server(&session.server) && item.id.len()==6 && item.id.starts_with("ws-") && item.id[3..].bytes().all(|b|b.is_ascii_digit()),"Diseño no válido");
     // Always ask the service when using a paid design, including cached designs.
-    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs/{}",session.server,item.id),&[("Authorization".into(),format!("Bearer {}",session.access_token))],&[],MAX_ASSET_BYTES)?;
+    let mut headers = vec![("Authorization".into(),format!("Bearer {}",session.access_token))];
+    if (item.width,item.height)==NATIVE_DESIGN_SIZE {
+        headers.push(("X-Wallet-Studio-Catalog".into(),NATIVE_CATALOG_CAPABILITY.into()));
+    }
+    let bytes=crate::auto_update::http_request("GET",&format!("{}/v1/designs/{}",session.server,item.id),&headers,&[],MAX_ASSET_BYTES)?;
     verify_purchased(item,&bytes)?;
     let path=purchased_cache_path(session,item)?;
     store_purchased_cache(&path,item,&bytes)?;
@@ -304,7 +308,10 @@ pub fn purchased_cache_path(session:&crate::cloud_sync::Session,item:&PurchasedD
 }
 pub fn cached_purchased(session:&crate::cloud_sync::Session,item:&PurchasedDesign)->Result<PathBuf> {
     let path=purchased_cache_path(session,item)?;
-    if path.exists() && read_image(&path).is_ok_and(|bytes|verify_purchased(item,&bytes).is_ok()) {return Ok(path);}
+    if path.exists() {
+        if read_image(&path).is_ok_and(|bytes|verify_purchased(item,&bytes).is_ok()) {return Ok(path);}
+        let _=std::fs::remove_file(&path);
+    }
     download_purchased(session,item)
 }
 
@@ -354,7 +361,9 @@ mod paid_tests {
         assert!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).is_err());
         native["bytes"]=serde_json::json!(1024);native["width"]=serde_json::json!(1_537);value["designs"][50]=native.clone();
         assert!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).is_err());
-        let mut oversized=value["designs"][0].clone();oversized["bytes"]=serde_json::json!(LEGACY_ASSET_BYTES+1);value["designs"][0]=oversized;
+        let w=value["designs"][0]["width"].as_u64().unwrap() as u32;
+        let h=value["designs"][0]["height"].as_u64().unwrap() as u32;
+        let mut oversized=value["designs"][0].clone();oversized["bytes"]=serde_json::json!(asset_limit(w,h).unwrap()+1);value["designs"][0]=oversized;
         assert!(parse_purchased_catalog(&serde_json::to_vec(&value).unwrap()).is_err());
         item.bytes+=1;assert!(verify_purchased(&item,&bytes).is_err());
     }

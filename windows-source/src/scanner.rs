@@ -352,12 +352,13 @@ pub fn scan_syslog_for_cards<F, L>(
     mut log: L,
 ) -> Result<()>
 where
-    F: FnMut(String, String),
+    F: FnMut(String, String, String),
     L: FnMut(String),
 {
     log("Connecting to device session for syslog monitoring...".to_string());
     let session = ActiveDeviceSession::open(udid, connection_mode)
         .context("Failed to connect to device for syslog scanning")?;
+    let device_udid = session.udid.clone();
     log(format!(
         "Connected to {} over {}.",
         session.udid,
@@ -403,7 +404,7 @@ where
     drop(session);
     if let Some((hash,name))=found {
         if !load_saved_cards().iter().any(|card|card.hash==hash) {add_or_update_card(&hash,&name);}
-        on_card_found(hash,name);
+        on_card_found(device_udid, hash, name);
     }
     log("Syslog scan stopped; relay and device session released.".to_string());
 
