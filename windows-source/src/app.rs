@@ -965,22 +965,8 @@ impl AirCardApp {
         });
         if let Some(error)=&self.library_error {ui.colored_label(md3::ERROR,error);}
         let selection_top=ui.cursor().min;
-        // Reserve selected artwork before visible grid thumbnails, preserving
-        // the old selection-first loading priority in the new desktop layout.
-        if let Some(path)=self.library_selection.path.clone() {
-            let paid=self.purchased_designs.iter().find(|(_,candidate)|candidate==&path).map(|(item,_)|item.clone());
-            self.request_library_preview(ctx,&path,paid,true);
-        }
-        let available=ui.available_width();
-        if let Some((catalog_width,preview_width))=crate::glass::library_columns(available) {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x=16.0;
-                ui.allocate_ui_with_layout(egui::vec2(catalog_width,0.0),egui::Layout::top_down(egui::Align::Min),|ui|self.library_catalog_grid(ctx,ui,selection_top));
-                ui.allocate_ui_with_layout(egui::vec2(preview_width,0.0),egui::Layout::top_down(egui::Align::Min),|ui|self.library_selection_panel(ctx,ui));
-            });
-        } else {
-            self.library_selection_panel(ctx,ui);self.library_catalog_grid(ctx,ui,selection_top);
-        }
+        self.library_selection_panel(ctx,ui);
+        self.library_catalog_grid(ctx,ui,selection_top);
     }
     fn library_catalog_grid(&mut self,ctx:&egui::Context,ui:&mut egui::Ui,selection_top:egui::Pos2) {
         ui.add_space(12.0);ui.label(egui::RichText::new("TUS DISEÑOS").strong());
@@ -2515,7 +2501,7 @@ impl AirCardApp {
         if self.saved_cards.is_empty() {
             m3_card(ui,|ui| {ui.label("Aún no tienes tarjetas guardadas. Pulsa Añadir tarjeta con el iPhone conectado para empezar.");});
         } else {
-            let tile_width=ui.available_width().min(320.0);
+            let (_,tile_width)=crate::glass::gallery_layout(ui.available_width(),self.saved_cards.len());
             let cards=self.saved_cards.clone();
             ui.scope(|ui| {
                 ui.spacing_mut().item_spacing=egui::vec2(16.0,16.0);

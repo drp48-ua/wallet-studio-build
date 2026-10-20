@@ -38,3 +38,11 @@ Proceso de producción abierto desde `windows/Wallet Studio.exe`. La demostraci�
 No incluir imágenes comerciales, copias bancarias, sesiones, tokens, identidades ni registros privados en Git o en el ZIP. Comparación antes/después de abrir producción: 20 archivos bancarios antes, 20 después, cero diferencias de longitud o SHA-256. El ZIP comprobado excluye los hashes privados y los runtimes web.
 
 Consultar límites en los puntos de control. Con 3 % restante, guardar y subir esta rama; con 1 %, parar trabajo. No usar el crédito de reinicio.
+
+## Ajuste de distribución solicitado después de la entrega
+
+La revisión 0.6.11 ya estaba subida en 01de0a5. El usuario pidió que la selección de Biblioteca volviera arriba y que Mis tarjetas llenara el ancho, con tres o cuatro tarjetas por fila cuando quepan.
+
+Se cambió únicamente app.rs y glass.rs: selección siempre encima del catálogo; cálculo de una a cuatro columnas según ancho y cantidad, distribuyendo todo el espacio con separaciones de 16 puntos. Se conservan proporciones, selección y controles de seguridad. Revisión del lead y git diff --check aprobados; cinco casos de cálculo de distribución comprobados. No se compiló el cambio ni se verificó visualmente en un nuevo EXE por el margen de cuota restante.
+
+Continuación: ejecutar la prueba de distribución, compilar y empaquetar un nuevo candidato identificable, revisar Biblioteca y Mis tarjetas en ventanas pequeña/grande, y entregar el ZIP actualizado. El ZIP y el proceso 0.6.11 entregados anteriormente mantienen la distribución anterior. No confundir la subida de código con un binario actualizado. No usar el crédito de reinicio sin autorización.

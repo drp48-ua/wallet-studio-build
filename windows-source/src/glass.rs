@@ -6,8 +6,11 @@ pub const VIOLET:Color32=Color32::from_rgb(139,92,246);
 pub const TEXT:Color32=Color32::from_rgb(248,250,252);
 pub const MUTED:Color32=Color32::from_rgb(148,163,184);
 pub const LINE:Color32=Color32::from_rgba_premultiplied(22,22,22,22);
-pub fn library_columns(available:f32)->Option<(f32,f32)> {
- if available.is_finite() && available>=900.0 {Some((available-328.0,312.0))}else{None}
+/// Fit up to four full-width card columns, preserving the tile's artwork ratio.
+pub fn gallery_layout(available:f32,count:usize)->(usize,f32) {
+ let width=if available.is_finite(){available.max(1.0)}else{1.0};
+ let columns=(((width+16.0)/276.0).floor() as usize).clamp(1,4).min(count.max(1));
+ (columns,(width-16.0*(columns-1) as f32)/columns as f32)
 }
 
 fn blend(a:Color32,b:Color32,t:f32)->Color32 {
@@ -80,9 +83,11 @@ fn icon(p:&egui::Painter,r:Rect,index:usize,color:Color32) {
 }
 #[cfg(test)] mod tests {
  use super::*;
- #[test] fn glass_library_dock_layout_stacks_small_windows_and_fits_desktop_columns() {
-  assert!(library_columns(640.0).is_none());assert!(library_columns(899.0).is_none());
-  for width in [900.0,1100.0,1600.0] {let (catalog,preview)=library_columns(width).unwrap();assert!(catalog>=552.0);assert_eq!(catalog+preview+16.0,width);}
+ #[test] fn gallery_columns_fill_available_width_for_compact_three_and_four_card_rows() {
+  for (width,count,expected) in [(400.0,4,1),(700.0,4,2),(1000.0,4,3),(1200.0,4,4),(1600.0,3,3)] {
+   let (columns,tile)=gallery_layout(width,count);assert_eq!(columns,expected);
+   assert!((tile*columns as f32+16.0*(columns-1) as f32-width).abs()<0.01);
+  }
  }
  #[test] fn glass_panels_and_controls_stay_inside_compact_and_large_content() {
   for size in [egui::vec2(900.0,640.0),egui::vec2(1440.0,900.0)] {
