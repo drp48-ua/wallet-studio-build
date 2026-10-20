@@ -46,3 +46,17 @@ La revisión 0.6.11 ya estaba subida en 01de0a5. El usuario pidió que la selecc
 Se cambió únicamente app.rs y glass.rs: selección siempre encima del catálogo; cálculo de una a cuatro columnas según ancho y cantidad, distribuyendo todo el espacio con separaciones de 16 puntos. Se conservan proporciones, selección y controles de seguridad. Revisión del lead y git diff --check aprobados; cinco casos de cálculo de distribución comprobados. No se compiló el cambio ni se verificó visualmente en un nuevo EXE por el margen de cuota restante.
 
 Continuación: ejecutar la prueba de distribución, compilar y empaquetar un nuevo candidato identificable, revisar Biblioteca y Mis tarjetas en ventanas pequeña/grande, y entregar el ZIP actualizado. El ZIP y el proceso 0.6.11 entregados anteriormente mantienen la distribución anterior. No confundir la subida de código con un binario actualizado. No usar el crédito de reinicio sin autorización.
+
+## Entrega 0.6.12 — 20 de octubre
+
+Se completó la compilación pendiente. La revisión visual del primer candidato confirmó Biblioteca con la selección arriba, y Usar diseño trasladó el PNG 1536×969 al editor en demo aislada. Detectó además que horizontal_wrapped podía perder una columna a 1180 puntos aunque llenara la fila maximizada. Ese candidato fue retirado.
+
+La corrección final a4472fb usa filas explícitas y calcula el ancho dentro de su scope. Se conservaron los callbacks. Seis pruebas dirigidas aprobadas, incluida la ejecución del mismo helper y tarjetas reales de dibujo con barra lateral, scrollbar, anchos 1180/1180.35/1920 y tres/ocho tarjetas. Se verifican ambos bordes y el salto de fila. No se repitieron suites ajenas al cambio.
+
+Candidato final compilado correctamente en 2 min 41 s. EXE: 12.712.960 bytes, SHA256 9d54b0869300f453fc93b1c44f03687fe37ca1c8e81751cd78abc30086568e71. ZIP: 8.350.441 bytes, SHA256 03ba676a91f42cc91ef23523a3413b6092a9330a810029c5f8caf2a35ad848b8. Versión Windows 0.6.12, CRC e igualdad del EXE empaquetado correctas; sin imágenes privadas, perfiles, tokens ni runtime web. Los hashes del candidato retirado no son los de entrega.
+
+Entrega: C:/Users/danir/Documents/Codex/Wallet-Studio-0.6.12-Windows.zip. Extracción correcta en outputs/wallet-studio-0.6.12-final. Se abrió el ejecutable final en modo normal. Las ventanas de demostración anteriores pueden seguir abiertas; no se forzó su cierre mientras el usuario interactuaba con el escritorio. No confundir outputs/wallet-studio-0.6.12-layout (candidato retirado) con la carpeta final.
+
+La captura manual del candidato corregido quedó limitada por ventanas minimizadas y actividad del usuario; no se declara aceptación visual completa de ese último binario. La validación de filas final es la prueba renderizada compartida. Para continuar la revisión manual, mantener visible la ventana final y comprobar tres/cuatro columnas y selección superior a distintos tamaños.
+
+Tras abrir producción: 20 archivos bancarios antes y después, cero diferencias de tamaño/SHA256. No se inició captura, aplicación ni restauración en un teléfono. La autorización de esta tarea fue compilar, comprobar y entregar los ajustes de distribución.
