@@ -338,8 +338,8 @@ impl AirCardApp {
                 if let Ok(designs)=crate::design_library::discover(&PathBuf::from(source)) {
                     for (index,design) in designs.into_iter().take(crate::design_library::MAX_INCLUDED_DESIGNS).enumerate() {
                         if let Ok(bytes)=crate::design_library::read_image(&design.path) {
-                            if let Ok(hash)=crate::bank_backup::sha256(&bytes) {
-                                let item=crate::design_library::PurchasedDesign {id:format!("ws-{:03}",index+1),title:design.title,filename:format!("ws-{:03}.png",index+1),sha256:hash,bytes:bytes.len(),width:320,height:200,thumbnail:None};
+                            if let (Ok(hash),Ok(image))=(crate::bank_backup::sha256(&bytes),crate::design_library::decode_still(&bytes)) {
+                                let item=crate::design_library::PurchasedDesign {id:format!("ws-{:03}",index+1),title:design.title,filename:format!("ws-{:03}.png",index+1),sha256:hash,bytes:bytes.len(),width:image.width(),height:image.height(),thumbnail:None};
                                 if crate::design_library::verify_purchased(&item,&bytes).is_ok() {let path=root.join(&item.filename);if crate::storage::write_new(&path,&bytes).is_ok() {self.purchased_designs.push((item,path));}}
                             }
                         }
@@ -945,7 +945,7 @@ impl AirCardApp {
         ui.heading("Biblioteca");ui.label("Tus diseños guardados y los diseños incluidos con Wallet Studio.");ui.add_space(12.0);
         let idle=!self.is_busy && !self.library_selection.busy();
         ui.horizontal_wrapped(|ui| {
-            if studio_button(ui,"Importar imagen…",idle,false) {
+            if crate::glass::button(ui,"Importar imagen…",idle,false,egui::vec2(160.0,44.0)) {
                 if let Some(path)=rfd::FileDialog::new().add_filter("Imagen", &["png","jpg","jpeg","webp","gif"]).pick_file() {
                     let result=(||->anyhow::Result<PathBuf> {
                         let bytes=crate::design_library::read_image(&path)?;
@@ -956,16 +956,33 @@ impl AirCardApp {
                     match result {Ok(saved)=>{self.load_skin_path(ctx,saved);self.refresh_design_library();},Err(_)=>self.library_error=Some("No se pudo importar la imagen. Usa un archivo PNG, JPG, WebP o GIF válido de hasta 32 MB.".into())}
                 }
             }
-            if studio_button(ui,"Guardar diseño actual",idle && self.skin.is_some(),false) {
+            if crate::glass::button(ui,"Guardar diseño actual",idle && self.skin.is_some(),false,egui::vec2(184.0,44.0)) {
                 if let Some(skin)=&self.skin {match crate::design_library::library_dir().and_then(|root|crate::design_library::save_prepared_png(&root,&skin.png)) {Ok(_)=>self.refresh_design_library(),Err(_)=>self.library_error=Some("No se pudo guardar el diseño.".into())}}
             }
-            if studio_button(ui,"Actualizar diseños incluidos",idle && self.purchased_rx.is_none() && self.cloud_session.is_some(),false) {
+            if crate::glass::button(ui,"Actualizar diseños incluidos",idle && self.purchased_rx.is_none() && self.cloud_session.is_some(),false,egui::vec2(216.0,44.0)) {
                 self.start_purchased_refresh(ctx);
             }
         });
         if let Some(error)=&self.library_error {ui.colored_label(md3::ERROR,error);}
         let selection_top=ui.cursor().min;
-        self.library_selection_panel(ctx,ui);
+        // Reserve selected artwork before visible grid thumbnails, preserving
+        // the old selection-first loading priority in the new desktop layout.
+        if let Some(path)=self.library_selection.path.clone() {
+            let paid=self.purchased_designs.iter().find(|(_,candidate)|candidate==&path).map(|(item,_)|item.clone());
+            self.request_library_preview(ctx,&path,paid,true);
+        }
+        let available=ui.available_width();
+        if let Some((catalog_width,preview_width))=crate::glass::library_columns(available) {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x=16.0;
+                ui.allocate_ui_with_layout(egui::vec2(catalog_width,0.0),egui::Layout::top_down(egui::Align::Min),|ui|self.library_catalog_grid(ctx,ui,selection_top));
+                ui.allocate_ui_with_layout(egui::vec2(preview_width,0.0),egui::Layout::top_down(egui::Align::Min),|ui|self.library_selection_panel(ctx,ui));
+            });
+        } else {
+            self.library_selection_panel(ctx,ui);self.library_catalog_grid(ctx,ui,selection_top);
+        }
+    }
+    fn library_catalog_grid(&mut self,ctx:&egui::Context,ui:&mut egui::Ui,selection_top:egui::Pos2) {
         ui.add_space(12.0);ui.label(egui::RichText::new("TUS DISEÑOS").strong());
         if self.library_designs.is_empty() {ui.label("Todavía no tienes diseños guardados. Importa una imagen o guarda tu diseño actual.");}
         let own=self.library_designs.clone();self.library_grid(ctx,ui,own.into_iter().map(|d|(d.title,d.path,None)).collect(),selection_top);
@@ -1803,23 +1820,23 @@ pub mod md3 {
     use eframe::egui::Color32;
 
     // M3 Dark scheme
-    pub const SURFACE: Color32 = Color32::from_rgb(8, 14, 27);
-    pub const SURFACE_CONTAINER: Color32 = Color32::from_rgb(15, 25, 43);
-    pub const SURFACE_CONTAINER_HIGH: Color32 = Color32::from_rgb(23, 36, 57);
-    pub const SURFACE_CONTAINER_HIGHEST: Color32 = Color32::from_rgb(33, 48, 72);
-    pub const ON_SURFACE: Color32 = Color32::from_rgb(237, 244, 255);
-    pub const ON_SURFACE_VARIANT: Color32 = Color32::from_rgb(166, 185, 211);
+    pub const SURFACE: Color32 = crate::glass::BACKGROUND;
+    pub const SURFACE_CONTAINER: Color32 = Color32::from_rgba_premultiplied(13, 20, 32, 212);
+    pub const SURFACE_CONTAINER_HIGH: Color32 = Color32::from_rgba_premultiplied(20, 30, 47, 216);
+    pub const SURFACE_CONTAINER_HIGHEST: Color32 = Color32::from_rgba_premultiplied(30, 43, 66, 228);
+    pub const ON_SURFACE: Color32 = crate::glass::TEXT;
+    pub const ON_SURFACE_VARIANT: Color32 = crate::glass::MUTED;
     pub const OUTLINE: Color32 = Color32::from_rgb(131, 143, 163);
-    pub const OUTLINE_VARIANT: Color32 = Color32::from_rgb(43, 62, 87);
+    pub const OUTLINE_VARIANT: Color32 = Color32::from_rgba_premultiplied(27, 34, 47, 80);
 
     // Primary
-    pub const PRIMARY: Color32 = Color32::from_rgb(145, 220, 255);
+    pub const PRIMARY: Color32 = crate::glass::CYAN;
     pub const ON_PRIMARY: Color32 = Color32::from_rgb(7, 22, 34);
     pub const PRIMARY_CONTAINER: Color32 = Color32::from_rgb(26, 55, 78);
     pub const ON_PRIMARY_CONTAINER: Color32 = Color32::from_rgb(212, 240, 255);
 
     // Secondary
-    pub const SECONDARY_CONTAINER: Color32 = Color32::from_rgb(39, 40, 66);
+    pub const SECONDARY_CONTAINER: Color32 = Color32::from_rgba_premultiplied(35, 35, 58, 210);
     pub const ON_SECONDARY_CONTAINER: Color32 = Color32::from_rgb(210, 203, 255);
 
     // Tertiary
@@ -1892,54 +1909,29 @@ fn setup_custom_theme(ctx: &egui::Context) {
     });
 }
 
-fn m3_card<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Frame::new()
-        .fill(md3::SURFACE_CONTAINER)
-        .stroke(egui::Stroke::new(1.0_f32, md3::OUTLINE_VARIANT))
-        .corner_radius(14)
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.vertical(add_contents).inner
-        })
-        .inner
+fn m3_card<R>(ui:&mut egui::Ui,contents:impl FnOnce(&mut egui::Ui)->R)->R {crate::glass::panel(ui,contents)}
+fn m3_button_filled(ui:&mut egui::Ui,label:&str)->bool {crate::glass::button(ui,label,true,true,egui::vec2(112.0,44.0))}
+fn m3_button_tonal(ui:&mut egui::Ui,label:&str)->bool {crate::glass::button(ui,label,true,false,egui::vec2(112.0,44.0))}
+fn m3_button_outlined(ui:&mut egui::Ui,label:&str)->bool {crate::glass::button(ui,label,true,false,egui::vec2(112.0,44.0))}
+fn studio_button(ui:&mut egui::Ui,label:&str,enabled:bool,primary:bool)->bool {crate::glass::button(ui,label,enabled,primary,egui::vec2(ui.available_width(),44.0))}
+
+fn dashed_drop_box<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let frame = egui::Frame::new().fill(md3::SURFACE_CONTAINER.linear_multiply(0.55)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+        ui.vertical_centered(add_contents).inner
+    });
+    let rect = frame.response.rect;
+    let inner = frame.inner;
+    let painter = ui.painter();
+    let dash = egui::Stroke::new(1.0, md3::PRIMARY.linear_multiply(0.55));
+    let mut x = rect.left();
+    while x < rect.right() { painter.line_segment([egui::pos2(x, rect.top()), egui::pos2((x + 6.0).min(rect.right()), rect.top())], dash); painter.line_segment([egui::pos2(x, rect.bottom()), egui::pos2((x + 6.0).min(rect.right()), rect.bottom())], dash); x += 10.0; }
+    let mut y = rect.top();
+    while y < rect.bottom() { painter.line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.left(), (y + 6.0).min(rect.bottom()))], dash); painter.line_segment([egui::pos2(rect.right(), y), egui::pos2(rect.right(), (y + 6.0).min(rect.bottom()))], dash); y += 10.0; }
+    inner
 }
 
-fn m3_button_filled(ui: &mut egui::Ui, label: &str) -> bool {
-    let btn = egui::Button::new(
-        egui::RichText::new(label).size(13.0).color(md3::ON_PRIMARY),
-    )
-    .fill(md3::PRIMARY)
-    .corner_radius(10)
-    .stroke(egui::Stroke::NONE);
-    ui.add(btn.min_size(egui::vec2(112.0, 44.0))).clicked()
-}
-
-fn m3_button_tonal(ui: &mut egui::Ui, label: &str) -> bool {
-    let btn = egui::Button::new(
-        egui::RichText::new(label).size(13.0).color(md3::ON_SECONDARY_CONTAINER),
-    )
-    .fill(md3::SECONDARY_CONTAINER)
-    .corner_radius(10)
-    .stroke(egui::Stroke::NONE);
-    ui.add(btn.min_size(egui::vec2(112.0, 44.0))).clicked()
-}
-
-fn m3_button_outlined(ui: &mut egui::Ui, label: &str) -> bool {
-    let btn = egui::Button::new(
-        egui::RichText::new(label).size(12.5).color(md3::PRIMARY),
-    )
-    .fill(egui::Color32::TRANSPARENT)
-    .corner_radius(10)
-    .stroke(egui::Stroke::new(1.0_f32, md3::OUTLINE));
-    ui.add(btn.min_size(egui::vec2(112.0, 44.0))).clicked()
-}
-
-fn studio_button(ui: &mut egui::Ui, label: &str, enabled: bool, primary: bool) -> bool {
-    ui.add_enabled(enabled, egui::Button::new(egui::RichText::new(label).strong().size(13.0)
-        .color(if primary { md3::ON_PRIMARY } else { md3::ON_SECONDARY_CONTAINER }))
-        .fill(if primary { md3::PRIMARY } else { md3::SECONDARY_CONTAINER })
-        .corner_radius(10).min_size(egui::vec2(ui.available_width(), 44.0))).clicked()
+fn iphone_mockup_frame<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::new().fill(egui::Color32::from_rgb(5, 8, 14)).stroke(egui::Stroke::new(2.0, md3::OUTLINE_VARIANT)).corner_radius(22).inner_margin(12).show(ui, |ui| add_contents(ui)).inner
 }
 
 fn studio_artwork(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>, width: f32) {
@@ -1974,13 +1966,14 @@ fn m3_tab(ui: &mut egui::Ui, current: &mut AppTab, target: AppTab, label: &str) 
 
 impl eframe::App for AirCardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        crate::glass::background(ctx);
         // eframe can restore older saved visual preferences after construction.
         if !ctx.style().visuals.dark_mode {setup_custom_theme(ctx);}
         self.brand.refresh_scale(ctx);
         self.tick_cloud(ctx);
         if (!crate::storage::is_demo() || self.auth_preview) && !self.account_authenticated && !self.library_authenticated {
             let logo=self.brand.hero.clone();
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(md3::SURFACE).inner_margin(egui::Margin::symmetric(28,16))).show(ctx,|ui| {
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT).inner_margin(egui::Margin::symmetric(28,16))).show(ctx,|ui| {
                 crate::auth_ui::page(ui,&logo,|ui| {
                             if self.auth_preview {ui.label("DEMOSTRACIÓN AISLADA · sin cuentas, correos ni teléfono");ui.horizontal_wrapped(|ui| {
                                 if ui.button("Vista correo").clicked() {self.account_stage=0;}
@@ -2024,9 +2017,8 @@ impl eframe::App for AirCardApp {
         // Top bar
         egui::TopBottomPanel::top("header")
             .frame(
-                egui::Frame::new()
-                    .fill(md3::SURFACE)
-                    .inner_margin(egui::Margin::symmetric(20, 10)),
+                crate::glass::frame().outer_margin(egui::Margin::symmetric(16,8))
+                    .inner_margin(egui::Margin::symmetric(20, 12)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -2155,9 +2147,8 @@ impl eframe::App for AirCardApp {
         // Status bar
         egui::TopBottomPanel::bottom("status_bar")
             .frame(
-                egui::Frame::new()
-                    .fill(md3::SURFACE)
-                    .inner_margin(egui::Margin::symmetric(20, 8)),
+                crate::glass::frame().outer_margin(egui::Margin::symmetric(16,6))
+                    .inner_margin(egui::Margin::symmetric(16, 10)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -2222,14 +2213,12 @@ impl eframe::App for AirCardApp {
                 });
             });
 
-        egui::SidePanel::left("studio-navigation").resizable(false).exact_width(148.0)
-            .frame(egui::Frame::new().fill(md3::SURFACE).inner_margin(egui::Margin::symmetric(12,16))).show(ctx,|ui| {
+        egui::SidePanel::left("studio-navigation").resizable(false).exact_width(if ctx.content_rect().width()<1050.0 {156.0}else{190.0})
+            .frame(crate::glass::frame().outer_margin(egui::Margin::symmetric(12,8)).inner_margin(egui::Margin::symmetric(12,18))).show(ctx,|ui| {
                 ui.label(egui::RichText::new("ESPACIOS").size(10.0).color(md3::ON_SURFACE_VARIANT));ui.add_space(12.0);
-                for (tab,label) in [(AppTab::Wallet,"Tarjetas"),(AppTab::Library,"Biblioteca"),(AppTab::Passcode,"Teclado"),(AppTab::Account,"Cuenta"),(AppTab::Help,"Ayuda")] {
-                    let selected=self.current_tab==tab;
-                    let button=egui::Button::new(egui::RichText::new(label).strong().color(if selected {md3::PRIMARY} else {md3::ON_SURFACE_VARIANT}))
-                        .fill(if selected {md3::PRIMARY_CONTAINER} else {egui::Color32::TRANSPARENT}).corner_radius(10);
-                    if ui.add_sized([ui.available_width(),44.0],button).clicked() {if tab==AppTab::Library {self.refresh_design_library();} self.current_tab=tab;}
+                for (index,(tab,label)) in [(AppTab::Wallet,"Tarjetas"),(AppTab::Library,"Biblioteca"),(AppTab::Passcode,"Teclado"),(AppTab::Account,"Cuenta"),(AppTab::Help,"Ayuda")].into_iter().enumerate() {
+                    if crate::glass::navigation(ui,label,index,self.current_tab==tab).clicked() {if tab==AppTab::Library {self.refresh_design_library();}self.current_tab=tab;}
+                    ui.add_space(4.0);
                 }
                 ui.add_space(24.0);ui.separator();ui.add_space(12.0);
                 ui.label(egui::RichText::new("Tus originales").strong().size(12.0));
@@ -2237,16 +2226,16 @@ impl eframe::App for AirCardApp {
             });
         if self.current_tab==AppTab::Wallet {
             egui::TopBottomPanel::bottom("studio-primary-actions")
-                .frame(egui::Frame::new().fill(md3::SURFACE_CONTAINER).inner_margin(egui::Margin::symmetric(20,12)))
+                .frame(crate::glass::frame().outer_margin(egui::Margin::symmetric(20,8)).inner_margin(egui::Margin::symmetric(16,12)))
                 .show(ctx,|ui| { self.show_wallet_primary_actions(ctx,ui); });
         }
 
-        // Central - same SURFACE fill as header/status for flat look
+        // Transparent native workspace reveals the bounded ambient glass background.
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(md3::SURFACE)
-                    .inner_margin(egui::Margin::same(16)),
+                    .fill(egui::Color32::TRANSPARENT)
+                    .inner_margin(egui::Margin::symmetric(20,16)),
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -2730,8 +2719,12 @@ impl AirCardApp {
                 // Theme file
                 ui.label(egui::RichText::new(language.text("Theme Package")).strong().size(12.0).color(md3::ON_SURFACE));
                 ui.label(egui::RichText::new(language.text("Choose a .passthm archive containing dialer artwork")).size(11.0).color(md3::ON_SURFACE_VARIANT));
-                ui.add_space(4.0);
-                if m3_button_filled(ui, language.text("Choose .passthm...")) { self.select_theme_file(ctx); }
+                let choose_theme=dashed_drop_box(ui, |ui| {
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(language.text("Theme Package")).size(11.0).color(md3::ON_SURFACE_VARIANT));
+                    m3_button_filled(ui, language.text("Choose .passthm..."))
+                });
+                if choose_theme { self.select_theme_file(ctx); }
 
                 if let Some(theme) = &self.loaded_theme {
                     let fname = self.theme_path.as_ref()
@@ -2856,63 +2849,65 @@ impl AirCardApp {
                 let pass_w = (ui.available_width() - 8.0).clamp(240.0, 360.0);
                 let pass_h = 265.0;
 
-                ui.vertical_centered(|ui| {
-                    if self.keypad_textures.is_empty() {
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(pass_w, pass_h), egui::Sense::hover());
-                        let painter = ui.painter();
-                        painter.rect_filled(rect, 16.0, md3::SURFACE_CONTAINER_HIGH);
-                        painter.text(rect.center(), egui::Align2::CENTER_CENTER,
-                            language.text("No theme loaded"), egui::FontId::proportional(14.0), md3::ON_SURFACE_VARIANT);
-                    } else {
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(pass_w, pass_h), egui::Sense::hover());
-                        let painter = ui.painter();
-                        painter.rect_filled(rect, 16.0, md3::SURFACE_CONTAINER_HIGH);
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(10.0);
-                                const DIALER_LAYOUT: &[&[&str]] = &[
-                                    &["1", "2", "3"],
-                                    &["4", "5", "6"],
-                                    &["7", "8", "9"],
-                                    &["", "0", ""],
-                                ];
-                                egui::Grid::new("keypad_grid")
-                                    .spacing([18.0, 6.0])
-                                    .show(ui, |ui| {
-                                        for row in DIALER_LAYOUT {
-                                            for &d in *row {
-                                                if d.is_empty() {
-                                                    ui.allocate_exact_size(egui::vec2(44.0, 50.0), egui::Sense::hover());
-                                                } else if let Some((_, tex)) = self.keypad_textures.iter().find(|(k, _)| k == d) {
-                                                    ui.vertical_centered(|ui| {
-                                                        egui::Frame::new()
-                                                            .fill(md3::SURFACE)
-                                                            .corner_radius(12)
-                                                            .inner_margin(3)
-                                                            .show(ui, |ui| { ui.image((tex.id(), egui::vec2(40.0, 40.0))); });
-                                                        ui.label(egui::RichText::new(d).size(9.5).color(md3::ON_SURFACE_VARIANT));
-                                                    });
-                                                } else {
-                                                    ui.vertical_centered(|ui| {
-                                                        egui::Frame::new()
-                                                            .fill(md3::SURFACE)
-                                                            .corner_radius(12)
-                                                            .inner_margin(3)
-                                                            .show(ui, |ui| {
-                                                                let (btn_rect, _) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
-                                                                ui.painter().rect_filled(btn_rect, 8.0, md3::SURFACE_CONTAINER);
-                                                                ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, d, egui::FontId::proportional(14.0), md3::ON_SURFACE_VARIANT);
-                                                            });
-                                                        ui.label(egui::RichText::new(d).size(9.5).color(md3::ON_SURFACE_VARIANT));
-                                                    });
+                iphone_mockup_frame(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        if self.keypad_textures.is_empty() {
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(pass_w, pass_h), egui::Sense::hover());
+                            let painter = ui.painter();
+                            painter.rect_filled(rect, 16.0, md3::SURFACE_CONTAINER_HIGH);
+                            painter.text(rect.center(), egui::Align2::CENTER_CENTER,
+                                language.text("No theme loaded"), egui::FontId::proportional(14.0), md3::ON_SURFACE_VARIANT);
+                        } else {
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(pass_w, pass_h), egui::Sense::hover());
+                            let painter = ui.painter();
+                            painter.rect_filled(rect, 16.0, md3::SURFACE_CONTAINER_HIGH);
+                            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.add_space(10.0);
+                                    const DIALER_LAYOUT: &[&[&str]] = &[
+                                        &["1", "2", "3"],
+                                        &["4", "5", "6"],
+                                        &["7", "8", "9"],
+                                        &["", "0", ""],
+                                    ];
+                                    egui::Grid::new("keypad_grid")
+                                        .spacing([18.0, 6.0])
+                                        .show(ui, |ui| {
+                                            for row in DIALER_LAYOUT {
+                                                for &d in *row {
+                                                    if d.is_empty() {
+                                                        ui.allocate_exact_size(egui::vec2(44.0, 50.0), egui::Sense::hover());
+                                                    } else if let Some((_, tex)) = self.keypad_textures.iter().find(|(k, _)| k == d) {
+                                                        ui.vertical_centered(|ui| {
+                                                            egui::Frame::new()
+                                                                .fill(md3::SURFACE)
+                                                                .corner_radius(12)
+                                                                .inner_margin(3)
+                                                                .show(ui, |ui| { ui.image((tex.id(), egui::vec2(40.0, 40.0))); });
+                                                            ui.label(egui::RichText::new(d).size(9.5).color(md3::ON_SURFACE_VARIANT));
+                                                        });
+                                                    } else {
+                                                        ui.vertical_centered(|ui| {
+                                                            egui::Frame::new()
+                                                                .fill(md3::SURFACE)
+                                                                .corner_radius(12)
+                                                                .inner_margin(3)
+                                                                .show(ui, |ui| {
+                                                                    let (btn_rect, _) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                                                                    ui.painter().rect_filled(btn_rect, 8.0, md3::SURFACE_CONTAINER);
+                                                                    ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, d, egui::FontId::proportional(14.0), md3::ON_SURFACE_VARIANT);
+                                                                });
+                                                            ui.label(egui::RichText::new(d).size(9.5).color(md3::ON_SURFACE_VARIANT));
+                                                        });
+                                                    }
                                                 }
+                                                ui.end_row();
                                             }
-                                            ui.end_row();
-                                        }
-                                    });
+                                        });
+                                });
                             });
-                        });
-                    }
+                        }
+                    });
                 });
 
                 ui.add_space(12.0);

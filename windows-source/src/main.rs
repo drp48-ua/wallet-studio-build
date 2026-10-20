@@ -15,6 +15,7 @@ mod airtraffic;
 mod card_gallery;
 mod app;
 mod auth_ui;
+mod glass;
 mod brand;
 mod apple;
 mod device;

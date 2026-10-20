@@ -373,6 +373,30 @@ pub fn diagnose_account_designs(all:bool)->serde_json::Value {
 #[cfg(test)]
 mod paid_tests {
     use super::*;
+    /// Explicit host-only diagnostic. No storage initialization, cache writes,
+    /// identity output, raw errors, Apple initialization or device operations.
+    #[test]
+    #[ignore = "requires explicit authorized saved-account design-only host diagnostic"]
+    fn diagnose_live_design_failures_read_only() {
+        if std::env::var("WALLET_STUDIO_DESIGN_DIAGNOSTIC").as_deref()!=Ok("1") {println!("{{\"result\":\"explicit_diagnostic_required\"}}");return;}
+        let session=match crate::cloud_sync::load_session() {Ok(Some(session))=>session,_=>{println!("{{\"result\":\"session_unavailable\"}}");return;}};
+        let catalog=match purchased_catalog(&session) {Ok(catalog)=>catalog,_=>{println!("{{\"result\":\"catalog_unavailable\"}}");return;}};
+        let started=std::time::Instant::now();let mut checks=Vec::new();
+        'items:for item in &catalog.designs {
+            let preview=item.thumbnail.as_deref().unwrap_or(item);
+            for (metadata,native,suffix) in [(preview,false,if item.thumbnail.is_some(){"/thumbnail"}else{""}),(item,true,"")] {
+                if checks.len()>=112 || started.elapsed().as_secs()>=240 {break 'items;}
+                let path=format!("/v1/designs/{}{}",item.id,suffix);
+                let category=match design_request(&session,&path,MAX_ASSET_BYTES) {
+                    Ok(bytes)=>if verify_purchased(metadata,&bytes).is_ok(){"verified"}else{"integrity"},
+                    Err(error)=>if error.chain().any(|cause|matches!(cause.to_string().as_str(),"Lectura de red incompleta"|"Respuesta demasiado grande")){"read"}else{"transport"},
+                };
+                checks.push(serde_json::json!({"id":item.id,"native":native,"category":category}));
+            }
+        }
+        println!("{}",serde_json::json!({"result":if checks.len()==catalog.designs.len()*2 {"complete"}else{"time_budget_reached"},"catalog_count":catalog.designs.len(),"checks":checks}));
+    }
+
     #[test] fn original_geometry_and_distinct_thumbnail_are_bounded_and_legacy_cannot_be_used() {
         assert!(native_geometry(736,460));assert!(native_geometry(1600,1073));
         for dimensions in [(320,200),(639,460),(736,399),(4097,969)] {assert!(!native_geometry(dimensions.0,dimensions.1));}

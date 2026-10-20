@@ -26,8 +26,10 @@ pub fn hero(ui:&mut egui::Ui,logo:&egui::TextureHandle,compact:bool) {
     let width=ui.available_width().min(if compact {280.0} else {500.0});
     let (rect,_)=ui.allocate_exact_size(egui::vec2(width,width*0.61+18.0),egui::Sense::hover());
     let card=egui::Rect::from_min_size(rect.min+egui::vec2(0.0,12.0),egui::vec2(width-18.0,width*0.61));
-    ui.painter().rect_filled(card.translate(egui::vec2(14.0,-12.0)),20.0,md3::SECONDARY_CONTAINER);
-    ui.painter().rect_filled(card,20.0,md3::PRIMARY_CONTAINER);
+    ui.painter().add(crate::glass::gradient(card.translate(egui::vec2(14.0,-12.0)),20.0,egui::Color32::from_rgb(74,47,126),egui::Color32::from_rgb(26,31,61)));
+    ui.painter().add(crate::glass::gradient(card,20.0,egui::Color32::from_rgb(25,73,108),egui::Color32::from_rgb(14,24,47)));
+    let shine=egui::Rect::from_min_size(card.min+egui::vec2(18.0,1.0),egui::vec2(card.width()-36.0,2.0));
+    ui.painter().rect_filled(shine,1.0,egui::Color32::from_white_alpha(40));
     ui.painter().rect_stroke(card,20.0,egui::Stroke::new(1.0_f32,md3::PRIMARY),egui::StrokeKind::Inside);
     ui.painter().text(card.min+egui::vec2(24.0,25.0),egui::Align2::LEFT_TOP,"WALLET STUDIO",egui::FontId::proportional(16.0),md3::ON_PRIMARY_CONTAINER);
     ui.painter().text(card.min+egui::vec2(24.0,59.0),egui::Align2::LEFT_TOP,"Hecha para ti.",egui::FontId::proportional(29.0),md3::ON_SURFACE);
@@ -40,7 +42,7 @@ pub fn benefits(ui:&mut egui::Ui) {
         ("Continúa donde lo dejaste","Copias e historial con sincronización privada.")];
     ui.columns(3,|columns| {
         for (column,(title,description)) in columns.iter_mut().zip(features) {
-            egui::Frame::new().fill(md3::SURFACE_CONTAINER).corner_radius(10).inner_margin(12).show(column,|ui| {
+            crate::glass::frame().inner_margin(12).show(column,|ui| {
                 ui.set_max_width(ui.available_width());
                 ui.add(egui::Label::new(egui::RichText::new(title).strong().size(13.0).color(md3::PRIMARY)).wrap());
                 ui.add(egui::Label::new(egui::RichText::new(description).size(11.5).color(md3::ON_SURFACE_VARIANT)).wrap());
@@ -67,7 +69,7 @@ pub fn page(ui:&mut egui::Ui,logo:&egui::TextureHandle,form:impl FnOnce(&mut egu
             ui.set_width(form_width);ui.set_max_width(form_width);
             // Only long forms scroll vertically inside their own panel. The
             // welcome artwork and horizontal benefits never create page scroll.
-            egui::ScrollArea::vertical().id_salt("account-form-scroll").auto_shrink([false,true]).max_height(body_height).show(ui,form);
+            crate::glass::panel(ui,|ui| {egui::ScrollArea::vertical().id_salt("account-form-scroll").auto_shrink([false,true]).max_height((body_height-34.0).max(1.0)).show(ui,form);});
         });
     });
     ui.add_space(16.0);
