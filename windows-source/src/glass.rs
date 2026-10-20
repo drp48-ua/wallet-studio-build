@@ -89,6 +89,24 @@ fn icon(p:&egui::Painter,r:Rect,index:usize,color:Color32) {
    assert!((tile*columns as f32+16.0*(columns-1) as f32-width).abs()<0.01);
   }
  }
+ #[test] fn actual_saved_card_gallery_wraps_and_fills_each_complete_row() {
+  for screen_width in [900.0,1180.0,1600.0] {
+   let ctx=egui::Context::default();let mut bounds=Rect::NOTHING;let mut tile=0.0;let mut columns=0;
+   let input=egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(screen_width,2000.0))),..Default::default()};
+   let mut output=egui::FullOutput::default();
+   for _ in 0..2 {output=ctx.run(input.clone(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|{
+    bounds=ui.available_rect_before_wrap();(columns,tile)=gallery_layout(ui.available_width(),8);
+    ui.spacing_mut().item_spacing=egui::vec2(16.0,16.0);
+    ui.horizontal_wrapped(|ui|{for index in 0..8 {crate::card_gallery::draw_card_tile(ui,tile,"Tarjeta de prueba",&format!("fixture-{index}"),None,None,false,false,false,crate::i18n::Language::Spanish);}});
+   });});}
+   // egui rounds allocated rectangle edges to physical pixels.
+   let height=(tile-24.0)*969.0/1536.0+124.0;
+   let cards:Vec<Rect>=output.shapes.iter().filter_map(|shape|match &shape.shape {Shape::Rect(rect) if (rect.rect.width()-tile).abs()<=1.0 && (rect.rect.height()-height).abs()<=1.0=>Some(rect.rect),_=>None}).collect();
+   assert_eq!(cards.len(),8);assert!((cards[0].left()-bounds.left()).abs()<0.1);
+   assert!((cards[columns-1].right()-bounds.right()).abs()<0.1,"full row must reach right content edge");
+   assert!((cards[columns-1].top()-cards[0].top()).abs()<0.1);assert!(cards[columns].top()>cards[0].bottom());
+  }
+ }
  #[test] fn glass_panels_and_controls_stay_inside_compact_and_large_content() {
   for size in [egui::vec2(900.0,640.0),egui::vec2(1440.0,900.0)] {
    let ctx=egui::Context::default();let input=egui::RawInput {screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),..Default::default()};
