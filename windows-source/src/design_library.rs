@@ -204,7 +204,7 @@ mod tests {
         let root=std::env::temp_dir().join(format!("ws-catalog-transfer-{}",crate::flasher::generate_token()));
         let png=prepared_png();
         let result:Result<()>=save_before_apply_from_source(&root,&png,false,|path| {
-            assert_eq!(path.parent(),Some(root.join("prepared-transfers").as_path()));
+            assert_eq!(path.parent().unwrap().canonicalize()?,root.join("prepared-transfers").canonicalize()?);
             assert_eq!(read_image(path)?,png);anyhow::bail!("fixture transfer failure")
         });
         assert!(result.is_err());assert!(!root.join("own").exists());
@@ -229,7 +229,7 @@ mod tests {
     fn user_file_transfer_is_saved_to_own_and_marked_before_transfer() {
         let root=std::env::temp_dir().join(format!("ws-file-transfer-{}",crate::flasher::generate_token()));
         save_before_apply_from_source(&root,&prepared_png(),true,|path| {
-            assert_eq!(path.parent(),Some(root.join("own").as_path()));
+            assert_eq!(path.parent().unwrap().canonicalize()?,root.join("own").canonicalize()?);
             assert_eq!(std::fs::read(path.with_extension("user-import"))?,b"user-file-v1");Ok(())
         }).unwrap();
         assert!(!root.join("prepared-transfers").exists());std::fs::remove_dir_all(root).unwrap();
