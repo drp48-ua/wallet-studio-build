@@ -34,6 +34,14 @@ fn retire_task_receiver<T>(receiver: &mut Option<Receiver<T>>, finished: bool, c
     }
 }
 
+/// A saved/library-only session never authorizes a device capture. Keep a
+/// missing-original request waiting until the active app account is reconciled.
+fn original_capture_authorized(app_authenticated:bool,session_pending:bool,
+    cloud_configured:bool,cloud_synced:bool,sync_in_progress:bool)->bool {
+    app_authenticated && !session_pending && !sync_in_progress
+        && crate::cloud_sync::missing_original_capture_allowed(cloud_configured,cloud_synced)
+}
+
 struct CardSnapshot {
     udid: Option<String>, known_device: Option<String>, original: OriginalState,
     reference_device:Option<String>,
@@ -1519,8 +1527,13 @@ impl AirCardApp {
         });
     }
 
+    fn capture_authorized(&self)->bool {
+        original_capture_authorized(self.account_authenticated,self.session_pending,
+            self.cloud_configured,self.cloud_synced,self.cloud_rx.is_some())
+    }
+
     fn capture_original_backup(&mut self) {
-        if self.cloud_rx.is_some() { return; }
+        if !self.capture_authorized() { return; }
         if !self.storage_ready || crate::storage::is_demo() { return; }
         if self.is_busy || self.scanning_syslog || self.pending_recovery_blocks_selected() || !self.selected_usb_ready() {
             return;
@@ -1609,7 +1622,7 @@ impl AirCardApp {
             if let Some(capture) = &mut self.auto_capture {
                 capture.retry();
             }
-            if !self.card_hash.is_empty() && !self.original_verified(&self.card_hash) && self.selected_usb_ready() && !self.is_busy {
+            if self.capture_authorized() && !self.card_hash.is_empty() && !self.original_verified(&self.card_hash) && self.selected_usb_ready() && !self.is_busy {
                 self.capture_original_backup();
             }
         }
@@ -1821,7 +1834,7 @@ impl AirCardApp {
                     if let Some(flag)=self.scan_stop_flag.as_ref() {flag.store(true,Ordering::Release);}
                     self.scanning_syslog=false;
                     self.is_busy=false;
-                    self.progress_msg="Tarjeta detectada. Guardando copia original automáticamente…".into();
+                    self.progress_msg="Tarjeta detectada. Comprobando autorización y copia original…".into();
                     self.selected_udid = Some(udid.clone());
                     if !self.devices.iter().any(|d| d.udid.eq_ignore_ascii_case(&udid)) {
                         match list_connected_devices() {
@@ -1837,7 +1850,7 @@ impl AirCardApp {
                         .map(|card| card.name.clone())
                         .unwrap_or(name);
                     self.add_log(format!("Card detected: {display_name} ({hash}) on iPhone ({udid})"));
-                    self.status_msg = format!("{}: {} · guardando copia original…", self.language.text("Card detected"), display_name);
+                    self.status_msg = format!("{}: {} · comprobando copia original…", self.language.text("Card detected"), display_name);
 
                     // Start only after this scanner batch and its channel are retired.
                 }
@@ -2595,7 +2608,7 @@ impl AirCardApp {
     }
 
     fn tick_auto_capture(&mut self) {
-        if self.cloud_rx.is_some() || crate::storage::is_demo() || !self.storage_ready { return; }
+        if !self.capture_authorized() || crate::storage::is_demo() || !self.storage_ready { return; }
         let Some(request) = self.auto_capture.as_ref() else { return; };
         if request.hash != self.card_hash { return; }
         let Some(snapshot) = self.snapshot(&request.hash) else { return; };
@@ -3175,6 +3188,33 @@ impl AirCardApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn capture_authorization_rejects_library_only_pending_unreconciled_and_active_sync_states() {
+        for authenticated in [false,true] {for pending in [false,true] {
+            for configured in [false,true] {for synced in [false,true] {for syncing in [false,true] {
+                let allowed=original_capture_authorized(authenticated,pending,configured,synced,syncing);
+                assert_eq!(allowed,authenticated && !pending && !syncing && (!configured || synced));
+            }}}
+        }}
+        assert!(!original_capture_authorized(false,false,true,false,false),"design-only accounts have no app entitlement");
+        assert!(!original_capture_authorized(true,true,true,false,false),"retained session is not authorization");
+        assert!(!original_capture_authorized(true,false,true,false,false),"local/cloud review must finish first");
+    }
+    #[test]
+    fn detected_original_request_waits_through_authorization_then_starts_once_after_reconciliation() {
+        let mut request=AutoCapture::selected("fixture-card".into(),Some("fixture-device".into()));
+        for state in [(false,false,true,false,false),(true,true,true,false,false),
+            (true,false,true,false,false),(true,false,true,true,true)] {
+            let safe=original_capture_authorized(state.0,state.1,state.2,state.3,state.4);
+            assert!(!request.should_start(Some("fixture-device"),None,OriginalState::Missing,safe));
+            assert_eq!(request.phase,CapturePhase::Waiting);
+        }
+        let safe=original_capture_authorized(true,false,true,true,false);
+        assert!(request.should_start(Some("fixture-device"),None,OriginalState::Missing,safe));
+        assert_eq!(request.phase,CapturePhase::Running);
+        assert!(!request.should_start(Some("fixture-device"),None,OriginalState::Missing,safe));
+    }
+
     #[test]
     fn scanner_handoff_retires_old_done_without_losing_capture_result() {
         for done_in_same_batch in [false, true] {

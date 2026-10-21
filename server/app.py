@@ -100,7 +100,10 @@ class Handler(BaseHTTPRequestHandler):
     def setup(self):super().setup();self.connection.settimeout(15)
     def reply(self,status,value=None,body=None,content_type=None):
         raw=body if body is not None else json.dumps(value or {}).encode()
-        self.send_response(status);self.send_header('Content-Type',content_type or ('application/octet-stream' if body is not None else 'application/json'));self.send_header('Content-Length',str(len(raw)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(raw)
+        # A semaphore slot belongs to a connection, not a single HTTP request.
+        # Do not let an idle proxy keep-alive monopolize our bounded workers.
+        self.close_connection=True
+        self.send_response(status);self.send_header('Connection','close');self.send_header('Content-Type',content_type or ('application/octet-stream' if body is not None else 'application/json'));self.send_header('Content-Length',str(len(raw)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(raw)
     def error(self,status,code):
         # A rejected request may still have an unread body: do not reuse its connection.
         self.close_connection=True
@@ -271,7 +274,11 @@ class Server(ThreadingHTTPServer):
                     chunk=request.recv(8192-len(header))
                     if not chunk:break
                     header.extend(chunk)
-                request.sendall(b'HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 1\r\nCache-Control: no-store\r\nContent-Type: application/json\r\nContent-Length: '+str(len(body)).encode()+b'\r\n\r\n'+body)
+                healthy=b'\r\n\r\n' in header and header.split(b'\r\n',1)[0] in (b'GET /health HTTP/1.1',b'GET /health HTTP/1.0')
+                if healthy:body=b'{"status":"ok"}'
+                status=b'200 OK' if healthy else b'503 Service Unavailable'
+                retry=b'' if healthy else b'Retry-After: 1\r\n'
+                request.sendall(b'HTTP/1.1 '+status+b'\r\nConnection: close\r\n'+retry+b'Cache-Control: no-store\r\nContent-Type: application/json\r\nContent-Length: '+str(len(body)).encode()+b'\r\n\r\n'+body)
                 request.shutdown(1)
             except OSError:pass
             finally:request.close()

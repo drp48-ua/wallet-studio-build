@@ -1,5 +1,5 @@
 //! Public distribution is a release-time choice, never a credentialed updater.
-pub const VERSION: &str = "0.6.15";
+pub const VERSION: &str = "0.6.16";
 pub const PUBLIC_DOWNLOAD_URL: &str = "https://github.com/drp48-ua/wallet-studio-build/releases/latest";
 pub const PUBLIC_CHANNEL_PUBLISHED: bool = option_env!("WALLET_STUDIO_RELEASE_CHANNEL").is_some();
 
