@@ -445,6 +445,35 @@ pub fn diagnose_account_designs(all:bool)->serde_json::Value {
 #[cfg(test)]
 mod paid_tests {
     use super::*;
+    /// Fixed reviewed set: one authenticated native GET per selected design,
+    /// no thumbnail/cache/profile writes, device code, or sensitive output.
+    #[test]
+    #[ignore = "requires explicit authorized saved-account design-only host diagnostic"]
+    fn diagnose_twelve_native_designs_read_only() {
+        if std::env::var("WALLET_STUDIO_DESIGN_DIAGNOSTIC").as_deref()!=Ok("1") {println!("{{\"result\":\"explicit_diagnostic_required\"}}");return;}
+        let session=match crate::cloud_sync::load_session() {Ok(Some(session))=>session,_=>{println!("{{\"result\":\"session_unavailable\"}}");return;}};
+        let catalog=match purchased_catalog(&session) {Ok(catalog)=>catalog,_=>{println!("{{\"result\":\"catalog_unavailable\"}}");return;}};
+        let ids=["ws-001","ws-002","ws-012","ws-015","ws-017","ws-031",
+            "ws-051","ws-052","ws-053","ws-054","ws-055","ws-056"];
+        let started=std::time::Instant::now();let mut checks=Vec::new();let mut attempted=0;
+        for id in ids {
+            if started.elapsed().as_secs()>=240 {break;}
+            let category=match catalog.designs.iter().find(|item|item.id==id) {
+                None=>"not_in_catalog",
+                Some(item) if !native_geometry(item.width,item.height)=>"not_native",
+                Some(item)=>{
+                    attempted+=1;
+                    match design_request(&session,&format!("/v1/designs/{id}"),MAX_ASSET_BYTES) {
+                        Ok(bytes)=>if verify_purchased(item,&bytes).is_ok(){"verified"}else{"integrity"},
+                        Err(error)=>if error.chain().any(|cause|matches!(cause.to_string().as_str(),"Lectura de red incompleta"|"Respuesta demasiado grande")){"read"}else{"transport"},
+                    }
+                }
+            };
+            checks.push(serde_json::json!({"id":id,"native":true,"category":category}));
+        }
+        println!("{}",serde_json::json!({"result":if checks.len()==ids.len(){"complete"}else{"time_budget_reached"},"expected_requests":ids.len(),"attempted":attempted,"checks":checks}));
+    }
+
     /// Explicit host-only diagnostic. No storage initialization, cache writes,
     /// identity output, raw errors, Apple initialization or device operations.
     #[test]
