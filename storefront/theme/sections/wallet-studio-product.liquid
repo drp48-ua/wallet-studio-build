@@ -6,26 +6,26 @@
     <div class="ws-wrap ws-nav-inner">
       <a class="ws-wordmark" href="{{ routes.root_url }}" aria-label="Wallet Studio, inicio"><span class="ws-symbol" aria-hidden="true"><span></span><span></span><span></span></span><span>WALLETSTUDIO<span class="ws-wordmark-dot">.</span>SITE</span></a>
       <nav class="ws-desktop-nav" aria-label="Navegación del producto"><a href="{{ routes.root_url }}#ws-designs">Diseños</a><a href="{{ routes.root_url }}#ws-process">Cómo funciona</a><a href="{{ routes.root_url }}#ws-faq">Preguntas frecuentes</a></nav>
-      <a class="ws-nav-cta" href="{{ routes.root_url }}#ws-access">Novedades <span aria-hidden="true">↗</span></a>
-      <details class="ws-mobile-menu"><summary aria-label="Abrir menú"><span class="ws-mobile-menu-icon" aria-hidden="true"><i></i><i></i><i></i></span><span class="ws-mobile-menu-text">Menú</span></summary><nav class="ws-mobile-menu-panel" aria-label="Navegación móvil"><a href="{{ routes.root_url }}#ws-designs">Explorar diseños ↗</a><a href="{{ routes.root_url }}#ws-process">Cómo funciona ↗</a><a href="{{ routes.root_url }}#ws-faq">Preguntas frecuentes ↗</a><a href="{{ routes.root_url }}#ws-access">Recibir novedades ↗</a></nav></details>
+      <a class="ws-nav-cta" href="{{ routes.cart_url }}">Ver carrito <span aria-hidden="true">↗</span></a>
+      <details class="ws-mobile-menu"><summary aria-label="Abrir menú"><span class="ws-mobile-menu-icon" aria-hidden="true"><i></i><i></i><i></i></span><span class="ws-mobile-menu-text">Menú</span></summary><nav class="ws-mobile-menu-panel" aria-label="Navegación móvil"><a href="{{ routes.root_url }}#ws-designs">Explorar diseños ↗</a><a href="{{ routes.root_url }}#ws-process">Cómo funciona ↗</a><a href="{{ routes.root_url }}#ws-faq">Preguntas frecuentes ↗</a><a href="{{ routes.cart_url }}">Ver carrito ↗</a></nav></details>
     </div>
   </header>
   <div class="ws-product-cover">
     <div class="ws-wrap ws-product-grid">
       <div class="ws-product-visual" aria-label="Ilustración original de la aplicación Wallet Studio">
         <div class="ws-product-orbit" aria-hidden="true"></div>
-        <button type="button" class="ws-product-card ws-product-card-back ws-zoom-trigger" data-ws-zoom-title="Marble & Gold" data-ws-zoom-src="{% if product.images.size > 1 %}{{ product.images[1] | image_url: width: 1800 }}{% else %}https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-hero-marble-gold-cropped.png?v=1792139019{% endif %}" aria-label="Ampliar imagen del producto Marble & Gold">
+        <button type="button" class="ws-product-card ws-product-card-back ws-zoom-trigger" data-ws-zoom-title="Marble & Gold" data-ws-zoom-src="{% if product.images.size > 1 %}{{ product.images[1] | image_url: width: 1536 }}{% else %}https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-053-fullbleed-20261022.png?v=1792657545{% endif %}" aria-label="Ampliar imagen del producto Marble & Gold">
           {% if product.images.size > 1 %}
-            {{ product.images[1] | image_url: width: 1488 | image_tag: loading: 'eager', alt: 'Marble & Gold — diseño de tarjeta blanca y dorada' }}
+            {{ product.images[1] | image_url: width: 1536 | image_tag: loading: 'eager', alt: 'Marble & Gold — diseño de tarjeta blanca y dorada' }}
           {% else %}
-            <img src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-hero-marble-gold-cropped.png?v=1792139019" alt="Marble & Gold — diseño de tarjeta blanca y dorada" width="1488" height="925" loading="eager">
+            <img src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-053-fullbleed-20261022.png?v=1792657545" alt="Marble & Gold — diseño de tarjeta blanca y dorada" width="1536" height="969" loading="eager">
           {% endif %}
         </button>
-        <button type="button" class="ws-product-card ws-product-card-front ws-zoom-trigger" data-ws-zoom-title="Black & Gold" data-ws-zoom-src="{% if product.images.size > 0 %}{{ product.images[0] | image_url: width: 1800 }}{% else %}https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-hero-black-gold-cropped.png?v=1792139010{% endif %}" aria-label="Ampliar imagen del producto Black & Gold">
+        <button type="button" class="ws-product-card ws-product-card-front ws-zoom-trigger" data-ws-zoom-title="Black & Gold" data-ws-zoom-src="{% if product.images.size > 0 %}{{ product.images[0] | image_url: width: 1536 }}{% else %}https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-056-fullbleed-20261022.png?v=1792657594{% endif %}" aria-label="Ampliar imagen del producto Black & Gold">
           {% if product.images.size > 0 %}
-            {{ product.images[0] | image_url: width: 1480 | image_tag: loading: 'eager', alt: 'Black & Gold — diseño de tarjeta negra y dorada', fetchpriority: 'high' }}
+            {{ product.images[0] | image_url: width: 1536 | image_tag: loading: 'eager', alt: 'Black & Gold — diseño de tarjeta negra y dorada', fetchpriority: 'high' }}
           {% else %}
-            <img src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-hero-black-gold-cropped.png?v=1792139010" alt="Black & Gold — diseño de tarjeta negra y dorada" width="1481" height="925" loading="eager">
+            <img src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-056-fullbleed-20261022.png?v=1792657594" alt="Black & Gold — diseño de tarjeta negra y dorada" width="1536" height="969" loading="eager">
           {% endif %}
         </button>
         <div class="ws-product-visual-caption">PULSA UNA TARJETA PARA AMPLIARLA · IMÁGENES ILUSTRATIVAS</div>
@@ -64,7 +64,11 @@
             <button type="button" class="ws-button ws-button-primary ws-product-purchase-button" disabled aria-disabled="true">Próximamente <span aria-hidden="true">↗</span></button>
             <a class="ws-product-notify" href="{{ routes.root_url }}#ws-access">Avisarme cuando esté disponible <span aria-hidden="true">↗</span></a>
           {% endif %}
-          <p class="ws-product-fineprint">Precio previsto de 6,99 € por compra única. Entrega prevista: instalador .exe tras confirmarse el pago. Software todavía no disponible para compra ni descarga; compatibilidad y requisitos finales pendientes de verificar. Asistencia: <a href="mailto:walletstudiosupport@gmail.com">walletstudiosupport@gmail.com</a>.</p>
+          {% if section.settings.enable_sales and product.available %}
+            <p class="ws-product-fineprint">{{ product.price | money }} por compra única. Recibirás la descarga del ZIP para Windows tras confirmarse el pago. Revisa los requisitos y la compatibilidad antes de comprar. Asistencia: <a href="mailto:walletstudiosupport@gmail.com">walletstudiosupport@gmail.com</a>.</p>
+          {% else %}
+            <p class="ws-product-fineprint">Precio previsto de 6,99 € por compra única. Entrega prevista: instalador .exe tras confirmarse el pago. Software todavía no disponible para compra ni descarga; compatibilidad y requisitos finales pendientes de verificar. Asistencia: <a href="mailto:walletstudiosupport@gmail.com">walletstudiosupport@gmail.com</a>.</p>
+          {% endif %}
         </div>
       </div>
     </div>
