@@ -446,7 +446,11 @@ impl AirCardApp {
             self.saved_cards=load_saved_cards(); self.invalidate_card_cache();
             if newly_authenticated && self.apple_ready {self.refresh_devices();self.refresh_recovery_status();}
         }
-        if let Some(rx)=&self.update_rx { while let Ok(message)=rx.try_recv() { self.update_status=message; } }
+        let update_finished=if let Some(rx)=&self.update_rx {
+            crate::auto_update::poll_status(rx,&mut self.update_status)
+        } else { false };
+        if update_finished { self.update_rx=None; }
+        if self.update_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(150)); }
         if self.cloud_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(150)); }
         if self.cloud_configured && self.cloud_session.is_some() {
             if self.cloud_sync_queued || self.last_cloud_sync.elapsed().as_secs()>=60 { self.start_cloud_sync(ctx.clone()); }
@@ -3121,16 +3125,18 @@ impl AirCardApp {
             ui.label(egui::RichText::new("Actualizaciones").strong().size(16.0).color(md3::ON_SURFACE));
             ui.label(format!("Versión instalada: {}", crate::update_info::VERSION));
             ui.label(egui::RichText::new(&self.update_status).color(md3::PRIMARY));
-            ui.label(if crate::update_info::PUBLIC_CHANNEL_PUBLISHED {
-                "Consulta la versión publicada y descarga la actualización en el navegador."
-            } else {
-                "El canal público de descargas todavía no está publicado. El estado de la comprobación automática aparece aquí."
+            let is_checking=self.update_rx.is_some();
+            ui.horizontal_wrapped(|ui| {
+                if ui.add_enabled(!is_checking && !self.is_busy,
+                    egui::Button::new(if is_checking { "Comprobando…" } else { "Buscar actualizaciones" })).clicked() {
+                    self.update_status="Buscando actualizaciones en el canal oficial…".into();
+                    self.update_rx=Some(crate::auto_update::start_background_check());
+                }
+                if ui.add_enabled(!self.is_busy,egui::Button::new("Descargas en GitHub ↗")).clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(crate::update_info::PUBLIC_DOWNLOAD_URL));
+                }
             });
-            if ui.add_enabled(crate::update_info::PUBLIC_CHANNEL_PUBLISHED,
-                egui::Button::new("Buscar actualizaciones")).clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(crate::update_info::PUBLIC_DOWNLOAD_URL));
-            }
-            ui.label(egui::RichText::new("Actualización manual: cierra la aplicación y sustituye los archivos del programa. Conserva designs y las copias originales locales; no borres los datos de Wallet Studio.").size(11.0).color(md3::ON_SURFACE_VARIANT));
+            ui.label(egui::RichText::new("Las actualizaciones descargadas deben superar la verificación de firma y SHA-256. Si se prepara una actualización, termina las operaciones del iPhone, cierra normalmente Wallet Studio y vuelve a abrirlo para aplicarla. Conserva designs y las copias originales locales; no borres los datos de Wallet Studio.").size(11.0).color(md3::ON_SURFACE_VARIANT));
         });
         ui.add_space(12.0);
         ui.columns(2, |cols| {

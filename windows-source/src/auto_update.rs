@@ -179,7 +179,19 @@ fn check()->Result<String>{
     let package=public_download(&asset_url(&m.asset)?,MAX_PACKAGE)?;stage_at(&cache(),&signed,&package)?;Ok(format!("Actualización {} preparada: se activará al volver a abrir",m.version))
 }
 pub fn start_background_check()->Receiver<String>{let(tx,rx)=channel();std::thread::spawn(move||{let _=tx.send("Comprobando actualizaciones…".into());let status=match check(){Ok(s)=>s,Err(_)=>"Canal de actualización no disponible; puedes seguir trabajando".into()};let _=tx.send(status);});rx}
+pub fn poll_status(rx:&Receiver<String>,status:&mut String)->bool {
+    loop {
+        match rx.try_recv() {
+            Ok(message)=>*status=message,
+            Err(std::sync::mpsc::TryRecvError::Empty)=>return false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected)=>return true,
+        }
+    }
+}
 #[cfg(test)]mod tests{use super::*;
+ #[test]fn status_receiver_drains_final_message_and_releases_disconnected_worker(){let(tx,rx)=channel();let mut status=String::new();assert!(!poll_status(&rx,&mut status));tx.send("Comprobando".into()).unwrap();assert!(!poll_status(&rx,&mut status));assert_eq!(status,"Comprobando");tx.send("Actualización preparada".into()).unwrap();drop(tx);assert!(poll_status(&rx,&mut status));assert_eq!(status,"Actualización preparada");}
+ #[test]fn status_receiver_can_be_checked_again_after_completion(){let(tx,rx)=channel();drop(tx);let mut status=String::from("Anterior");assert!(poll_status(&rx,&mut status));assert_eq!(status,"Anterior");let(tx,next)=channel();tx.send("Nueva comprobación".into()).unwrap();drop(tx);assert!(poll_status(&next,&mut status));assert_eq!(status,"Nueva comprobación");}
+ #[test]fn manifest_rejects_non_main_source_branch_and_foreign_repo(){let base=fixture().read().unwrap();let mut bad=base.clone();bad.source_branch="feature-branch".into();assert!(validate_manifest(&bad).is_err());bad=base;bad.repository="other/repo".into();assert!(validate_manifest(&bad).is_err());}
  #[test]fn transport_rejects_plain_remote_credentials_controls_and_invalid_ports(){for u in["http://example.com/a","https://u:p@example.com/a","https://x:0/a","https://x/a\r\nX:y","file:///x"]{assert!(parse_url(u).is_err());}assert!(parse_url("http://127.0.0.1:8766/v1/auth/login").is_ok());}
  #[test]fn versions_are_numeric_and_do_not_accept_extra_segments(){assert!(version("0.10.0").unwrap()>version("0.6.0").unwrap());assert!(version("0.6.0.1").is_err());assert!(version("x.6.0").is_err());}
  #[test]fn updates_cannot_roll_back_or_redefine_a_build(){let first=fixture().read().unwrap();let mut next=first.clone();next.version="0.0.0".into();assert!(require_monotonic(&first,&next).is_err());next=first.clone();next.build_id=0;assert!(require_monotonic(&first,&next).is_err());next=first.clone();next.commit="1".repeat(40);assert!(require_monotonic(&first,&next).is_err());next.build_id=2;assert!(require_monotonic(&first,&next).is_ok());}
