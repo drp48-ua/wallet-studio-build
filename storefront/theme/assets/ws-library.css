@@ -7,3 +7,9 @@
 .ws-catalog-page .ws-navigation .ws-wordmark{display:inline-flex;align-items:center;gap:10px;min-width:0;flex:0 1 auto}
 .ws-catalog-page .ws-navigation .ws-wordmark>img.ws-brand-logo{display:block;width:36px!important;height:36px!important;min-width:36px;max-width:36px!important;max-height:36px!important;flex:0 0 36px;object-fit:contain}
 @media(max-width:650px){.ws-catalog-page .ws-navigation .ws-wordmark>img.ws-brand-logo{width:32px!important;height:32px!important;min-width:32px;max-width:32px!important;max-height:32px!important;flex-basis:32px}}
+
+/* Prevent duplicate theme default cart when custom ws-checkout-cart is active */
+.cart-items-component,
+.cart__footer-wrapper {
+  display: none !important;
+}

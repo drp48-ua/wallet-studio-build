@@ -2,7 +2,7 @@
 {{ 'ws-library.css' | asset_url | stylesheet_tag }}
 <script src="{{ 'ws-library.js' | asset_url }}" defer></script>
 <div class="ws-site ws-catalog-page" data-ws-library>
-<header class="ws-navigation"><div class="ws-wrap ws-nav-inner"><a class="ws-wordmark" href="{{ routes.root_url }}"><img class="ws-brand-logo" src="{{ 'wallet-studio-official-logo.png' | file_url }}" width="36" height="36" alt="Wallet Studio"><span>WALLET.STUDIO</span></a><a class="ws-nav-cta" href="{{ routes.root_url }}">{{ 'wallet_studio.catalog.home' | t }} ↗</a></div></header>
+<header class="ws-navigation"><div class="ws-wrap ws-nav-inner"><a class="ws-wordmark" href="{{ routes.root_url }}"><img class="ws-brand-logo" src="{{ 'wallet-studio-official-logo.png' | file_url }}" width="36" height="36" alt="Wallet Studio"><span>WALLETSTUDIO<span class="ws-wordmark-dot">.</span>SITE</span></a><a class="ws-nav-cta" href="{{ routes.root_url }}">{{ 'wallet_studio.catalog.home' | t }} ↗</a></div></header>
 <main class="ws-wrap ws-library-full"><div class="ws-library-heading"><div><p class="ws-eyebrow">{{ 'wallet_studio.catalog.eyebrow' | t }}</p><h1>{{ 'wallet_studio.catalog.full_heading' | t }}</h1><p>{{ 'wallet_studio.catalog.full_description' | t: count: 56 }}</p></div><span class="ws-library-resolution">56 · 2K</span></div>
 <div class="ws-library-grid">
 {% render 'ws-library-card', design_id: 'ws-001', title: 'Mosaico imperial', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-001-fullbleed-20261022.png?v=1792657410', eager: true %}

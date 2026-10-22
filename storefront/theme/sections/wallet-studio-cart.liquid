@@ -1,0 +1,75 @@
+{{ 'wallet-studio.css' | asset_url | stylesheet_tag }}
+{{ 'wallet-studio-cart.css' | asset_url | stylesheet_tag }}
+<div class="ws-site ws-checkout-cart">
+  <header class="ws-navigation">
+    <div class="ws-wrap ws-nav-inner">
+      <a class="ws-wordmark" href="{{ routes.root_url }}" aria-label="Wallet Studio, inicio"><span class="ws-symbol" aria-hidden="true"><span></span><span></span><span></span></span><span>WALLETSTUDIO<span class="ws-wordmark-dot">.</span>SITE</span></a>
+      <nav class="ws-desktop-nav" aria-label="Navegación de la tienda">
+        <a href="{{ routes.root_url }}#ws-designs">La colección</a><a href="{{ routes.root_url }}#ws-process">Cómo funciona</a>
+      </nav>
+      <a class="ws-nav-cta" href="{{ routes.root_url }}">Seguir explorando <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+  <main class="ws-cart-main">
+    <div class="ws-wrap">
+      <div class="ws-section-index">WALLET STUDIO / COMPRA DIGITAL</div>
+      <div class="ws-cart-title"><div><h1>Tu carrito<span>.</span></h1><p>{% if cart.item_count == 0 %}Todavía no has seleccionado ningún producto.{% else %}Revisa tu selección antes de continuar con el pago seguro de Shopify.{% endif %}</p></div><span class="ws-cart-count">{{ cart.item_count }} {% if cart.item_count == 1 %}ARTÍCULO{% else %}ARTÍCULOS{% endif %}</span></div>
+      {% if cart.item_count == 0 %}
+        <div class="ws-cart-empty">
+          <span aria-hidden="true">✳</span>
+          <h2>Empieza por el diseño.</h2>
+          <p>Explora Wallet Studio y descubre lo que tenemos preparado.</p>
+          <a class="ws-button ws-button-primary" href="{{ routes.root_url }}#ws-designs">Explorar diseños <span aria-hidden="true">↗</span></a>
+        </div>
+      {% else %}
+        <form action="{{ routes.cart_url }}" method="post" class="ws-cart-form" novalidate>
+          <div class="ws-cart-items">
+            {% for item in cart.items %}
+              <article class="ws-cart-item">
+                <a class="ws-cart-image" href="{{ item.url }}" aria-label="Ver {{ item.product.title | escape }}">
+                  {% if item.image %}
+                    {{ item.image | image_url: width: 320 | image_tag: loading: 'lazy', alt: item.product.title }}
+                  {% else %}
+                    <span>W / S</span>
+                  {% endif %}
+                </a>
+                <div class="ws-cart-item-info">
+                  <div class="ws-cart-item-kicker">SOFTWARE / PRODUCTO DIGITAL</div>
+                  <h2><a href="{{ item.url }}">{{ item.product.title | escape }}</a></h2>
+                  {% if item.variant.title != 'Default Title' %}<p>{{ item.variant.title | escape }}</p>{% endif %}
+                  <a class="ws-cart-remove" href="{{ item.url_to_remove }}">Eliminar <span aria-hidden="true">×</span></a>
+                </div>
+                <div class="ws-cart-item-controls">
+                  <label for="ws-cart-quantity-{{ forloop.index }}">Cantidad</label>
+                  <input type="number" id="ws-cart-quantity-{{ forloop.index }}" name="updates[]" value="{{ item.quantity }}" min="0" max="99" step="1" inputmode="numeric">
+                  <strong>{{ item.final_line_price | money }}</strong>
+                </div>
+              </article>
+            {% endfor %}
+            <button type="submit" name="update" class="ws-cart-update">Actualizar cantidades <span aria-hidden="true">↻</span></button>
+          </div>
+          <div class="ws-cart-summary">
+            <span class="ws-section-index">RESUMEN DEL PEDIDO</span>
+            <div class="ws-cart-total"><span>Total del carrito</span><strong>{{ cart.total_price | money }}</strong></div>
+            <p>El importe definitivo, los impuestos aplicables y las condiciones de compra se confirmarán antes del pago.</p>
+            <button type="submit" name="checkout" class="ws-button ws-button-primary ws-cart-checkout">Continuar al pago seguro <span aria-hidden="true">↗</span></button>
+            <a href="{{ routes.root_url }}" class="ws-cart-continue">Seguir explorando <span aria-hidden="true">↗</span></a>
+            <div class="ws-cart-trust">PAGO PROCESADO POR SHOPIFY · COMPRA ÚNICA · LICENCIA PARA TRES ORDENADORES · SOPORTE: <a href="mailto:walletstudiosupport@gmail.com">walletstudiosupport@gmail.com</a></div>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </main>
+  <footer class="ws-footer">
+    <div class="ws-wrap ws-footer-top"><a class="ws-wordmark" href="{{ routes.root_url }}"><span class="ws-symbol" aria-hidden="true"><span></span><span></span><span></span></span><span>WALLETSTUDIO<span class="ws-wordmark-dot">.</span>SITE</span></a><a href="{{ routes.root_url }}">Volver a la web ↑</a></div>
+    <nav class="ws-wrap ws-footer-legal" aria-label="Información legal"><a href="{{ routes.root_url }}#ws-legal-notice">Aviso legal</a><a href="{{ routes.root_url }}#ws-legal-privacy">Privacidad</a><a href="{{ routes.root_url }}#ws-legal-cookies">Cookies</a><a href="{{ routes.root_url }}#ws-legal-terms">Condiciones</a><a href="{{ routes.root_url }}#ws-legal-returns">Desistimiento</a></nav>
+    <div class="ws-wrap ws-footer-bottom"><p>© {{ 'now' | date: '%Y' }} Wallet Studio. Venta de software digital sujeta a condiciones y compatibilidad verificadas.</p><span>CRAFTED TO BE DIFFERENT.</span></div>
+  </footer>
+</div>
+{% schema %}
+{
+  "name": "Wallet Studio · Carrito",
+  "settings": [],
+  "presets": [{"name": "Wallet Studio · Carrito"}]
+}
+{% endschema %}
