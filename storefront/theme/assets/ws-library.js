@@ -32,13 +32,11 @@
         sync();
       });
       let stop = () => {};
-      let resizeObserver = null, visibilityObserver = null, focusTimer = null;
+      let resizeObserver = null;
       const destroy = () => {
         stop();
-        clearTimeout(focusTimer);
         events.abort();
         resizeObserver?.disconnect();
-        visibilityObserver?.disconnect();
         if (dialog?.open) dialog.close();
         image?.removeAttribute('src');
         instances.delete(root);
@@ -48,10 +46,7 @@
       if (!track) return;
       const cards = [...track.children];
       if (cards.length < 2) return;
-      const toggle = root.querySelector('[data-ws-library-toggle]');
-      const counter = root.querySelector('[data-ws-library-counter]');
-      const motion = matchMedia('(prefers-reduced-motion: reduce)');
-      let paused = motion.matches, hovered = false, focused = false, visible = true;
+      let hovered = false;
       let raf = null, lastTime = null, pitch = 0, offset = 0, head = 0, index = 0;
       const speed = 34; // CSS pixels per second, independent of refresh rate.
       stop = () => {
@@ -61,21 +56,22 @@
       };
       const updateCounter = () => {
         index = (head + (pitch ? Math.floor((offset + pitch / 2) / pitch) : 0)) % cards.length;
-        const label = (index + 1) + ' / ' + cards.length;
-        if (counter && counter.textContent !== label) counter.textContent = label;
       };
-      const updateToggle = () => {
-        if (!toggle) return;
-        toggle.textContent = paused ? toggle.dataset.play : toggle.dataset.pause;
-        toggle.setAttribute('aria-pressed', String(paused));
-        toggle.disabled = motion.matches;
+      const moveFirst = () => {
+        const first = track.firstElementChild;
+        if (track.moveBefore) track.moveBefore(first, null);
+        else {
+          const active = document.activeElement;
+          track.appendChild(first);
+          if (first.contains(active) && document.activeElement !== active) active.focus({preventScroll: true});
+        }
       };
-      const canRun = () => !paused && !motion.matches && !document.hidden && visible && !hovered && !focused && !dialog?.open && pitch > 0;
+      const canRun = () => !document.hidden && !hovered && pitch > 0;
       const normalize = () => {
         // Recycle the same eight originals; no duplicate controls, IDs or ARIA.
         // DOM movement and scroll compensation happen in one paint frame.
         while (pitch > 0 && offset >= pitch) {
-          track.appendChild(track.firstElementChild);
+          moveFirst();
           offset -= pitch;
           head = (head + 1) % cards.length;
         }
@@ -109,58 +105,36 @@
         }
         sync();
       };
-      const pause = () => { paused = true; updateToggle(); stop(); };
       const go = (next, focusCard = false) => {
-        pause();
         index = (next + cards.length) % cards.length;
         const target = cards[index];
-        while (track.firstElementChild !== target) track.appendChild(track.firstElementChild);
+        while (track.firstElementChild !== target) moveFirst();
         head = index;
         offset = 0;
         track.scrollLeft = 0;
         updateCounter();
         if (focusCard) target.querySelector('[data-ws-artwork]')?.focus({preventScroll: true});
+        sync();
       };
-      on(toggle, 'click', () => {
-        paused = !paused;
-        // An explicit keyboard Play may resume while its own control has focus.
-        if (!paused && document.activeElement === toggle) focused = false;
-        updateToggle(); sync();
-      });
-      on(root.querySelector('[data-ws-library-prev]'), 'click', () => go(index - 1));
-      on(root.querySelector('[data-ws-library-next]'), 'click', () => go(index + 1));
       on(track, 'keydown', event => {
         if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
         event.preventDefault();
         go(index + (event.key === 'ArrowRight' ? 1 : -1), event.target !== track);
       });
-      on(track, 'pointerenter', () => { hovered = true; stop(); });
-      on(track, 'pointerleave', () => { hovered = false; sync(); });
-      on(track, 'pointerdown', pause);
-      on(track, 'touchstart', pause, {passive: true});
-      on(track, 'wheel', pause, {passive: true});
-      on(root, 'focusin', () => { focused = true; stop(); });
-      on(root, 'focusout', () => {
-        clearTimeout(focusTimer);
-        focusTimer = setTimeout(() => { focused = root.contains(document.activeElement); sync(); }, 0);
-      });
+      on(track, 'pointerenter', event => { if (event.pointerType === 'mouse') { hovered = true; stop(); } });
+      on(track, 'pointerleave', event => { if (event.pointerType === 'mouse') { hovered = false; sync(); } });
       on(track, 'scroll', () => {
         // Keep subpixel RAF progress instead of re-reading rounded programmatic
-        // scroll values each frame. Native interaction pauses before scrolling.
+        // scroll values each frame. Mouse hover allows native scroll adjustment.
         if (raf === null) offset = Math.max(0, track.scrollLeft);
         updateCounter();
       }, {passive: true});
       on(document, 'visibilitychange', sync);
-      on(motion, 'change', () => { if (motion.matches) paused = true; updateToggle(); sync(); });
       if (window.ResizeObserver) {
         resizeObserver = new ResizeObserver(measure);
         resizeObserver.observe(track);
       } else on(window, 'resize', measure);
-      if (window.IntersectionObserver) {
-        visibilityObserver = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; sync(); });
-        visibilityObserver.observe(root);
-      }
-      updateToggle(); measure();
+      measure();
     });
   };
   init(document);
