@@ -1,0 +1,101 @@
+/*
+ * ------------------------------------------------------------
+ * IMPORTANT: The contents of this file are auto-generated.
+ *
+ * This file may be updated by the Shopify admin theme editor
+ * or related systems. Please exercise caution as any changes
+ * made to this file may be overwritten.
+ * ------------------------------------------------------------
+ */
+{
+  "sections": {
+    "wallet_studio_main": {
+      "type": "wallet-studio-landing",
+      "blocks": {
+        "ws_noir": {
+          "type": "design",
+          "settings": {
+            "design_name": "The Great Wave",
+            "description": "La gran ola japonesa, azul profundo y sol naciente.",
+            "category": "original",
+            "hosted_image_url": "https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-055-fullbleed-20261022.png?v=1792657580",
+            "alt_text": "Tarjeta ilustrada con La gran ola de Kanagawa, monte Fuji y sol rojo",
+            "visual_style": "noir"
+          }
+        },
+        "ws_alloy": {
+          "type": "design",
+          "settings": {
+            "design_name": "Sakura Noir",
+            "description": "Monte Fuji y flor de cerezo en blanco y negro.",
+            "category": "original",
+            "hosted_image_url": "https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-051-fullbleed-20261022.png?v=1792657500",
+            "alt_text": "Tarjeta monocromática con flores de cerezo, monte Fuji y luna",
+            "visual_style": "silver"
+          }
+        },
+        "ws_platinum": {
+          "type": "design",
+          "settings": {
+            "design_name": "Black & Gold",
+            "description": "Negro profundo, filigrana dorada y acabado clásico.",
+            "category": "luxury",
+            "hosted_image_url": "https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-056-fullbleed-20261022.png?v=1792657594",
+            "alt_text": "Tarjeta negra con ornamentos dorados y medallón del centurión",
+            "visual_style": "platinum"
+          }
+        },
+        "ws_scarlet": {
+          "type": "design",
+          "settings": {
+            "design_name": "Marble & Gold",
+            "description": "Mármol blanco y detalles dorados de estilo clásico.",
+            "category": "luxury",
+            "hosted_image_url": "https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-053-fullbleed-20261022.png?v=1792657545",
+            "alt_text": "Tarjeta de mármol blanco con cenefa dorada y medallón de centurión",
+            "visual_style": "scarlet"
+          }
+        },
+        "ws_ink": {
+          "type": "design",
+          "settings": {
+            "design_name": "Crimson Web",
+            "description": "Rojo intenso, negro y geometría inspirada en el cómic.",
+            "category": "pop",
+            "hosted_image_url": "https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-052-fullbleed-20261022.png?v=1792657527",
+            "alt_text": "Tarjeta roja y negra con telarañas y emblema de araña dorada",
+            "visual_style": "ink"
+          }
+        },
+        "ws_electric": {
+          "type": "design",
+          "settings": {
+            "design_name": "Emerald Lines",
+            "description": "Verde esmeralda, topografía orgánica y oro discreto.",
+            "category": "luxury",
+            "hosted_image_url": "https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-054-fullbleed-20261022.png?v=1792657560",
+            "alt_text": "Tarjeta verde esmeralda con líneas topográficas y detalles en oro",
+            "visual_style": "electric"
+          }
+        }
+      },
+      "block_order": [
+        "ws_platinum",
+        "ws_scarlet",
+        "ws_ink",
+        "ws_noir",
+        "ws_electric",
+        "ws_alloy"
+      ],
+      "settings": {
+        "eyebrow": "UNA NUEVA FORMA DE PERSONALIZAR",
+        "wallet_product": "wallet-studio",
+        "enable_cart": true,
+        "hero_description": "Descubre una colección de diseños únicos o importa el tuyo. Un solo acceso para personalizar tarjetas compatibles desde Windows."
+      }
+    }
+  },
+  "order": [
+    "wallet_studio_main"
+  ]
+}

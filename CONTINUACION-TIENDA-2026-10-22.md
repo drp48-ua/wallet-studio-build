@@ -1,0 +1,13 @@
+# Tienda y biblioteca — 22 de octubre de 2026
+
+Base nativa más reciente comprobada: 44c748f (rama manual-updates-main-ready-20261022), descendiente de la entrega anterior. Se conservan sus comprobaciones repetibles de actualización y toda la captura/overlays. La nueva entrega es 0.6.17; el cambio de ejecutable se limita a versión/documentación. ZIP SHA256 9ce1bea5317ac97c1a8c72d5b5666f3ec2b65ddcadaf8917cf532732c08c618f. No lleva imágenes privadas ni datos del teléfono.
+
+La tienda se leyó directamente antes de editar. Tema base 190351475017; copia revisada sin publicar 190364221769. Los seis archivos modificados están en storefront/theme. Aviso legal usa el contenido existente de shop.policies, sin copiar identidades a Git. Biblioteca continua mediante RAF, pausa accesible y movimiento reducido, sin duplicar controles. Secciones 01–07 con el proceso separando ambos apartados de tarjetas. Logo de biblioteca limitado a 36/32 px. Se conservan los demás cambios del comerciante.
+
+Se publicaron once imágenes corregidas en Shopify y seis originales nuevos en el almacenamiento privado, con autorización explícita. PNG RGB 1536×969; cenefas conservadas. La web recibe además los cinco recortes que ya tenía la app. El catálogo de app solo cambia ws-017, ws-051, ws-052, ws-054, ws-055 y ws-056. Se conservan objetos previos y catálogo legado. No subir imágenes a Git.
+
+Producto existente 10459984298313, variante 55611893547337: una sola compra de 6,99 EUR, app y biblioteca incluidas; los otros artículos siguen archivados. Se adjuntó Wallet-Studio-0.6.17-Windows.zip, 8.373.267 bytes, con entrega automática mediante Digital Products, y se activó el producto. Verificar publicación Online Store y carrito antes de declarar el lanzamiento completo. No realizar pagos de prueba sin autorización.
+
+Pruebas: 182 app + 1 motor, fixture Windows, 77 servidor (tres omisiones opcionales), 15 Rust de catálogo y 18 Python de catálogo. Cinco archivos de tema pasaron el validador oficial con locales originales; pruebas RAF, sintaxis y preservación pasaron. Tras actualizar las URL se debe repetir validación de los seis archivos y revisar el borrador en escritorio/móvil. El aviso legal renderizado contiene 3.727 caracteres y doce párrafos.
+
+Pendiente en este checkpoint: publicar el tema revisado desde Shopify admin, desplegar este commit en el servicio existente, verificar descargas autenticadas de los nuevos originales y carrito; guardar capturas. Mantener el plan y credenciales existentes, main intacta y datos bancarios fuera de Git. El dominio principal operativo es www.xmaslens.shop; el dominio sin www devolvió un error DNS y no se cambió su configuración.

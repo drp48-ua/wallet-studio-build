@@ -1,0 +1,637 @@
+{{ 'wallet-studio.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'wallet-studio-commerce.js' | asset_url }}" defer></script>
+{% assign ws_product = section.settings.wallet_product %}
+{% if ws_product == blank %}{% assign ws_product = all_products['wallet-studio'] %}{% endif %}
+{% assign ws_variant = ws_product.selected_or_first_available_variant %}
+<div class="ws-site" id="wallet-studio">
+  <a class="ws-skip" href="#ws-main">Saltar al contenido</a>
+  <header class="ws-navigation">
+    <div class="ws-wrap ws-nav-inner">
+      <a class="ws-wordmark" href="#wallet-studio" aria-label="Wallet Studio, inicio">
+        <img class="ws-brand-logo" src="{{ 'wallet-studio-official-logo.png' | file_url }}" width="36" height="36" alt="">
+        <span>WALLET<span class="ws-wordmark-dot">.</span>STUDIO</span>
+      </a>
+      <nav class="ws-desktop-nav" aria-label="Navegación principal">
+        <a href="#ws-designs">Diseños</a>
+        <a href="#ws-process">Cómo funciona</a>
+        <a href="#ws-faq">Preguntas frecuentes</a>
+      </nav>
+      <details class="ws-mobile-menu">
+        <summary aria-label="Abrir menú de navegación"><span class="ws-mobile-menu-icon" aria-hidden="true"><i></i><i></i><i></i></span><span class="ws-mobile-menu-text">Menú</span></summary>
+        <nav class="ws-mobile-menu-panel" aria-label="Navegación móvil">
+          <a href="#ws-designs"><span>02</span> Explorar diseños <span aria-hidden="true">↗</span></a>
+          <a href="#ws-process"><span>03</span> Cómo funciona <span aria-hidden="true">↗</span></a>
+          <a href="#ws-faq"><span>06</span> Preguntas frecuentes <span aria-hidden="true">↗</span></a>
+          <a href="#ws-purchase" class="ws-mobile-menu-highlight">Recibir novedades <span aria-hidden="true">↗</span></a>
+        </nav>
+      </details>
+      <a class="ws-nav-cta" href="#ws-purchase">{{ 'wallet_studio.catalog.purchase' | t }} <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+    <script>
+      (() => {
+        const menu = document.querySelector('.ws-mobile-menu');
+        if (!menu) return;
+        menu.querySelectorAll('a[href^="#"]').forEach(link => {
+          link.addEventListener('click', () => menu.removeAttribute('open'));
+        });
+        document.addEventListener('keydown', event => {
+          if (event.key === 'Escape' && menu.open) {
+            menu.open = false;
+            menu.querySelector('summary')?.focus();
+          }
+        });
+      })();
+    </script>
+  <main id="ws-main">
+    <section class="ws-hero" aria-labelledby="ws-hero-heading">
+      <div class="ws-hero-glow" aria-hidden="true"></div>
+      <div class="ws-wrap ws-hero-layout">
+        <div class="ws-hero-copy">
+          <div class="ws-eyebrow"><span class="ws-signal"></span>{{ section.settings.eyebrow | escape }}</div>
+          <h1 id="ws-hero-heading">Tu tarjeta.<br><em>Tu estilo.</em></h1>
+          <p class="ws-hero-description">{{ section.settings.hero_description | escape }}</p>
+          <div class="ws-hero-actions">
+            <a href="#ws-designs" class="ws-button ws-button-primary">Explorar diseños <span aria-hidden="true">↓</span></a>
+            <a href="#ws-process" class="ws-text-link">Así funciona <span aria-hidden="true">↓</span></a>
+          </div>
+          <div class="ws-proof"><span class="ws-proof-line"></span> WINDOWS SOFTWARE <span class="ws-proof-divider"></span> ONE-TIME PAYMENT</div>
+        </div>
+        <div class="ws-hero-aside">
+          <div class="ws-hero-product" aria-label="Dos diseños de tarjeta; pulsa uno para verlo ampliado">
+            <div class="ws-ambient-orbit ws-ambient-orbit-a" aria-hidden="true"></div>
+            <div class="ws-ambient-orbit ws-ambient-orbit-b" aria-hidden="true"></div>
+            <button type="button" class="ws-card ws-card-back ws-card--photo ws-zoom-trigger" data-ws-zoom-src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-053-fullbleed-20261022.png?v=1792657545" data-ws-zoom-title="Marble & Gold" aria-label="Ampliar la tarjeta Marble & Gold">
+              <img src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-053-fullbleed-20261022.png?v=1792657545" alt="Tarjeta blanca de mármol con detalles dorados" width="1488" height="925" loading="eager" decoding="async">
+            </button>
+            <button type="button" class="ws-card ws-card-front ws-card--photo ws-zoom-trigger" data-ws-zoom-src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-056-fullbleed-20261022.png?v=1792657594" data-ws-zoom-title="Black & Gold" aria-label="Ampliar la tarjeta Black & Gold">
+              <img src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-056-fullbleed-20261022.png?v=1792657594" alt="Tarjeta negra con motivos ornamentales dorados" width="1481" height="925" loading="eager" fetchpriority="high" decoding="async">
+            </button>
+            <div class="ws-floating-label"><span class="ws-label-dot"></span> YOUR WALLET. REIMAGINED.</div>
+            <p class="ws-mockup-caption">Toca una tarjeta para ampliarla.</p>
+          </div>
+          <div class="ws-hero-cart" id="ws-purchase" aria-label="Compra de Wallet Studio">
+            <div class="ws-hero-cart-heading"><span>WALLET STUDIO · WINDOWS</span><strong>{% if ws_product != blank %}{{ ws_product.price | money }}{% else %}6,99 €{% endif %}</strong></div>
+            {% if ws_product != blank and ws_variant.available and section.settings.enable_cart %}
+              {% form 'product', ws_product, id: 'WalletStudioHeroCartForm', class: 'ws-shopify-cart-form' %}
+                <input type="hidden" name="id" value="{{ ws_variant.id }}">
+                <input type="hidden" name="quantity" value="1">
+                <button type="submit" name="add" class="ws-button ws-button-primary ws-hero-buy" data-ws-cart-submit>Añadir al carrito · {{ ws_variant.price | money }} <span aria-hidden="true">↗</span></button>
+                <p class="ws-cart-error" data-ws-cart-error role="alert" hidden></p>
+                {% if form.errors %}<div role="alert">{{ form.errors | default_errors }}</div>{% endif %}
+              {% endform %}
+              <a class="ws-hero-cart-link" href="{{ routes.cart_url }}">Ver carrito y finalizar compra ↗</a>
+            {% else %}
+              <button type="button" class="ws-button ws-button-primary ws-hero-buy" disabled aria-disabled="true">Añadir al carrito · Próximamente <span aria-hidden="true">↗</span></button>
+              <p class="ws-hero-cart-note">Compra desactivada hasta confirmar el lanzamiento y la entrega digital.</p>
+            {% endif %}
+          </div>
+        </div>
+        <dialog class="ws-image-lightbox" data-ws-image-lightbox aria-label="Vista ampliada de tarjeta">
+          <button type="button" class="ws-image-lightbox-close" data-ws-lightbox-close aria-label="Cerrar imagen ampliada">×</button>
+          <img data-ws-lightbox-image alt="" decoding="async" width="1536" height="969">
+          <p data-ws-lightbox-caption></p>
+        </dialog>
+      </div>
+      <div class="ws-wrap ws-hero-bottom"><span>01 — A NEW EXPRESSION</span><span>DESPLÁZATE PARA EXPLORAR <span aria-hidden="true">↓</span></span></div>
+    </section>
+
+    <section class="ws-statement" aria-labelledby="ws-statement-heading">
+      <div class="ws-wrap ws-statement-inner">
+        <div class="ws-section-index">01 / FILOSOFÍA</div>
+        <h2 id="ws-statement-heading">Lo cotidiano<br>también puede ser <em>extraordinario.</em></h2>
+        <p>Tu cartera digital no tiene por qué parecerse a todas las demás. Descubre la biblioteca de estilos, elige un diseño o importa una imagen propia desde la aplicación para Windows.</p>
+      </div>
+    </section>
+
+    <section id="ws-designs" class="ws-scroll-story" aria-labelledby="ws-designs-heading" data-ws-scroll-story>
+      <div class="ws-story-sticky">
+        <div class="ws-wrap ws-story-heading">
+          <div>
+            <div class="ws-section-index">02 / LA COLECCIÓN</div>
+            <h2 id="ws-designs-heading">{{ 'wallet_studio.catalog.monthly' | t }}</h2>
+          </div>
+          <div class="ws-story-heading-side">
+            <span class="ws-story-category">CURATED BY WALLET STUDIO</span>
+            <p>Del metal pulido a los universos gráficos más atrevidos. Descubre cada diseño mientras avanzas.</p>
+          </div>
+        </div>
+        <div class="ws-story-stage" role="region" tabindex="0" aria-label="Colección de diseños destacada">
+          <div class="ws-story-rail">
+            {% for block in section.blocks limit: 6 %}
+              {% if block.type == 'design' %}
+                {% assign art_alt = block.settings.alt_text | default: block.settings.design_name %}
+                <article class="ws-story-item" data-ws-name="{{ block.settings.design_name | escape }}" data-ws-description="{{ block.settings.description | escape }}" {{ block.shopify_attributes }}>
+                  <div class="ws-story-art ws-library-preview--{{ block.settings.visual_style | escape }}">
+                    <span class="ws-story-art-number">{{ forloop.index | prepend: '0' }} / {{ section.blocks.size }}</span>
+                    {% if block.settings.image != blank %}
+                      {{ block.settings.image | image_url: width: 1200 | image_tag: loading: 'lazy', class: 'ws-story-upload', alt: art_alt }}
+                    {% elsif block.settings.hosted_image_url != blank %}
+                      <img src="{{ block.settings.hosted_image_url | escape }}" class="ws-story-upload" alt="{{ art_alt | escape }}" width="1600" height="1000" loading="lazy" decoding="async">
+                    {% else %}
+                      <div class="ws-library-card ws-library-card--{{ block.settings.visual_style | escape }}" aria-hidden="true">
+                        <div class="ws-library-card-head"><span>W / S</span><span>STUDIO CONCEPT</span></div>
+                        <div class="ws-library-abstract"><i></i><i></i><i></i></div>
+                        <div class="ws-library-card-foot"><span>{{ block.settings.design_name | truncate: 21 | upcase | escape }}</span><span>✳</span></div>
+                      </div>
+                      <span class="ws-story-concept-mark">CONCEPTO DE MUESTRA</span>
+                    {% endif %}
+                  </div>
+                </article>
+              {% endif %}
+            {% endfor %}
+          </div>
+          <div class="ws-story-edge ws-story-edge-left" aria-hidden="true"></div>
+          <div class="ws-story-edge ws-story-edge-right" aria-hidden="true"></div>
+        </div>
+        <div class="ws-wrap ws-story-bottom">
+          <div class="ws-story-selected">
+            <span class="ws-story-index"><span data-ws-current-number>01</span><span class="ws-story-slash"> / </span><span data-ws-total>{{ section.blocks.size }}</span></span>
+            <div class="ws-story-info">
+              <h3 data-ws-current-title>{{ section.blocks.first.settings.design_name | escape }}</h3>
+              <p data-ws-current-description>{{ section.blocks.first.settings.description | escape }}</p>
+            </div>
+          </div>
+          <div class="ws-story-meter" aria-hidden="true"><span data-ws-progress></span></div>
+          <div class="ws-story-navigation">
+            <span class="ws-story-scroll-hint">DESLIZA PARA DESCUBRIR <span aria-hidden="true">↓</span></span>
+            <button type="button" data-ws-story-prev aria-label="Ir al diseño anterior" class="ws-story-arrow" disabled>←</button>
+            <button type="button" data-ws-story-next aria-label="Ir al siguiente diseño" class="ws-story-arrow">→</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="ws-story-offer" aria-labelledby="ws-offer-heading">
+      <div class="ws-wrap ws-story-offer-grid">
+        <div class="ws-story-offer-card ws-scroll-reveal">
+          <span class="ws-story-offer-icon" aria-hidden="true">✳</span>
+          <div><div class="ws-section-index">UNA SOLA COMPRA</div><h2 id="ws-offer-heading">Todos los diseños.<br><em>Un único acceso.</em></h2><p>Todos nuestros diseños disponibles estarán incluidos. Sin categorías de pago, niveles ni extras por elegir un estilo.</p></div>
+          <a href="#ws-purchase" class="ws-story-offer-link">{{ 'wallet_studio.catalog.purchase' | t }} <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="ws-story-offer-card ws-story-offer-personal ws-scroll-reveal">
+          <span class="ws-story-offer-icon ws-story-offer-plus" aria-hidden="true">+</span>
+          <div><div class="ws-section-index">HECHO A TU MANERA</div><h3>¿Lo prefieres <em>personal?</em></h3><p>Importa imágenes propias PNG, JPG o WebP directamente desde la aplicación de Windows, sin pago adicional.</p></div>
+          <a href="#ws-process" class="ws-story-offer-link">ASÍ FUNCIONA <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+      <p class="ws-wrap ws-story-legal">Los gráficos sin imagen cargada son conceptos visuales de muestra, no un catálogo de diseños descargables. Solo publicaremos diseños propios o para los que contemos con permisos. Wallet Studio es independiente de Apple y de otras marcas.</p>
+    </section>
+    <script>
+      (() => {
+        const story = document.querySelector('[data-ws-scroll-story]');
+        if (!story || story.dataset.wsScript === 'ready') return;
+        const sticky = story.querySelector('.ws-story-sticky');
+        const stage = story.querySelector('.ws-story-stage');
+        const slides = Array.from(story.querySelectorAll('.ws-story-item'));
+        const prev = story.querySelector('[data-ws-story-prev]');
+        const next = story.querySelector('[data-ws-story-next]');
+        const countCurrent = story.querySelector('[data-ws-current-number]');
+        const countTotal = story.querySelector('[data-ws-total]');
+        const title = story.querySelector('[data-ws-current-title]');
+        const description = story.querySelector('[data-ws-current-description]');
+        const progress = story.querySelector('[data-ws-progress]');
+        const hint = story.querySelector('.ws-story-scroll-hint');
+        if (!sticky || !stage || !slides.length || !prev || !next || !countCurrent || !countTotal || !title || !description || !progress) return;
+        story.dataset.wsScript = 'ready';
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const clamp = (number, min, max) => Math.min(max, Math.max(min, number));
+        const pad = number => String(number).padStart(2, '0');
+        const stepCount = slides.length - 1;
+        const nearby = slides.map(() => false);
+        const accessible = slides.map(() => true);
+        let stickyMode = false;
+        let activeIndex = -1;
+        let scrollDistance = 1;
+        let sectionTop = 0;
+        let stickyHeight = 0;
+        let spacing = 0;
+        let raf = 0;
+        let resizeRaf = 0;
+        let manualRaf = 0;
+        let lastViewportWidth = window.innerWidth;
+        let lastViewportHeight = window.innerHeight;
+        let finishHint = false;
+        let manualCenters = [];
+        countTotal.textContent = pad(slides.length);
+        const updateLabels = index => {
+          if (index === activeIndex) return;
+          activeIndex = index;
+          countCurrent.textContent = pad(index + 1);
+          title.textContent = slides[index].dataset.wsName || '';
+          description.textContent = slides[index].dataset.wsDescription || '';
+          prev.disabled = index === 0;
+          next.disabled = index === stepCount;
+          if (stickyMode) {
+            slides.forEach((slide, i) => {
+              slide.classList.toggle('ws-story-is-current', i === index);
+              slide.style.zIndex = String(100 - Math.abs(i - index) * 10);
+            });
+          }
+        };
+        const render = () => {
+          raf = 0;
+          if (!stickyMode) return;
+          const journey = clamp((window.scrollY - sectionTop) / scrollDistance, 0, 1);
+          const focus = journey * stepCount;
+          const nearest = Math.round(focus);
+          slides.forEach((slide, index) => {
+            const offset = index - focus;
+            const distance = Math.abs(offset);
+            const visible = distance < 1.95;
+            if (nearby[index] !== visible) {
+              nearby[index] = visible;
+              slide.style.visibility = visible ? 'visible' : 'hidden';
+              slide.classList.toggle('ws-story-near', visible);
+            }
+            const ariaVisible = distance < 1.7;
+            if (accessible[index] !== ariaVisible) {
+              accessible[index] = ariaVisible;
+              slide.setAttribute('aria-hidden', ariaVisible ? 'false' : 'true');
+            }
+            if (!visible) return;
+            const x = offset * spacing;
+            const y = Math.min(distance, 2.3) * 10;
+            const scale = Math.max(0.68, 1 - distance * 0.16);
+            slide.style.transform = 'translate(-50%, -50%) translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0) scale(' + scale.toFixed(3) + ')';
+            slide.style.opacity = String(Math.max(0.16, 1 - distance * 0.43));
+          });
+          progress.style.transform = 'scaleX(' + journey.toFixed(4) + ')';
+          updateLabels(nearest);
+          const finished = journey >= 0.995;
+          if (hint && finished !== finishHint) {
+            finishHint = finished;
+            hint.textContent = finished ? 'SIGUE DESCUBRIENDO ↓' : 'DESLIZA PARA DESCUBRIR ↓';
+          }
+        };
+        const schedule = () => {
+          if (!stickyMode || raf) return;
+          const y = window.scrollY;
+          if (y < sectionTop - stickyHeight || y > sectionTop + scrollDistance + stickyHeight) return;
+          raf = window.requestAnimationFrame(render);
+        };
+        const clearSlideStyles = () => {
+          slides.forEach((slide, index) => {
+            slide.style.transform = '';
+            slide.style.opacity = '';
+            slide.style.zIndex = '';
+            slide.style.visibility = '';
+            slide.removeAttribute('aria-hidden');
+            slide.classList.remove('ws-story-is-current');
+            slide.classList.remove('ws-story-near');
+            nearby[index] = false;
+            accessible[index] = true;
+          });
+        };
+        const updateManual = () => {
+          manualRaf = 0;
+          if (stickyMode) return;
+          const middle = stage.scrollLeft + stage.clientWidth / 2;
+          let nearest = 0, bestDistance = Infinity;
+          manualCenters.forEach((center, index) => {
+            const distance = Math.abs(center - middle);
+            if (distance < bestDistance) {bestDistance = distance; nearest = index;}
+          });
+          updateLabels(nearest);
+          progress.style.width = (stepCount ? (nearest / stepCount) * 100 : 100) + '%';
+        };
+        const activate = () => {
+          if (raf) { window.cancelAnimationFrame(raf); raf = 0; }
+          if (manualRaf) {window.cancelAnimationFrame(manualRaf); manualRaf = 0;}
+          stickyMode = !reduceMotion.matches && stepCount > 0 && window.innerWidth >= 340 && window.innerHeight >= 510 && CSS.supports('position', 'sticky');
+          story.classList.toggle('ws-story-active', stickyMode);
+          story.classList.toggle('ws-story-manual', !stickyMode);
+          clearSlideStyles();
+          story.style.height = '';
+          activeIndex = -1;
+          finishHint = false;
+          progress.style.width = '';
+          progress.style.transform = '';
+          lastViewportWidth = window.innerWidth;
+          lastViewportHeight = window.innerHeight;
+          if (stickyMode) {
+            stickyHeight = sticky.getBoundingClientRect().height;
+            story.style.height = (stickyHeight * (1 + stepCount * (window.innerWidth <= 700 ? 0.57 : 0.68))) + 'px';
+            sectionTop = story.getBoundingClientRect().top + window.scrollY;
+            scrollDistance = Math.max(1, story.offsetHeight - sticky.offsetHeight);
+            spacing = Math.min(stage.clientWidth * 0.43, 385);
+            progress.style.width = '100%';
+            render();
+          } else {
+            manualCenters = slides.map(slide => slide.offsetLeft + slide.offsetWidth / 2);
+            updateManual();
+          }
+        };
+        const navigate = delta => {
+          const target = clamp(activeIndex + delta, 0, stepCount);
+          if (stickyMode) {
+            window.scrollTo({top: sectionTop + scrollDistance * target / stepCount, behavior: 'smooth'});
+          } else if (slides[target]) {
+            slides[target].scrollIntoView({behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'nearest', inline: 'center'});
+          }
+        };
+        prev.addEventListener('click', () => navigate(-1));
+        next.addEventListener('click', () => navigate(1));
+        window.addEventListener('scroll', schedule, {passive: true});
+        stage.addEventListener('scroll', () => {
+          if (!stickyMode && !manualRaf) manualRaf = window.requestAnimationFrame(updateManual);
+        }, {passive: true});
+        window.addEventListener('resize', () => {
+          // Ignore small viewport-height changes caused by mobile browser chrome.
+          const widthChange = Math.abs(window.innerWidth - lastViewportWidth);
+          const heightChange = Math.abs(window.innerHeight - lastViewportHeight);
+          if (widthChange < 2 && heightChange < 130) return;
+          if (resizeRaf) window.cancelAnimationFrame(resizeRaf);
+          resizeRaf = window.requestAnimationFrame(() => {resizeRaf = 0; activate();});
+        }, {passive: true});
+        if (typeof reduceMotion.addEventListener === 'function') reduceMotion.addEventListener('change', activate);
+        window.addEventListener('load', () => {
+          if (stickyMode) {
+            // One-time refresh when late fonts/assets alter page coordinates.
+            sectionTop = story.getBoundingClientRect().top + window.scrollY;
+            schedule();
+          }
+        }, {once: true, passive: true});
+        activate();
+        if (!reduceMotion.matches && 'IntersectionObserver' in window) {
+          const targets = document.querySelectorAll('.ws-scroll-reveal, .ws-statement-inner, .ws-step, .ws-compatibility-copy, .ws-faq-grid');
+          const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+              if (entry.isIntersecting) {
+                entry.target.classList.add('ws-reveal-visible');
+                observer.unobserve(entry.target);
+              }
+            });
+          }, {threshold: 0.06, rootMargin: '0px 0px -12px 0px'});
+          targets.forEach(element => {
+            element.classList.add('ws-reveal-target');
+            observer.observe(element);
+          });
+          document.querySelector('.ws-site')?.classList.add('ws-story-motion');
+        }
+      })();
+    </script>
+
+    <section id="ws-process" class="ws-process" aria-labelledby="ws-process-heading">
+      <div class="ws-wrap">
+        <div class="ws-section-index">03 / EL PROCESO</div>
+        <div class="ws-process-title"><h2 id="ws-process-heading">Tan simple como<br><em>hacerlo tuyo.</em></h2><p>Un único software para nuestros diseños y los que tú quieras importar.</p></div>
+        <div class="ws-steps">
+          <article class="ws-step"><div class="ws-step-symbol" aria-hidden="true"><span class="ws-step-phone"></span><span class="ws-step-cable"></span></div><span class="ws-step-number">01 / CONNECT</span><h3>Conecta tu iPhone.</h3><p>Abre Wallet Studio en Windows y conecta tu iPhone mediante un cable USB de datos.</p></article>
+          <article class="ws-step"><div class="ws-step-symbol" aria-hidden="true"><span class="ws-step-layer ws-step-layer-a"></span><span class="ws-step-layer ws-step-layer-b"></span></div><span class="ws-step-number">02 / CREATE</span><h3>Elige un diseño.</h3><p>Elige un diseño incluido o importa tu propia imagen, sin coste extra por diseño.</p></article>
+          <article class="ws-step"><div class="ws-step-symbol" aria-hidden="true"><span class="ws-step-circle-check">✓</span></div><span class="ws-step-number">03 / APPLY</span><h3>Aplica y comprueba.</h3><p>La aplicación verifica las operaciones y conserva una copia del original para facilitar su restauración.</p></article>
+        </div>
+      </div>
+    </section>
+
+    {% render 'ws-library-autoplay', section_index: '04' %}
+
+    <section class="ws-compatibility" aria-labelledby="ws-compatible-heading"><div class="ws-wrap ws-compatibility-grid"><div><div class="ws-section-index">05 / ANTES DE EMPEZAR</div><h2 id="ws-compatible-heading">Diseño, con<br><em>criterio.</em></h2></div><div class="ws-compatibility-copy"><p>Wallet Studio es una aplicación independiente para Windows que trabaja con tarjetas compatibles ya añadidas a Apple Wallet. Necesitarás un iPhone, un cable USB de datos y los componentes de conexión de Apple.</p><p>La compatibilidad depende del modelo, la versión de iOS y la tarjeta. Estamos ampliando las pruebas antes de publicar la disponibilidad comercial.</p><span class="ws-compatible-badge"><span class="ws-signal"></span> COMPATIBILIDAD EN VALIDACIÓN</span></div></div></section>
+
+    
+
+    <section id="ws-faq" class="ws-faq" aria-labelledby="ws-faq-heading"><div class="ws-wrap ws-faq-grid"><div><div class="ws-section-index">06 / PREGUNTAS FRECUENTES</div><h2 id="ws-faq-heading">Lo esencial,<br><em>sin rodeos.</em></h2></div><div class="ws-faq-items">
+      <details><summary>¿Qué hace exactamente Wallet Studio? <span aria-hidden="true">+</span></summary><p>Permite cambiar la imagen de determinadas tarjetas compatibles que ya están en Apple Wallet, desde una aplicación de escritorio para Windows.</p></details>
+      <details><summary>¿Necesito un ordenador? <span aria-hidden="true">+</span></summary><p>Sí. Wallet Studio funciona en Windows y requiere conectar el iPhone mediante un cable USB de datos para aplicar o restaurar los diseños.</p></details>
+      <details><summary>¿Es compatible con todos los iPhone y bancos? <span aria-hidden="true">+</span></summary><p>No podemos garantizar una compatibilidad universal. Depende de la tarjeta, el dispositivo y la versión de iOS. Publicaremos los requisitos y la lista de compatibilidad verificada antes de venderlo.</p></details>
+      <details><summary>¿Podré recuperar el aspecto original? <span aria-hidden="true">+</span></summary><p>La aplicación conserva una copia original verificada y dispone de un procedimiento de restauración. La recuperación requiere conservar el perfil local y completar las verificaciones necesarias.</p></details>
+      <details><summary>¿Cómo se paga? <span aria-hidden="true">+</span></summary><p>El precio previsto de Wallet Studio es de 6,99 € por una única compra. Incluye los diseños que publiquemos y la importación de imágenes propias, sin suscripción ni extras por diseño. Las ventas se habilitarán al finalizar las verificaciones.</p></details>
+      <details><summary>¿Los diseños de la biblioteca se incluyen en el software? <span aria-hidden="true">+</span></summary><p>Todos los diseños que publiquemos estarán incluidos en el mismo acceso. Las imágenes conceptuales de esta página muestran la dirección artística, no el catálogo final.</p></details>
+      <details><summary>¿Puedo añadir una imagen mía? <span aria-hidden="true">+</span></summary><p>Sí. Puedes importar imágenes PNG, JPG y WebP desde Windows. Debes contar con los derechos de uso del contenido que elijas.</p></details>
+    </div></div></section>
+
+    <section id="ws-legal" class="ws-legal" aria-labelledby="ws-legal-heading">
+      <div class="ws-wrap">
+        <div class="ws-legal-head">
+          <div>
+            <div class="ws-section-index">07 / TRANSPARENCIA</div>
+            <h2 id="ws-legal-heading">Todo claro.<br><em>Desde el principio.</em></h2>
+          </div>
+          <p>Información sobre la web, los datos personales y la futura distribución del software. Consulta cada apartado antes de registrarte o comprar.</p>
+        </div>
+        <div class="ws-legal-draft" role="note">
+          <span class="ws-legal-draft-dot" aria-hidden="true"></span>
+          <span><strong>DOCUMENTACIÓN EN REVISIÓN.</strong> Titular, domicilio y correo de contacto incorporados. Antes de activar las ventas falta completar el alta de actividad y la revisión fiscal internacional y la verificación de privacidad, cookies y entrega digital.</span>
+        </div>
+        <div class="ws-legal-grid">
+          <details id="ws-legal-notice" class="ws-legal-card">
+            <summary><span class="ws-legal-card-num">01</span><span>Aviso legal<small>Titularidad, contacto y derechos</small></span><span class="ws-legal-expand" aria-hidden="true">+</span></summary>
+            <div class="ws-legal-body">
+              {% for policy in shop.policies %}
+                {% if policy.url contains '/policies/legal-notice' %}
+                  {{ policy.body }}
+                  {% break %}
+                {% endif %}
+              {% endfor %}
+            </div>
+          </details>
+          <details id="ws-legal-privacy" class="ws-legal-card">
+            <summary><span class="ws-legal-card-num">02</span><span>Política de privacidad<small>Datos, finalidad y derechos</small></span><span class="ws-legal-expand" aria-hidden="true">+</span></summary>
+            <div class="ws-legal-body">
+              {{ shop.privacy_policy.body }}
+            </div>
+          </details>
+          <details id="ws-legal-cookies" class="ws-legal-card">
+            <summary><span class="ws-legal-card-num">03</span><span>Política de cookies<small>Uso de tecnologías y preferencias</small></span><span class="ws-legal-expand" aria-hidden="true">+</span></summary>
+            <div class="ws-legal-body">
+              <h3>Qué son</h3>
+              <p>Las cookies y tecnologías similares almacenan o recuperan información en el dispositivo. Pueden ser necesarias para funciones técnicas y de seguridad, o utilizarse, si están habilitadas, para analítica, preferencias u otras finalidades.</p>
+              <h3>Uso en esta web</h3>
+              <p>Wallet Studio utiliza una tienda alojada en Shopify. Antes de la publicación hay que auditar las cookies y tecnologías efectivamente activas, documentando su proveedor, finalidad y duración. No afirmamos que solo existan cookies técnicas mientras esa revisión no se haya completado.</p>
+              <h3>Consentimiento y control</h3>
+              <p>Las cookies que lo requieran deberán permanecer sujetas a una elección válida del visitante, con opciones equivalentes para aceptar y rechazar y una forma de revisar su preferencia. Este panel explica las obligaciones, pero <strong>no sustituye un gestor de consentimiento</strong>. La configuración de privacidad y cookies de Shopify todavía debe revisarse y validarse.</p>
+              <p>Puedes eliminar cookies desde la configuración del navegador. Antes de activar tecnologías opcionales se publicará el inventario concreto y los mecanismos de elección disponibles.</p>
+            </div>
+          </details>
+          <details id="ws-legal-terms" class="ws-legal-card">
+            <summary><span class="ws-legal-card-num">04</span><span>Condiciones de compra y licencia<small>Software digital y compatibilidad</small></span><span class="ws-legal-expand" aria-hidden="true">+</span></summary>
+            <div class="ws-legal-body">
+              {{ shop.terms_of_service.body }}
+            </div>
+          </details>
+          <details id="ws-legal-returns" class="ws-legal-card">
+            <summary><span class="ws-legal-card-num">05</span><span>Desistimiento y devoluciones<small>Derechos en compras digitales</small></span><span class="ws-legal-expand" aria-hidden="true">+</span></summary>
+            <div class="ws-legal-body">
+              {{ shop.refund_policy.body }}
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+    <script>
+      (() => {
+        const legal = document.getElementById('ws-legal');
+        if (!legal) return;
+        document.querySelectorAll('a[data-ws-legal-open]').forEach(link => {
+          link.addEventListener('click', event => {
+            const target = document.getElementById(link.dataset.wsLegalOpen);
+            if (!target || !legal.contains(target)) return;
+            event.preventDefault();
+            target.open = true;
+            target.scrollIntoView({behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start'});
+          });
+        });
+      })();
+    </script>
+  </main>
+  <footer class="ws-footer"><div class="ws-wrap ws-footer-top"><a class="ws-wordmark" href="#wallet-studio" aria-label="Wallet Studio, volver arriba"><img class="ws-brand-logo" src="{{ 'wallet-studio-official-logo.png' | file_url }}" width="36" height="36" alt=""><span>WALLET<span class="ws-wordmark-dot">.</span>STUDIO</span></a><a href="#wallet-studio">Volver arriba ↑</a></div><nav class="ws-wrap ws-footer-legal" aria-label="Información legal"><a href="#ws-legal-notice" data-ws-legal-open="ws-legal-notice">Aviso legal</a><a href="#ws-legal-privacy" data-ws-legal-open="ws-legal-privacy">Privacidad</a><a href="#ws-legal-cookies" data-ws-legal-open="ws-legal-cookies">Cookies</a><a href="#ws-legal-terms" data-ws-legal-open="ws-legal-terms">Condiciones</a><a href="#ws-legal-returns" data-ws-legal-open="ws-legal-returns">Desistimiento</a></nav><div class="ws-wrap ws-footer-bottom"><p>© {{ 'now' | date: '%Y' }} Wallet Studio. Producto independiente, no afiliado a Apple Inc. Apple Wallet y Apple Pay son marcas de sus respectivos titulares.</p><span>CRAFTED TO BE DIFFERENT.</span></div></footer>
+</div>
+{% schema %}
+{
+  "name": "Wallet Studio Landing",
+  "tag": "section",
+  "class": "wallet-studio-root",
+  "settings": [
+    {
+      "type": "text",
+      "id": "eyebrow",
+      "label": "Etiqueta superior",
+      "default": "UNA NUEVA FORMA DE PERSONALIZAR"
+    },
+    {
+      "type": "product",
+      "id": "wallet_product",
+      "label": "Producto Wallet Studio para la compra"
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_cart",
+      "label": "Activar compra solo después de completar el lanzamiento",
+      "default": false
+    },
+    {
+      "type": "textarea",
+      "id": "hero_description",
+      "label": "Descripción principal",
+      "default": "Personaliza la apariencia de tarjetas compatibles con Apple Wallet. Explora una biblioteca de estilos o elige tu propia imagen, conecta tu iPhone y hazlo tuyo desde Windows."
+    }
+  ],
+  "presets": [
+    {
+      "name": "Wallet Studio Landing",
+      "blocks": [
+        {
+          "type": "design"
+        },
+        {
+          "type": "design"
+        },
+        {
+          "type": "design"
+        }
+      ]
+    }
+  ],
+  "blocks": [
+    {
+      "type": "design",
+      "name": "Diseño de la galería",
+      "settings": [
+        {
+          "type": "text",
+          "id": "design_name",
+          "label": "Nombre del diseño",
+          "default": "Nuevo concepto"
+        },
+        {
+          "type": "textarea",
+          "id": "description",
+          "label": "Descripción",
+          "default": "Concepto visual original."
+        },
+        {
+          "type": "select",
+          "id": "category",
+          "label": "Categoría",
+          "default": "original",
+          "options": [
+            {
+              "value": "original",
+              "label": "Originales"
+            },
+            {
+              "value": "luxury",
+              "label": "Lujo"
+            },
+            {
+              "value": "pop",
+              "label": "Cultura pop"
+            },
+            {
+              "value": "metal",
+              "label": "Metal"
+            },
+            {
+              "value": "experimental",
+              "label": "Experimental"
+            }
+          ]
+        },
+        {
+          "type": "image_picker",
+          "id": "image",
+          "label": "Imagen de tarjeta / showcase"
+        },
+        {
+          "type": "url",
+          "id": "hosted_image_url",
+          "label": "Imagen alojada (alternativa)"
+        },
+        {
+          "type": "text",
+          "id": "alt_text",
+          "label": "Texto alternativo"
+        },
+        {
+          "type": "select",
+          "id": "visual_style",
+          "label": "Visual de muestra si no hay imagen",
+          "default": "noir",
+          "options": [
+            {
+              "value": "noir",
+              "label": "Noir"
+            },
+            {
+              "value": "ivory",
+              "label": "Marfil"
+            },
+            {
+              "value": "pop",
+              "label": "Pop"
+            },
+            {
+              "value": "silver",
+              "label": "Metal"
+            },
+            {
+              "value": "forest",
+              "label": "Forest"
+            },
+            {
+              "value": "warm",
+              "label": "Warm"
+            },
+            {
+              "value": "platinum",
+              "label": "Platinum pulido"
+            },
+            {
+              "value": "scarlet",
+              "label": "Cómic rojo y azul"
+            },
+            {
+              "value": "ink",
+              "label": "Tinta negra y violeta"
+            },
+            {
+              "value": "electric",
+              "label": "Neón eléctrico"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "max_blocks": 6
+}
+{% endschema %}
