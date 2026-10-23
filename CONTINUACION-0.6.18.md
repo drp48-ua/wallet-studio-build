@@ -28,3 +28,13 @@ La publicación de código debe ir en `codex/cloud-download-timeout-2026-10-23`,
 - Parser: 13 correctas, incluidas cinco nuevas regresiones.
 - Compilación y empaquetado 0.6.18 correctos. Ejecutable SHA-256: `f4686c9a972bb2e6204d021a8382d63ca6fb3ab1b52eedc5916fdbdd22e7537e`. ZIP SHA-256: `129e2cba2494d2d3172443f2aabbfcee1d4edb8218dc17dd4579e979cb25648c`.
 - Diagnóstico nativo autorizado de solo lectura: descarga mayor de 32.465.247 bytes completa y SHA-256 correcto en 59,307 segundos, más 0,966 segundos de inventario. Ese intento quedó justo por debajo del plazo anterior; la medición independiente de 71,7 segundos y la prueba sintética de vencimiento acreditan la variación y la necesidad de un presupuesto mayor. No se ejecutó la sincronización completa ni una captura física.
+
+## Incidencia posterior: revisión de importación
+
+El usuario comunica después «Una copia descargada requiere revisión. No se sobrescribió el original local» y una tarjeta sin original verificado. No equivale al error de transporte ya corregido: esta vez se alcanzó la etapa de importación. La captura automática conserva su bloqueo mientras no se verifiquen las copias.
+
+Se solicitó confirmar si las capturas pertenecen a este PC o al otro ordenador y si ejecuta 0.6.18. Hasta obtener respuesta, no atribuir el estado del perfil local al ordenador de la captura.
+
+Diagnóstico Python local de solo lectura, con salida categórica: un paquete retenido no presenta diferencias de bytes con los archivos locales existentes. Su carpeta de preparación contiene los mismos bytes del archivo. Para esa identidad existe una operación local en fase `prepared`, ausente del paquete remoto. Esa evidencia no puede declararse restaurada a partir de la nube. No se ha importado, borrado ni reconciliado ninguna copia ni marcador. La recuperación física requiere el dispositivo exacto y su validación, no eliminar el bloqueo.
+
+El diagnóstico nativo optativo de importación se añade únicamente a las pruebas, sin cambiar las reglas de producción. Prueba nativa de lectura: 1/1 correcta. Archivo, baseline preparado e historial remoto válidos; historial local incierto. Sin conflictos de bytes ni marcadores detectados. El resultado corresponde únicamente al perfil de este PC. La primera captura también muestra «Sin dispositivo»; confirmar conexión real en el ordenador afectado.

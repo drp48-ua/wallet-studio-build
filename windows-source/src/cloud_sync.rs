@@ -577,6 +577,105 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
 #[cfg(test)] mod tests {
     use super::*;
     #[test]
+    #[ignore = "requires explicitly authorized read-only retained-import diagnostic"]
+    fn diagnose_retained_imports_read_only() {
+        if std::env::var("WALLET_STUDIO_IMPORT_DIAGNOSTIC").as_deref() != Ok("1") {
+            println!("{{\"result\":\"explicit_diagnostic_required\"}}");
+            return;
+        }
+        assert!(std::env::var_os("WALLET_STUDIO_TEST_STORAGE_ROOT").is_none()
+            && std::env::var_os("WALLET_STUDIO_TEST_FIXTURE").is_none(), "diagnostic requires the real read-only profile");
+        let root = crate::storage::root();
+        assert!(crate::storage::safe_chain(&root).is_ok(), "diagnostic root requires review");
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        fn bump(counts: &mut BTreeMap<&str, usize>, category: &'static str) { *counts.entry(category).or_default() += 1; }
+        fn matches_file(path: &Path, data: &[u8]) -> Result<Option<bool>> {
+            crate::storage::safe_chain(path)?;
+            let metadata = match fs::symlink_metadata(path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
+            anyhow::ensure!(metadata.is_file() && !metadata.file_type().is_symlink(), "unsafe diagnostic evidence");
+            Ok(Some(metadata.len() == data.len() as u64 && fs::read(path)? == data))
+        }
+        for (name, category) in [(".cloud-import.lock", "import_marker_present"), ("storage-blocked.json", "global_review_present"), (".migration.lock", "migration_marker_present")] {
+            if root.join(name).exists() { bump(&mut counts, category); }
+        }
+        let operation_marker = root.join(".vault-operation.lock");
+        if operation_marker.exists() {
+            bump(&mut counts, "operation_marker_present");
+            // Opening an existing file for shared read neither creates a lease
+            // nor arms lock cleanup. An active exclusive lease denies this read.
+            if crate::storage::safe_chain(&operation_marker).is_ok() && fs::File::open(&operation_marker).is_ok() { bump(&mut counts, "operation_marker_readable"); }
+            else { bump(&mut counts, "operation_marker_unreadable"); }
+        }
+        let quarantine = root.join("quarantine");
+        if quarantine.exists() {
+            assert!(crate::storage::safe_chain(&quarantine).is_ok(), "diagnostic quarantine requires review");
+            let entries = fs::read_dir(&quarantine).unwrap_or_else(|_| panic!("diagnostic quarantine unreadable"));
+            for entry in entries.take(1001) {
+                let path = match entry { Ok(entry) => entry.path(), Err(_) => { bump(&mut counts, "quarantine_unreadable"); continue; } };
+                if path.extension().and_then(|value| value.to_str()) != Some("zip") { continue; }
+                bump(&mut counts, "quarantine_archives");
+                if counts["quarantine_archives"] > 1000 { bump(&mut counts, "diagnostic_count_limit"); break; }
+                let metadata = fs::symlink_metadata(&path).ok();
+                if crate::storage::safe_chain(&path).is_err() || !metadata.is_some_and(|meta| meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= LIMIT as u64) {
+                    bump(&mut counts, "quarantine_unsafe"); continue;
+                }
+                let bytes = match fs::read(&path) { Ok(bytes) => bytes, Err(_) => { bump(&mut counts, "quarantine_read_failed"); continue; } };
+                let digest = match crate::bank_backup::sha256(&bytes) { Ok(digest) => digest, Err(_) => { bump(&mut counts, "archive_checksum_failed"); continue; } };
+                if path.file_stem().and_then(|name| name.to_str()) != Some(digest.as_str()) { bump(&mut counts, "archive_name_checksum_mismatch"); continue; }
+                let (manifest, files) = match parse_bundle(&bytes) { Ok(parsed) => parsed, Err(_) => { bump(&mut counts, "archive_parse_failed"); continue; } };
+                bump(&mut counts, "archive_parse_valid");
+                let stage = root.join("cloud-staging").join(&digest);
+                for (name, data) in &files {
+                    match matches_file(&stage.join(name), data) {
+                        Ok(Some(true)) => {}, Ok(Some(false)) => bump(&mut counts, "staging_evidence_mismatch"),
+                        Ok(None) => bump(&mut counts, "staging_evidence_missing"), Err(_) => bump(&mut counts, "staging_evidence_unreadable"),
+                    }
+                    let (prefix, tail) = name.split_once('/').unwrap();
+                    let destination = root.join(if prefix == "bank" { "bank-backups" } else { "bank-change-intents" }).join(tail);
+                    match matches_file(&destination, data) {
+                        Ok(Some(false)) => bump(&mut counts, "immutable_destination_conflict"), Err(_) => bump(&mut counts, "destination_unreadable"), _ => {},
+                    }
+                }
+                let bank_keys: std::collections::BTreeSet<_> = files.keys().filter_map(|name| name.strip_prefix("bank/").and_then(|tail| tail.split('/').next())).collect();
+                if bank_keys.len() != 1 { bump(&mut counts, "baseline_count_invalid"); continue; }
+                match crate::bank_backup::validate_bundle_directory(&stage.join("bank").join(bank_keys.first().unwrap())) {
+                    Ok(baseline) if baseline.udid == manifest.udid && baseline.card_hash == manifest.card_hash => bump(&mut counts, "staged_baseline_valid"),
+                    Ok(_) => bump(&mut counts, "staged_baseline_identity_mismatch"),
+                    Err(_) => bump(&mut counts, "staged_baseline_invalid"),
+                }
+                if crate::bank_changes::validate_cloud_chain(&stage.join("intents"), &manifest.udid, &manifest.card_hash).is_ok() { bump(&mut counts, "staged_history_valid"); }
+                else { bump(&mut counts, "staged_history_invalid"); }
+                match crate::bank_changes::cloud_operation_dirs(&root.join("bank-change-intents"), &manifest.udid, &manifest.card_hash) {
+                    Err(error) => bump(&mut counts, if error.to_string() == "uncertain intent needs local recovery before cloud export" { "local_history_uncertain" } else { "local_history_requires_review" }),
+                    Ok(directories) => {
+                        let mut merged_bytes = files.values().map(Vec::len).sum::<usize>(); let mut merged_count = files.len();
+                        for directory in directories {
+                            let mut local_files = BTreeMap::new();
+                            let prefix = format!("intents/{}", directory.file_name().unwrap().to_string_lossy());
+                            if files_in(&directory, &prefix, &mut local_files).is_err() { bump(&mut counts, "local_history_unreadable"); continue; }
+                            for (name, data) in local_files {
+                                match matches_file(&stage.join(&name), &data) {
+                                    Ok(Some(false)) => bump(&mut counts, "local_staged_history_conflict"),
+                                    Ok(None) => {
+                                        bump(&mut counts, "local_history_not_staged");
+                                        merged_bytes = merged_bytes.saturating_add(data.len()); merged_count += 1;
+                                    },
+                                    Err(_) => bump(&mut counts, "local_staged_history_unreadable"), _ => {},
+                                }
+                            }
+                        }
+                        if merged_bytes > LIMIT || merged_count > MAX_FILES { bump(&mut counts, "merged_history_limit"); }
+                    }
+                }
+            }
+        }
+        println!("{}", serde_json::json!({"result":"read_only_import_categories","counts":counts}));
+    }
+    #[test]
     #[ignore = "requires explicitly authorized saved-account read-only cloud diagnostic"]
     fn diagnose_saved_account_downloads_read_only() {
         if std::env::var("WALLET_STUDIO_CLOUD_DIAGNOSTIC").as_deref() != Ok("1") {
