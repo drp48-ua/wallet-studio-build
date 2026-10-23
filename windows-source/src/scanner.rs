@@ -47,11 +47,6 @@ pub fn is_valid_card_hash(h: &str) -> bool {
         return false;
     }
 
-    // Reject strings with multiple underscores or hyphens (typical of system asset/bundle names)
-    if trimmed.chars().filter(|&c| c == '_').count() > 1 || trimmed.chars().filter(|&c| c == '-').count() > 2 {
-        return false;
-    }
-
     // Reject obvious system identifiers, bundle IDs and common keywords
     let lower = trimmed.to_lowercase();
     if lower.contains("mobileasset")
@@ -86,14 +81,19 @@ pub fn is_valid_card_hash(h: &str) -> bool {
         }
     }
 
-    // Normalize URL-safe base64 and pad
-    let mut b64 = trimmed.replace('-', "+").replace('_', "/");
+    // Accept either canonical alphabet, never a mixture of the two.
+    let engine = if trimmed.contains('-') || trimmed.contains('_') {
+        &base64::engine::general_purpose::URL_SAFE
+    } else {
+        &base64::engine::general_purpose::STANDARD
+    };
+    let mut b64 = trimmed.to_owned();
     while b64.len() % 4 != 0 {
         b64.push('=');
     }
 
     use base64::Engine;
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+    if let Ok(decoded) = engine.decode(&b64) {
         // Must be exactly 20 bytes (SHA-1) or 32 bytes (SHA-256)
         if decoded.len() == 20 || decoded.len() == 32 {
             // Reject trivial all-identical bytes
@@ -273,10 +273,10 @@ static DESC_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 static CARD_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"/(?:Cards|Passes/Cards)/([A-Za-z0-9+/_-]{27,44})(?:\.pkpass|\.cache|\.pkcache|/|\s|\x22|'|\)|,|$)").unwrap(),
-        Regex::new(r"/([A-Za-z0-9+/_-]{27,44})\.(?:pkpass|cache|pkcache)").unwrap(),
-        Regex::new(r"(?:^|[^A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{27}=)(?:$|[^A-Za-z0-9+/_-])").unwrap(),
-        Regex::new(r"(?i)(?:card[_\s]?(?:hash|id)|pass[_\s]?(?:hash|id)|unique[_\s]?id)\s*[:=]\s*['\x22]?([A-Za-z0-9+=_-]{27,44})").unwrap(),
+        Regex::new(r"/(?:Cards|Passes/Cards)/([A-Za-z0-9+_=-]+)(?:\.pkpass|\.cache|\.pkcache|/|\s|\x22|'|\)|,|$)").unwrap(),
+        Regex::new(r"/([A-Za-z0-9+_=-]+)\.(?:pkpass|cache|pkcache)(?:/|\s|\x22|'|\)|,|$)").unwrap(),
+        Regex::new(r"([A-Za-z0-9+/_-]+=+)").unwrap(),
+        Regex::new(r"(?i)(?:card[_\s]?(?:hash|id)|pass[_\s]?(?:hash|id)|unique[_\s]?id)\s*[:=]\s*['\x22]?([A-Za-z0-9+/=_-]+)").unwrap(),
     ]
 });
 
@@ -293,22 +293,38 @@ pub fn extract_card_name_from_line(line: &str) -> Option<String> {
 }
 
 pub fn extract_card_hash_from_line(line: &str) -> Option<String> {
+    extract_card_hash_matching(line, |_| true)
+}
+
+fn extract_card_hash_matching(line: &str, accept: impl Fn(&str) -> bool) -> Option<String> {
     let lower = line.to_lowercase();
     let has_wallet = WALLET_KEYWORDS.iter().any(|k| lower.contains(k));
     if !has_wallet {
         return None;
     }
 
-    for r in CARD_REGEXES.iter() {
-        if let Some(caps) = r.captures(line) {
+    for (pattern_index, r) in CARD_REGEXES.iter().enumerate() {
+        for caps in r.captures_iter(line) {
             if let Some(m) = caps.get(1) {
+                // A padded token must be complete, not a valid-looking fragment
+                // of a longer or internally padded identifier.
+                if pattern_index == 2 {
+                    let is_token_byte = |b: u8| b.is_ascii_alphanumeric() || b"+/_-=".contains(&b);
+                    if line.as_bytes().get(m.start().wrapping_sub(1)).is_some_and(|b| is_token_byte(*b))
+                        || line.as_bytes().get(m.end()).is_some_and(|b| is_token_byte(*b))
+                    {
+                        continue;
+                    }
+                }
                 let h = m.as_str().trim().trim_matches(['\'', '"']).trim_end_matches(['.', ',']);
                 if is_valid_card_hash(h) {
                     let mut norm = h.to_string();
                     if norm.len() == 27 {
                         norm.push('=');
                     }
-                    return Some(norm);
+                    if accept(&norm) {
+                        return Some(norm);
+                    }
                 }
             }
         }
@@ -331,7 +347,7 @@ fn receive_first_card(stop:&AtomicBool,mut receive:impl FnMut(&mut [u8])->isize)
             if byte==b'\n' || byte==0 {
                 if !oversized && !line.is_empty() {
                     let text=String::from_utf8_lossy(&line);
-                    if let Some(hash)=extract_card_hash_from_line(&text).filter(|hash|crate::wallet_export::is_exact_card_hash(hash)) {
+                    if let Some(hash)=extract_card_hash_matching(&text,crate::wallet_export::is_exact_card_hash) {
                         let name=extract_card_name_from_line(&text).unwrap_or_default();
                         stop.store(true,Ordering::Release);return Some((hash,name));
                     }
@@ -414,6 +430,96 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn synthetic_hash(byte_count: usize, url_safe: bool) -> String {
+        use base64::Engine;
+        let mut bytes: Vec<u8> = (0..byte_count).map(|n| (n * 73 + 19) as u8).collect();
+        bytes[..6].copy_from_slice(&[0xfb, 0xff, 0xbf, 0xfb, 0xff, 0xbf]);
+        if url_safe {
+            base64::engine::general_purpose::URL_SAFE.encode(bytes)
+        } else {
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        }
+    }
+
+    #[test]
+    fn canonical_url_safe_hashes_allow_repeated_alphabet_separators() {
+        for byte_count in [20, 32] {
+            let hash = synthetic_hash(byte_count, true);
+            assert!(hash.matches('_').count() > 1);
+            assert!(hash.matches('-').count() > 2);
+            assert!(is_valid_card_hash(&hash));
+            assert!(is_valid_card_hash(hash.trim_end_matches('=')));
+            assert!(crate::wallet_export::is_exact_card_hash(&hash));
+        }
+    }
+
+    #[test]
+    fn padded_sha1_and_sha256_are_found_in_wallet_paths_and_bare_events() {
+        for byte_count in [20, 32] {
+            let hash = synthetic_hash(byte_count, true);
+            for line in [
+                format!("passd: /var/mobile/Library/Passes/Cards/{hash}.pkpass"),
+                format!("wallet: /Cards/{hash}/artwork.png"),
+                format!("passkit: /temporary/{hash}.pkcache loaded"),
+                format!("passd: selected '{hash}'"),
+                format!("passd: card_hash='{hash}'"),
+            ] {
+                assert_eq!(extract_card_hash_from_line(&line), Some(hash.clone()), "{line}");
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_first_candidates_do_not_mask_later_candidates() {
+        let hash = synthetic_hash(32, true);
+        for line in [
+            format!("passd: card_hash='{}' card_hash='{hash}'", "x".repeat(44)),
+            format!("passd: /Cards/{}.pkpass /Cards/{hash}.pkpass", "x".repeat(44)),
+            format!("passd: hwAtAmHKYwsQrJbT5cTNDsaxVME= {hash}"),
+        ] {
+            assert_eq!(extract_card_hash_from_line(&line), Some(hash.clone()));
+        }
+    }
+
+    #[test]
+    fn scanner_skips_path_unsafe_candidate_before_first_exact_card() {
+        let unsafe_hash = synthetic_hash(20, false);
+        let exact_hash = synthetic_hash(32, true);
+        assert!(unsafe_hash.contains('/'));
+        assert!(is_valid_card_hash(&unsafe_hash));
+        assert!(!crate::wallet_export::is_exact_card_hash(&unsafe_hash));
+        let bytes = format!("passd: card_hash='{unsafe_hash}' card_hash='{exact_hash}'\n").into_bytes();
+        let stop = AtomicBool::new(false);
+        let mut receives = 0;
+        let found = receive_first_card(&stop, |buffer| {
+            receives += 1;
+            assert_eq!(receives, 1, "the exact later candidate must finish this receive");
+            buffer[..bytes.len()].copy_from_slice(&bytes);
+            bytes.len() as isize
+        });
+        assert_eq!(found, Some((exact_hash, String::new())));
+        assert!(stop.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn malformed_or_unrelated_tokens_never_become_card_candidates() {
+        let hash = synthetic_hash(32, true);
+        let invalid = [
+            format!("passd: card_hash='{hash}MORE'"),
+            format!("passd: card_hash='prefix={hash}'"),
+            format!("passd: card_hash='{hash}='"),
+            format!("passd: card_hash='{}'", hash.replacen('-', "+", 1)),
+            format!("unrelated: selected '{hash}'"),
+            "passd: card_hash='AAAAAAAAAAAAAAAAAAAAAAAAAAA='".to_owned(),
+        ];
+        for line in invalid {
+            assert_eq!(extract_card_hash_from_line(&line), None, "{line}");
+        }
+        let mut noncanonical = hash.into_bytes();
+        noncanonical[42] = if noncanonical[42] == b'A' { b'B' } else { noncanonical[42] + 1 };
+        assert!(!is_valid_card_hash(std::str::from_utf8(&noncanonical).unwrap()));
+    }
 
     #[test]
     fn scan_stops_after_one_exact_card_even_when_same_receive_contains_more() {

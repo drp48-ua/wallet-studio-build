@@ -39,12 +39,25 @@ impl std::fmt::Display for HttpStatus {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {write!(f,"El servicio respondió HTTP {}",self.0)}
 }
 impl std::error::Error for HttpStatus {}
-fn request(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usize)->Result<Response>{
+#[derive(Debug)]
+pub(crate) struct RequestTimeout;
+impl std::fmt::Display for RequestTimeout {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("El servicio agotó el tiempo de espera")}
+}
+impl std::error::Error for RequestTimeout {}
+fn network_result(ok:i32,message:&str)->Result<()> {
+    if ok!=0 {return Ok(());}
+    if std::io::Error::last_os_error().raw_os_error()==Some(12002) {return Err(RequestTimeout.into());}
+    bail!("{message}")
+}
+const REQUEST_BUDGET:Duration=Duration::from_secs(60);
+const BUNDLE_DOWNLOAD_BUDGET:Duration=Duration::from_secs(300);
+fn request(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usize,budget:Duration)->Result<Response>{
     let url=parse_url(value)?;
     anyhow::ensure!(matches!(method,"GET"|"POST"|"PUT"|"DELETE")&&max<=MAX_PACKAGE&&body.len()<=MAX_PACKAGE,"Petición fuera de límites");
     let mut header=String::new();
     for (k,v) in headers {anyhow::ensure!(!k.is_empty()&&k.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-')&&!v.chars().any(|c|c.is_control()),"Cabecera no válida");header.push_str(&format!("{k}: {v}\r\n"));}
-    let deadline=Instant::now()+Duration::from_secs(60);
+    let deadline=Instant::now()+budget;
     let agent=wide("Wallet Studio/0.6");let host=wide(&url.host);let path=wide(&url.path);let verb=wide(method);let hw=wide(&header);
     let session=Handle(unsafe{WinHttpOpen(agent.as_ptr(),0,std::ptr::null(),std::ptr::null(),0)});
     anyhow::ensure!(!session.0.is_null(),"No se pudo iniciar la conexión");
@@ -55,29 +68,39 @@ fn request(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usiz
     let mut disable=2u32; // WINHTTP_DISABLE_REDIRECTS (SDK); 8 disables keep-alive.
     anyhow::ensure!(unsafe{WinHttpSetOption(req.0,63,(&mut disable as *mut u32).cast(),4)}!=0,"No se pudo bloquear la redirección");
     // Free hosting can cold-start while receiving the first response. Keep the
-    // existing total deadline and short connect timeouts, but allow that wake-up
+    // bounded total deadline and short connect timeouts, but allow that wake-up
     // within the remaining receive budget. Calls run off the UI thread.
-    let timeout=|h|->Result<()>{let ms=deadline.saturating_duration_since(Instant::now()).as_millis();anyhow::ensure!(ms>0,"El servicio agotó el tiempo de espera");let t=ms.min(15000) as i32;let receive=ms.min(60000) as i32;anyhow::ensure!(unsafe{WinHttpSetTimeouts(h,t,t,t,receive)}!=0,"No se pudo configurar el tiempo de espera");Ok(())};
+    let timeout=|h|->Result<()>{let ms=deadline.saturating_duration_since(Instant::now()).as_millis();if ms==0 {return Err(RequestTimeout.into());}let t=ms.min(15000) as i32;let receive=ms.min(60000) as i32;anyhow::ensure!(unsafe{WinHttpSetTimeouts(h,t,t,t,receive)}!=0,"No se pudo configurar el tiempo de espera");Ok(())};
     timeout(req.0)?;
-    anyhow::ensure!(unsafe{WinHttpSendRequest(req.0,hw.as_ptr(),header.encode_utf16().count() as u32,if body.is_empty(){std::ptr::null_mut()}else{body.as_ptr() as *mut _},body.len() as u32,body.len() as u32,0)}!=0,"No se pudo enviar la petición");
+    network_result(unsafe{WinHttpSendRequest(req.0,hw.as_ptr(),header.encode_utf16().count() as u32,if body.is_empty(){std::ptr::null_mut()}else{body.as_ptr() as *mut _},body.len() as u32,body.len() as u32,0)},"No se pudo enviar la petición")?;
     timeout(req.0)?;
-    anyhow::ensure!(unsafe{WinHttpReceiveResponse(req.0,std::ptr::null_mut())}!=0,"No se recibió respuesta");
+    network_result(unsafe{WinHttpReceiveResponse(req.0,std::ptr::null_mut())},"No se recibió respuesta")?;
     let mut status=0u32;let mut len=4;
     anyhow::ensure!(unsafe{WinHttpQueryHeaders(req.0,19|0x20000000,std::ptr::null(),(&mut status as *mut u32).cast(),&mut len,std::ptr::null_mut())}!=0,"Estado HTTP no disponible");
     let location=if matches!(status,301|302|303|307|308){let mut buf=[0u16;8192];let mut n=(buf.len()*2)as u32;let ok=unsafe{WinHttpQueryHeaders(req.0,33,std::ptr::null(),buf.as_mut_ptr().cast(),&mut n,std::ptr::null_mut())};if ok!=0{Some(String::from_utf16(&buf[..buf.iter().position(|x|*x==0).unwrap_or(buf.len())])?)}else{None}}else{None};
     let mut out=Vec::new();let mut buffer=[0u8;8192];
-    loop{timeout(req.0)?;let mut n=0;anyhow::ensure!(unsafe{WinHttpReadData(req.0,buffer.as_mut_ptr().cast(),8192,&mut n)}!=0,"Lectura de red incompleta");if n==0{break;}anyhow::ensure!(out.len().saturating_add(n as usize)<=max,"Respuesta demasiado grande");out.extend_from_slice(&buffer[..n as usize]);}
-    anyhow::ensure!(Instant::now()<deadline,"El servicio agotó el tiempo de espera");
+    loop{timeout(req.0)?;let mut n=0;network_result(unsafe{WinHttpReadData(req.0,buffer.as_mut_ptr().cast(),8192,&mut n)},"Lectura de red incompleta")?;if n==0{break;}anyhow::ensure!(out.len().saturating_add(n as usize)<=max,"Respuesta demasiado grande");out.extend_from_slice(&buffer[..n as usize]);}
+    if Instant::now()>=deadline {return Err(RequestTimeout.into());}
     Ok(Response{status,body:out,location})
 }
 pub fn http_request(method:&str,url:&str,headers:&[(String,String)],body:&[u8],max_bytes:usize)->Result<Vec<u8>>{
-    let r=request(method,url,headers,body,max_bytes)?;
+    let r=request(method,url,headers,body,max_bytes,REQUEST_BUDGET)?;
     anyhow::ensure!(matches!(r.status,200|201|204),HttpStatus(r.status));
     Ok(r.body)
 }
+/// Large immutable originals need a bounded transfer budget independent of
+/// account/catalog requests. Redirects, response caps and caller checks remain.
+pub(crate) fn http_download_bundle(url:&str,headers:&[(String,String)],max_bytes:usize)->Result<Vec<u8>> {
+    let parsed=parse_url(url)?;
+    let id=parsed.path.rsplit('/').next().unwrap_or_default();
+    anyhow::ensure!(parsed.path.contains("/v1/bundles/") && id.len()==64 && id.bytes().all(|b|b.is_ascii_hexdigit()) && max_bytes<=100*1024*1024,"Descarga de copia fuera de límites");
+    let response=request("GET",url,headers,&[],max_bytes,BUNDLE_DOWNLOAD_BUDGET)?;
+    anyhow::ensure!(response.status==200,HttpStatus(response.status));
+    Ok(response.body)
+}
 fn public_download(url:&str,max:usize)->Result<Vec<u8>>{
     let mut next=url.to_owned();
-    for _ in 0..4{let p=parse_url(&next)?;anyhow::ensure!(p.secure&&matches!(p.host.as_str(),"github.com"|"release-assets.githubusercontent.com"|"objects.githubusercontent.com"),"Origen de actualización no permitido");let r=request("GET",&next,&[],&[],max)?;if r.status==200{return Ok(r.body);}anyhow::ensure!(matches!(r.status,301|302|303|307|308),"Descarga respondió HTTP {}",r.status);next=r.location.ok_or_else(||anyhow::anyhow!("Redirección incompleta"))?;}
+    for _ in 0..4{let p=parse_url(&next)?;anyhow::ensure!(p.secure&&matches!(p.host.as_str(),"github.com"|"release-assets.githubusercontent.com"|"objects.githubusercontent.com"),"Origen de actualización no permitido");let r=request("GET",&next,&[],&[],max,REQUEST_BUDGET)?;if r.status==200{return Ok(r.body);}anyhow::ensure!(matches!(r.status,301|302|303|307|308),"Descarga respondió HTTP {}",r.status);next=r.location.ok_or_else(||anyhow::anyhow!("Redirección incompleta"))?;}
     bail!("Demasiadas redirecciones de actualización")
 }
 #[link(name="bcrypt")]
@@ -189,6 +212,35 @@ pub fn poll_status(rx:&Receiver<String>,status:&mut String)->bool {
     }
 }
 #[cfg(test)]mod tests{use super::*;
+ #[test]fn bounded_transfer_accepts_slow_complete_body_and_rejects_expired_download(){
+    use std::io::{Read,Write};
+    fn slow_server()->(String,std::thread::JoinHandle<()>) {
+        let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url=format!("http://{}/slow",listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let worker=std::thread::spawn(move||{
+            let deadline=Instant::now()+Duration::from_secs(3);
+            let mut socket=loop {
+                match listener.accept() {
+                    Ok((socket,_))=>break socket,
+                    Err(error) if error.kind()==std::io::ErrorKind::WouldBlock && Instant::now()<deadline=>std::thread::sleep(Duration::from_millis(10)),
+                    _=>return,
+                }
+            };socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request=[0u8;4096];let _=socket.read(&mut request);
+            if socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n").is_err(){return;}
+            for byte in b"abcde" {std::thread::sleep(Duration::from_millis(80));if socket.write_all(&[*byte]).is_err(){break;}}
+        });(url,worker)
+    }
+    let(url,worker)=slow_server();
+    let result=request("GET",&url,&[],&[],5,Duration::from_millis(200));worker.join().unwrap();
+    let error=match result {Err(error)=>error,Ok(_)=>panic!("expired download accepted")};assert!(error.downcast_ref::<RequestTimeout>().is_some());
+    let(url,worker)=slow_server();let response=request("GET",&url,&[],&[],5,Duration::from_secs(3)).unwrap();worker.join().unwrap();
+    assert_eq!(response.body,b"abcde");assert_eq!(response.status,200);
+ }
+
+ #[test]fn bundle_download_rejects_other_routes_and_oversized_caps_without_network(){for url in ["https://example.com/v1/auth/session","https://example.com/v1/bundles/nope"] {assert!(http_download_bundle(url,&[],1).is_err());}assert!(http_download_bundle(&format!("https://example.com/v1/bundles/{}","a".repeat(64)),&[],101*1024*1024).is_err());}
+
  #[test]fn status_receiver_drains_final_message_and_releases_disconnected_worker(){let(tx,rx)=channel();let mut status=String::new();assert!(!poll_status(&rx,&mut status));tx.send("Comprobando".into()).unwrap();assert!(!poll_status(&rx,&mut status));assert_eq!(status,"Comprobando");tx.send("Actualización preparada".into()).unwrap();drop(tx);assert!(poll_status(&rx,&mut status));assert_eq!(status,"Actualización preparada");}
  #[test]fn status_receiver_can_be_checked_again_after_completion(){let(tx,rx)=channel();drop(tx);let mut status=String::from("Anterior");assert!(poll_status(&rx,&mut status));assert_eq!(status,"Anterior");let(tx,next)=channel();tx.send("Nueva comprobación".into()).unwrap();drop(tx);assert!(poll_status(&next,&mut status));assert_eq!(status,"Nueva comprobación");}
  #[test]fn manifest_rejects_non_main_source_branch_and_foreign_repo(){let base=fixture().read().unwrap();let mut bad=base.clone();bad.source_branch="feature-branch".into();assert!(validate_manifest(&bad).is_err());bad=base;bad.repository="other/repo".into();assert!(validate_manifest(&bad).is_err());}

@@ -511,6 +511,9 @@ pub fn sync_failure_message(error:&anyhow::Error)->String {
     let mut message=error.downcast_ref::<SyncFailure>().map(ToString::to_string)
         .unwrap_or_else(||"Sincronización incompleta. Tus copias se conservan; comprueba conexión y almacenamiento.".into());
     if let Some(status)=error.downcast_ref::<crate::auto_update::HttpStatus>() {message.push_str(&format!(" (HTTP {})",status.0));}
+    if error.downcast_ref::<crate::auto_update::RequestTimeout>().is_some() {
+        message.push_str(" La descarga agotó el tiempo de espera. Pulsa Sincronizar ahora para reintentar.");
+    }
     message
 }
 pub fn synchronize(session:&Session)->Result<()> {
@@ -539,8 +542,8 @@ pub fn synchronize_report_progress(session:&Session,mut progress:impl FnMut(&'st
         remote_ids.insert(entry.id.clone());
         anyhow::ensure!(entry.id.len()==64 && entry.id.bytes().all(|b|b.is_ascii_hexdigit()) && entry.id==entry.sha256 && entry.size<=LIMIT,"invalid cloud inventory");
         if verified_seen(&root,&seen.join(&entry.id),&entry.id)? {report.verified+=1;continue;}
-        let bundle=crate::auto_update::http_request("GET",&format!("{}/v1/bundles/{}",session.server,entry.id),&headers,&[],LIMIT).context(SyncFailure::Download)?;
-        anyhow::ensure!(bundle.len()==entry.size && crate::bank_backup::sha256(&bundle)?==entry.sha256,"cloud download checksum mismatch");
+        let bundle=crate::auto_update::http_download_bundle(&format!("{}/v1/bundles/{}",session.server,entry.id),&headers,LIMIT).context(SyncFailure::Download)?;
+        anyhow::ensure!(bundle.len()==entry.size && crate::bank_backup::sha256(&bundle).context(SyncFailure::Download)?==entry.sha256,SyncFailure::Download);
         import_bundle(&root,&bundle).context(SyncFailure::Import)?;let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&entry.id),&entry.id,manifest).context(SyncFailure::Receipt)?;report.downloaded+=1;
     }
     progress("Verificando y subiendo originales locales…");
@@ -573,6 +576,88 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires explicitly authorized saved-account read-only cloud diagnostic"]
+    fn diagnose_saved_account_downloads_read_only() {
+        if std::env::var("WALLET_STUDIO_CLOUD_DIAGNOSTIC").as_deref() != Ok("1") {
+            println!("{{\"result\":\"explicit_diagnostic_required\"}}");
+            return;
+        }
+        assert!(std::env::var_os("WALLET_STUDIO_TEST_STORAGE_ROOT").is_none()
+            && std::env::var_os("WALLET_STUDIO_TEST_FIXTURE").is_none(),
+            "diagnostic requires the real read-only profile");
+        let session = match load_session() {
+            Ok(Some(session)) => session,
+            _ => panic!("saved diagnostic session unavailable"),
+        };
+        assert!(session.server == "https://wallet-studio-accounts.onrender.com",
+            "diagnostic service is not the expected Wallet Studio backend");
+        fn safe_error(error: &anyhow::Error) -> serde_json::Value {
+            let status = error.downcast_ref::<crate::auto_update::HttpStatus>().map(|value| value.0);
+            let category = if status.is_some() { "http" }
+                else if error.downcast_ref::<crate::auto_update::RequestTimeout>().is_some() { "timeout" }
+                else if error.chain().any(|cause| cause.to_string() == "Lectura de red incompleta") { "read" }
+                else if error.chain().any(|cause| cause.to_string() == "Respuesta demasiado grande") { "size_limit" }
+                else { "transport" };
+            serde_json::json!({"category":category,"status":status})
+        }
+        let headers = [("Authorization".to_owned(), format!("Bearer {}", session.access_token))];
+        let started = std::time::Instant::now();
+        let inventory = match crate::auto_update::http_request(
+            "GET", &format!("{}/v1/bundles", session.server), &headers, &[], 1024 * 1024,
+        ) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                println!("{}", serde_json::json!({"stage":"inventory","result":safe_error(&error),"elapsed_ms":started.elapsed().as_millis()}));
+                panic!("read-only inventory diagnostic failed");
+            }
+        };
+        #[derive(Deserialize)] struct DiagnosticEntry { id:String, sha256:String, size:usize }
+        #[derive(Deserialize)] struct DiagnosticListing { bundles:Vec<DiagnosticEntry> }
+        let listing: DiagnosticListing = match serde_json::from_slice(&inventory) {
+            Ok(listing) => listing,
+            Err(_) => panic!("diagnostic inventory format invalid"),
+        };
+        assert!(listing.bundles.len() <= 1000 && listing.bundles.iter().all(|entry|
+            entry.id.len() == 64 && entry.id.bytes().all(|b| b.is_ascii_hexdigit())
+                && entry.id == entry.sha256 && entry.size <= LIMIT), "diagnostic inventory outside bounds");
+        println!("{}", serde_json::json!({"stage":"inventory","count":listing.bundles.len(),
+            "minimum_size":listing.bundles.iter().map(|entry|entry.size).min(),
+            "maximum_size":listing.bundles.iter().map(|entry|entry.size).max(),
+            "total_size":listing.bundles.iter().map(|entry|entry.size as u64).sum::<u64>(),
+            "elapsed_ms":started.elapsed().as_millis()}));
+        let largest = listing.bundles.iter().enumerate().max_by_key(|(_,entry)|entry.size).map(|(index,_)|index);
+        let mut verified_all = true;
+        if let Some(index) = largest {
+            let entry = &listing.bundles[index];
+            let started = std::time::Instant::now();
+            let result = match crate::auto_update::http_download_bundle(
+                &format!("{}/v1/bundles/{}", session.server, entry.id), &headers, LIMIT,
+            ) {
+                Ok(bundle) => {
+                    let verified = bundle.len() == entry.size
+                        && crate::bank_backup::sha256(&bundle).is_ok_and(|digest|digest == entry.sha256);
+                    verified_all &= verified;
+                    serde_json::json!({"category":if verified {"verified"} else {"integrity"},
+                        "expected_size":entry.size,"received_size":bundle.len(),"verified":verified})
+                }
+                Err(error) => { verified_all = false; safe_error(&error) }
+            };
+            println!("{}", serde_json::json!({"stage":"largest","result":result,"elapsed_ms":started.elapsed().as_millis()}));
+        }
+        assert!(verified_all, "read-only download diagnostic did not verify all selected bundles");
+    }
+    #[test]
+    fn bundle_timeout_reports_retry_without_private_error_details_or_session_loss() {
+        let error = anyhow::Error::new(crate::auto_update::RequestTimeout)
+            .context("synthetic private diagnostic detail").context(SyncFailure::Download);
+        let message = sync_failure_message(&error);
+        assert!(message.contains("Las copias locales se conservan"));
+        assert!(message.contains("Sincronizar ahora"));
+        assert!(!message.contains("private diagnostic"));
+        assert!(retained_session_after_failure(&error));
+        assert!(authenticated_after_sync_failure(&error, true));
+    }
     #[test] fn restored_device_session_survives_transient_startup_and_rejection_only_removes_exact_token() {
         let root=fixture_root();std::fs::create_dir_all(&root).unwrap();
         let current=Session {server:"https://example.test".into(),access_token:"synthetic-current-token".into(),user_id:"account-a".into()};
