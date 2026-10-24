@@ -225,6 +225,19 @@ pub fn import_bundle(root:&Path,bytes:&[u8])->Result<()> {
     result
 }
 
+// Read only bounded, regular, integrity-bound quarantine evidence. Errors must
+// propagate: an unreadable archive could belong to the requested identity.
+fn read_quarantine_archive(path:&Path)->Result<(Manifest,Vec<u8>)> {
+    crate::storage::safe_chain(path)?;
+    let metadata=fs::symlink_metadata(path)?;
+    anyhow::ensure!(metadata.is_file() && !metadata.file_type().is_symlink()
+        && metadata.len()<=LIMIT as u64,"quarantine evidence unsafe or too large");
+    let bytes=fs::read(path)?;
+    anyhow::ensure!(path.file_stem().and_then(|name|name.to_str())==Some(crate::bank_backup::sha256(&bytes)?.as_str()),
+        "quarantine archive integrity mismatch");
+    let (manifest,_)=parse_bundle(&bytes)?;
+    Ok((manifest,bytes))
+}
 pub fn reconcile_card_quarantine<L>(udid: &str, hash: &str, log: &mut L) -> Result<bool>
 where L: FnMut(&str) {
     let root = crate::storage::root();
@@ -239,26 +252,21 @@ where L: FnMut(&str) {
         return Ok(false);
     }
     let quarantine_dir = root.join("quarantine");
-    if !quarantine_dir.exists() {
-        if crate::storage::card_is_blocked_at(root, udid, hash) {
-            crate::storage::clear_card_review_at(root, udid, hash)?;
-            log("Revisión de tarjeta liberada tras comprobar que no hay evidencia en conflicto en cuarentena.");
-            return Ok(true);
-        }
-        return Ok(false);
-    }
+    // Missing evidence cannot explain why a review marker was created.
+    if !quarantine_dir.exists() { return Ok(false); }
     crate::storage::safe_chain(&quarantine_dir)?;
     let mut matching_zips = Vec::new();
     for entry in fs::read_dir(&quarantine_dir)? {
         let path = entry?.path();
         if path.extension().and_then(|s| s.to_str()) != Some("zip") { continue; }
-        let bytes = match fs::read(&path) { Ok(b) => b, Err(_) => continue };
-        if let Ok((manifest, _)) = parse_bundle(&bytes) {
-            if manifest.udid == udid && manifest.card_hash == hash {
-                matching_zips.push((path, bytes));
-            }
+        // Unknown identity is not evidence of an unrelated card. Validate every
+        // archive before any import or deletion, retaining review on failure.
+        let (manifest, bytes) = read_quarantine_archive(&path)?;
+        if manifest.udid == udid && manifest.card_hash == hash {
+            matching_zips.push((path, bytes));
         }
     }
+    if matching_zips.is_empty() { return Ok(false); }
     for (path, bytes) in &matching_zips {
         if import_bundle(root, bytes).is_ok() {
             let _ = fs::remove_file(path);
@@ -271,13 +279,10 @@ where L: FnMut(&str) {
     for entry in fs::read_dir(&quarantine_dir)? {
         let path = entry?.path();
         if path.extension().and_then(|s| s.to_str()) != Some("zip") { continue; }
-        if let Ok(bytes) = fs::read(&path) {
-            if let Ok((manifest, _)) = parse_bundle(&bytes) {
-                if manifest.udid == udid && manifest.card_hash == hash {
-                    still_quarantined = true;
-                    break;
-                }
-            }
+        let (manifest, _) = read_quarantine_archive(&path)?;
+        if manifest.udid == udid && manifest.card_hash == hash {
+            still_quarantined = true;
+            break;
         }
     }
     if !still_quarantined && crate::bank_changes::cloud_operation_dirs(&root.join("bank-change-intents"), udid, hash).is_ok() {
@@ -870,6 +875,35 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
             crate::bank_changes::validate_cloud_chain(&target.join("bank-change-intents"),&input.udid,&input.card_hash).unwrap();
             assert!(crate::storage::ensure_card_ready_at(&target,&input.udid,&input.card_hash).is_ok());fs::remove_dir_all(target).unwrap();
         }fs::remove_dir_all(source).unwrap();
+    }
+    #[test] fn customer_quarantine_unknown_or_unrelated_evidence_never_clears_review() {
+        let source=fixture_root(); let input=fixture_baseline();
+        let bank=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),&input).unwrap();
+        let bundle=export_bundle(&source,&bank).unwrap();
+        for scenario in ["missing", "empty", "malformed", "unreadable", "other_card"] {
+            let target=fixture_root();
+            crate::storage::block_card_at(&target,&input.udid,&input.card_hash).unwrap();
+            let quarantine=target.join("quarantine");
+            if scenario!="missing" {fs::create_dir_all(&quarantine).unwrap();}
+            if scenario=="malformed" {
+                let bytes=b"not a ZIP";
+                fs::write(quarantine.join(format!("{}.zip",crate::bank_backup::sha256(bytes).unwrap())),bytes).unwrap();
+            }
+            if scenario=="unreadable" {fs::create_dir(quarantine.join("directory.zip")).unwrap();}
+            if scenario=="other_card" {
+                let (mut manifest,files)=parse_bundle(&bundle).unwrap();
+                manifest.udid="synthetic-other-device".into();
+                let bytes=repack(manifest,files);
+                fs::write(quarantine.join(format!("{}.zip",crate::bank_backup::sha256(&bytes).unwrap())),bytes).unwrap();
+            }
+            let result=reconcile_card_quarantine_at(&target,&input.udid,&input.card_hash,&mut |_|{});
+            if matches!(scenario,"malformed"|"unreadable") {assert!(result.is_err(),"{scenario}");}
+            else {assert!(!result.unwrap(),"{scenario}");}
+            assert!(crate::storage::card_is_blocked_at(&target,&input.udid,&input.card_hash),"{scenario}");
+            assert!(!target.join("bank-backups").exists(),"no unrelated import: {scenario}");
+            fs::remove_dir_all(target).unwrap();
+        }
+        fs::remove_dir_all(source).unwrap();
     }
     #[test] fn customer_quarantine_reconciles_and_clears_review_after_intent_is_restored() {
         let source=fixture_root();let target=fixture_root();let input=fixture_baseline();
