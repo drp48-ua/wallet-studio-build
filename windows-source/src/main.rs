@@ -18,6 +18,8 @@ mod auth_ui;
 mod glass;
 mod brand;
 mod apple;
+mod apple_setup;
+mod recovery_cli;
 mod device;
 mod flasher;
 mod image_skin;
@@ -33,6 +35,7 @@ mod bank_runtime;
 mod transport_probe;
 
 fn main() -> eframe::Result<()> {
+    if recovery_cli::run_if_requested() {return Ok(());}
     if std::env::args().any(|arg|arg=="--wallet-studio-design-check" || arg=="--wallet-studio-design-check-all") {
         println!("{}",design_library::diagnose_account_designs(std::env::args().any(|arg|arg=="--wallet-studio-design-check-all")));
         return Ok(());

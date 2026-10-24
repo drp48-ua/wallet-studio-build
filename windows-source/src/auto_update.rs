@@ -53,8 +53,11 @@ fn network_result(ok:i32,message:&str)->Result<()> {
 const REQUEST_BUDGET:Duration=Duration::from_secs(60);
 const BUNDLE_DOWNLOAD_BUDGET:Duration=Duration::from_secs(300);
 fn request(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usize,budget:Duration)->Result<Response>{
+    request_with_cap(method,value,headers,body,max,budget,MAX_PACKAGE)
+}
+fn request_with_cap(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usize,budget:Duration,cap:usize)->Result<Response>{
     let url=parse_url(value)?;
-    anyhow::ensure!(matches!(method,"GET"|"POST"|"PUT"|"DELETE")&&max<=MAX_PACKAGE&&body.len()<=MAX_PACKAGE,"Petición fuera de límites");
+    anyhow::ensure!(matches!(method,"GET"|"POST"|"PUT"|"DELETE")&&max<=cap&&body.len()<=MAX_PACKAGE,"Petición fuera de límites");
     let mut header=String::new();
     for (k,v) in headers {anyhow::ensure!(!k.is_empty()&&k.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-')&&!v.chars().any(|c|c.is_control()),"Cabecera no válida");header.push_str(&format!("{k}: {v}\r\n"));}
     let deadline=Instant::now()+budget;
@@ -102,6 +105,24 @@ fn public_download(url:&str,max:usize)->Result<Vec<u8>>{
     let mut next=url.to_owned();
     for _ in 0..4{let p=parse_url(&next)?;anyhow::ensure!(p.secure&&matches!(p.host.as_str(),"github.com"|"release-assets.githubusercontent.com"|"objects.githubusercontent.com"),"Origen de actualización no permitido");let r=request("GET",&next,&[],&[],max,REQUEST_BUDGET)?;if r.status==200{return Ok(r.body);}anyhow::ensure!(matches!(r.status,301|302|303|307|308),"Descarga respondió HTTP {}",r.status);next=r.location.ok_or_else(||anyhow::anyhow!("Redirección incompleta"))?;}
     bail!("Demasiadas redirecciones de actualización")
+}
+fn apple_download_url(url:&str)->bool {
+    parse_url(url).is_ok_and(|url|url.secure && url.port==443 &&
+        (url.host=="apple.com" || url.host.ends_with(".apple.com") || url.host=="cdn-apple.com" || url.host.ends_with(".cdn-apple.com")))
+}
+pub(crate) fn download_apple_installer()->Result<Vec<u8>> {
+    let mut next="https://www.apple.com/itunes/download/win64/".to_owned();
+    let deadline=Instant::now()+Duration::from_secs(900);
+    for _ in 0..4 {
+        anyhow::ensure!(apple_download_url(&next),"Origen del instalador Apple no permitido");
+        let remaining=deadline.saturating_duration_since(Instant::now());
+        anyhow::ensure!(!remaining.is_zero(),RequestTimeout);
+        let response=request_with_cap("GET",&next,&[],&[],512*1024*1024,remaining,512*1024*1024)?;
+        if response.status==200 {anyhow::ensure!(response.body.starts_with(b"MZ"),"Instalador Apple no válido");return Ok(response.body);}
+        anyhow::ensure!(matches!(response.status,301|302|303|307|308),HttpStatus(response.status));
+        next=response.location.ok_or_else(||anyhow::anyhow!("Redirección del instalador incompleta"))?;
+    }
+    bail!("Demasiadas redirecciones del instalador Apple")
 }
 #[link(name="bcrypt")]
 unsafe extern "system"{fn BCryptOpenAlgorithmProvider(h:*mut *mut std::ffi::c_void,n:*const u16,i:*const u16,f:u32)->i32;fn BCryptHash(h:*mut std::ffi::c_void,k:*const u8,kn:u32,b:*const u8,bn:u32,o:*mut u8,on:u32)->i32;fn BCryptCloseAlgorithmProvider(h:*mut std::ffi::c_void,f:u32)->i32;
@@ -212,6 +233,8 @@ pub fn poll_status(rx:&Receiver<String>,status:&mut String)->bool {
     }
 }
 #[cfg(test)]mod tests{use super::*;
+ #[test]fn apple_installer_redirects_reject_foreign_and_insecure_origins(){for url in ["http://www.apple.com/a","https://apple.com.evil.test/a","https://evil.test/apple.com/a","https://www.apple.com:444/a","https://u:p@www.apple.com/a"]{assert!(!apple_download_url(url));}for url in ["https://www.apple.com/itunes/download/win64/","https://secure-appldnld.apple.com/iTunes64Setup.exe"]{assert!(apple_download_url(url));}}
+
  #[test]fn bounded_transfer_accepts_slow_complete_body_and_rejects_expired_download(){
     use std::io::{Read,Write};
     fn slow_server()->(String,std::thread::JoinHandle<()>) {

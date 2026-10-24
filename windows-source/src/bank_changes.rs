@@ -52,10 +52,37 @@ fn intent_root() -> PathBuf {
     crate::storage::root().join("bank-change-intents")
 }
 
+#[derive(Debug)]
+pub(crate) struct PendingCloudHistory;
+impl std::fmt::Display for PendingCloudHistory {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("uncertain intent needs local recovery before cloud export")}
+}
+impl std::error::Error for PendingCloudHistory {}
 pub(crate) fn cloud_operation_dirs(root:&Path,udid:&str,hash:&str)->Result<Vec<PathBuf>> {
     let states=matching_states_at(root,udid,hash,false)?;
-    anyhow::ensure!(states.iter().all(|(_,state)| matches!(state.phase.as_str(),"applied"|"restored")),"uncertain intent needs local recovery before cloud export");
+    anyhow::ensure!(states.iter().all(|(_,state)| matches!(state.phase.as_str(),"applied"|"restored")),PendingCloudHistory);
     Ok(states.into_iter().map(|(path,_)|path).collect())
+}
+
+/// Narrow recovery inventory: only interrupted writes, never an intentionally
+/// applied design. Existing identity, history and payload checks stay mandatory.
+pub(crate) fn interrupted_restorations_for_device(udid:&str)->Result<Vec<Intent>> {
+    let root=intent_root();
+    interrupted_restorations_at(&root,udid)
+}
+fn interrupted_restorations_at(root:&Path,udid:&str)->Result<Vec<Intent>> {
+    let mut hashes=std::collections::BTreeSet::new();
+    for path in state_paths(&root,false)? {
+        let state=latest_metadata(&path)?;
+        if state.udid==udid {hashes.insert(state.card_hash);}
+    }
+    let mut result=Vec::new();
+    for hash in hashes {
+        if let Some(intent)=load_latest_at(&root,udid,&hash)? {
+            if matches!(intent.phase.as_str(),"prepared"|"originals_verified") {result.push(intent);}
+        }
+    }
+    Ok(result)
 }
 
 pub(crate) fn validate_cloud_chain(root:&Path,udid:&str,hash:&str)->Result<()> {
@@ -446,6 +473,22 @@ fn sha256(bytes: &[u8]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interrupted_recovery_inventory_excludes_applied_restored_and_foreign_cards() {
+        let root=std::env::temp_dir().join(format!("bank-interrupted-{}",crate::flasher::generate_token()));
+        let hash="OM6NYhwXMZrAw0sRUjR62wmF4ZQ=";
+        let operation=save_intent_at(&root,"device-A",hash,&pairs(),true).unwrap();
+        assert!(interrupted_restorations_at(&root,"device-B").unwrap().is_empty());
+        assert_eq!(interrupted_restorations_at(&root,"device-A").unwrap().len(),1);
+        append_phase(&operation,"applied").unwrap();
+        assert!(interrupted_restorations_at(&root,"device-A").unwrap().is_empty());
+        append_phase(&operation,"originals_verified").unwrap();
+        assert_eq!(interrupted_restorations_at(&root,"device-A").unwrap().len(),1);
+        append_phase(&operation,"restored").unwrap();
+        assert!(interrupted_restorations_at(&root,"device-A").unwrap().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn two_png_intent_records_explicit_pdf_absence_and_restores_without_missing_payload_reads() {

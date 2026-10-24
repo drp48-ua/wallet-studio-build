@@ -22,6 +22,8 @@ use crate::scanner::{SavedCard, load_saved_cards, scan_syslog_for_cards};
 #[path = "ui_card_state.rs"]
 mod ui_card_state;
 use ui_card_state::{AutoCapture, CapturePhase, OriginalState, SnapshotCache, capture_device_for_selection};
+#[path = "capture_presentation.rs"]
+mod capture_presentation;
 
 // Retire the old receiver before starting a replacement worker. A scanner may
 // enqueue CardFound and Done together, or Done may arrive just after CardFound.
@@ -32,6 +34,17 @@ fn retire_task_receiver<T>(receiver: &mut Option<Receiver<T>>, finished: bool, c
     } else {
         false
     }
+}
+fn drain_task_receiver<T>(receiver: &Receiver<T>) -> (Vec<T>, bool) {
+    let mut messages = Vec::new();
+    loop { match receiver.try_recv() {
+        Ok(message) => messages.push(message),
+        Err(std::sync::mpsc::TryRecvError::Empty) => return (messages, false),
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => return (messages, true),
+    } }
+}
+fn lost_capture_receiver(disconnected: bool, running: bool, finished: bool, card_found: bool) -> bool {
+    disconnected && running && !finished && !card_found
 }
 
 /// A saved/library-only session never authorizes a device capture. Keep a
@@ -265,6 +278,11 @@ pub struct AirCardApp {
     language: Language,
     apple_status: String,
     apple_ready: bool,
+    apple_prerequisites: crate::apple_setup::Prerequisites,
+    apple_setup_rx: Option<Receiver<crate::apple_setup::SetupEvent>>,
+    apple_installer: Option<PathBuf>,
+    apple_install_rx: Option<Receiver<bool>>,
+    apple_setup_status: String,
 
     // Device management
     devices: Vec<DeviceInfo>,
@@ -283,6 +301,8 @@ pub struct AirCardApp {
     card_cache_refresh: bool,
     card_cache_generation: Arc<AtomicU64>,
     auto_capture: Option<AutoCapture>,
+    capture_started: Option<Instant>,
+    capture_phase_label: &'static str,
     offline_baseline_device: HashMap<String, String>,
     gif_frames: Vec<crate::animated_input::GifFrame>,
     gif_frame: usize,
@@ -683,6 +703,9 @@ impl AirCardApp {
         }};
 
         let language = Language::load();
+        let apple_prerequisites = if crate::storage::is_demo() {
+            crate::apple_setup::Prerequisites { runtime:false, service:crate::apple_setup::ServiceState::Unavailable }
+        } else { crate::apple_setup::probe() };
         let saved_cards = load_saved_cards();
         let offline_baseline_device = HashMap::new();
         let mut app = Self {
@@ -698,6 +721,7 @@ impl AirCardApp {
             language,
             apple_status,
             apple_ready,
+            apple_prerequisites, apple_setup_rx:None, apple_installer:None, apple_install_rx:None, apple_setup_status:String::new(),
 
             devices: Vec::new(),
             selected_udid: None,
@@ -711,6 +735,7 @@ impl AirCardApp {
             applied_thumbnails: HashMap::new(),
             card_snapshots: SnapshotCache::default(), card_cache_rx: None,
             card_cache_refresh: true, auto_capture: None,
+            capture_started: None, capture_phase_label: "Comprobando requisitos y original",
             card_cache_generation: Arc::new(AtomicU64::new(0)),
             offline_baseline_device,
             gif_frames: Vec::new(),
@@ -767,6 +792,7 @@ impl AirCardApp {
         app.refresh_design_library();
 
         if crate::storage::is_demo() { app.seed_demo(&cc.egui_ctx); }
+        if crate::storage::is_demo() && std::env::var_os("WALLET_STUDIO_DEMO_CAPTURE_STATE").is_some() { app.capture_started=Some(Instant::now()); }
         app
     }
 
@@ -1560,6 +1586,8 @@ impl AirCardApp {
         self.progress_total = 0;
         self.progress_msg.clear();
         self.status_msg = "Guardando automáticamente el original. La captura puede moverlo temporalmente y comprueba su devolución; mantén USB conectado, Wallet y Libros cerrados.".into();
+        self.capture_started = Some(Instant::now());
+        self.capture_phase_label = "Comprobando requisitos y original";
         self.add_log("Starting recoverable original-artwork export with protected readback.");
         let connection_mode = ConnectionMode::Usb;
         let (tx, rx) = channel();
@@ -1810,12 +1838,7 @@ impl AirCardApp {
     }
 
     fn handle_messages(&mut self) {
-        let mut messages = Vec::new();
-        if let Some(ref rx) = self.task_rx {
-            while let Ok(msg) = rx.try_recv() {
-                messages.push(msg);
-            }
-        }
+        let (messages, disconnected) = self.task_rx.as_ref().map(drain_task_receiver).unwrap_or_default();
 
         let mut finished = false;
         let mut card_found = false;
@@ -1831,6 +1854,9 @@ impl AirCardApp {
                     self.status_msg = msg_str;
                 }
                 BackgroundTaskMessage::Log(log_line) => {
+                    if self.auto_capture.as_ref().is_some_and(|capture|capture.phase == CapturePhase::Running) {
+                        if let Some(phase) = capture_presentation::capture_phase(&log_line) { self.capture_phase_label = phase; }
+                    }
                     self.add_log(log_line);
                 }
                 BackgroundTaskMessage::CardFound { udid, hash, name } => {
@@ -1870,6 +1896,7 @@ impl AirCardApp {
                 }
                 BackgroundTaskMessage::OriginalBackupDone { udid, hash, result } => {
                     self.is_busy = false;
+                    self.capture_started = None;
                     finished = true;
                     let verified = matches!(&result,Ok(Some(_)));
                     if let Some(request) = self.auto_capture.as_mut().filter(|request| request.hash == hash && request.device.as_deref() == Some(udid.as_str())) {
@@ -1916,10 +1943,20 @@ impl AirCardApp {
                 }
             }
         }
+        let lost_capture = lost_capture_receiver(disconnected,
+            self.auto_capture.as_ref().is_some_and(|capture|capture.phase==CapturePhase::Running),finished,card_found);
+        if lost_capture {
+            // All senders have gone and all queued messages were drained. Never
+            // release a live worker or infer that phone restoration succeeded.
+            self.is_busy=false; self.capture_started=None; finished=true;
+            if let Some(capture)=self.auto_capture.as_mut() {capture.finish(false);}
+            self.add_log("Original capture worker ended without a confirmed result; local recovery must be checked before retry.");
+        }
         if retire_task_receiver(&mut self.task_rx, finished, card_found) {
             if card_found { self.scan_stop_flag = None; }
             self.check_recovery_status(card_found);
         }
+        if lost_capture {self.status_msg="La captura terminó sin confirmar el original ni su devolución. Conserva las copias y comprueba las recuperaciones antes de reintentar.".into();}
     }
 }
 
@@ -2041,49 +2078,35 @@ fn iphone_mockup_frame<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui
     egui::Frame::new().fill(egui::Color32::from_rgb(5, 8, 14)).stroke(egui::Stroke::new(2.0, md3::OUTLINE_VARIANT)).corner_radius(22).inner_margin(12).show(ui, |ui| add_contents(ui)).inner
 }
 
-fn studio_artwork(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>, width: f32, is_saving: bool) {
+fn studio_artwork(ui: &mut egui::Ui, texture: Option<&egui::TextureHandle>, width: f32, state: Option<&capture_presentation::Presentation>) {
+    use capture_presentation::Kind;
     let size = egui::vec2(width, width * 969.0 / 1536.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter().rect(rect, 12.0, md3::SURFACE_CONTAINER_HIGH, egui::Stroke::new(1.0, md3::OUTLINE_VARIANT), egui::StrokeKind::Inside);
     if let Some(texture) = texture {
-        egui::Image::new((texture.id(), texture.size_vec2()))
-            .fit_to_exact_size(size)
-            .maintain_aspect_ratio(true)
-            .corner_radius(12)
-            .paint_at(ui, rect);
-        if is_saving {
-            ui.painter().rect_filled(rect, 12.0, egui::Color32::from_black_alpha(190));
-            ui.painter().rect_stroke(rect, 12.0, egui::Stroke::new(1.5, md3::PRIMARY), egui::StrokeKind::Inside);
-            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        egui::Image::new((texture.id(), texture.size_vec2())).fit_to_exact_size(size)
+            .maintain_aspect_ratio(true).corner_radius(12).paint_at(ui, rect);
+    }
+    if let Some(state) = state {
+        if state.kind != Kind::Verified || texture.is_none() {
+            ui.painter().rect_filled(rect, 12.0, egui::Color32::from_black_alpha(210));
+            // The overlay paints inside an already allocated image. A child UI must not
+            // move the parent cursor back to the shorter overlay contents.
+            let mut overlay = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(12.0)));
+            { let ui = &mut overlay;
                 ui.vertical_centered(|ui| {
-                    ui.add_space((size.y - 75.0).max(10.0) / 2.0);
-                    ui.add(egui::Spinner::new().size(36.0).color(md3::PRIMARY));
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("Guardando copia original…").strong().size(13.5).color(egui::Color32::WHITE));
-                    ui.label(egui::RichText::new("Mantén el USB conectado y Wallet cerrado").size(11.0).color(md3::ON_SURFACE_VARIANT));
+                    ui.add_space((size.y - 130.0).max(0.0) / 2.0);
+                    if state.kind == Kind::Running { ui.add(egui::Spinner::new().size(28.0).color(md3::PRIMARY)); }
+                    ui.label(egui::RichText::new(&state.title).strong().size(13.5).color(egui::Color32::WHITE));
+                    ui.label(egui::RichText::new(&state.detail).size(11.0).color(egui::Color32::from_gray(220)));
                 });
-            });
-            ui.ctx().request_repaint();
+            }
+            if state.kind == Kind::Running { ui.ctx().request_repaint_after(std::time::Duration::from_millis(250)); }
         }
-    } else {
-        if is_saving {
-            ui.painter().rect(rect, 12.0, md3::SURFACE_CONTAINER_HIGH, egui::Stroke::new(1.5, md3::PRIMARY), egui::StrokeKind::Inside);
-            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space((size.y - 75.0).max(10.0) / 2.0);
-                    ui.add(egui::Spinner::new().size(36.0).color(md3::PRIMARY));
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("Guardando copia original…").strong().size(13.5).color(md3::PRIMARY));
-                    ui.label(egui::RichText::new("Mantén el USB conectado y Wallet cerrado").size(11.0).color(md3::ON_SURFACE_VARIANT));
-                });
-            });
-            ui.ctx().request_repaint();
-        } else {
-            ui.painter().rect(rect, 12.0, md3::SURFACE_CONTAINER_HIGH, egui::Stroke::new(1.0_f32, md3::OUTLINE_VARIANT), egui::StrokeKind::Inside);
-            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "Original pendiente de guardar", egui::FontId::proportional(13.0), md3::ON_SURFACE_VARIANT);
-        }
+    } else if texture.is_none() {
+        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "Selecciona una tarjeta", egui::FontId::proportional(13.0), md3::ON_SURFACE_VARIANT);
     }
 }
-
 fn m3_tab(ui: &mut egui::Ui, current: &mut AppTab, target: AppTab, label: &str) {
     let selected = *current == target;
     let (bg, fg) = if selected {
@@ -2109,6 +2132,7 @@ impl eframe::App for AirCardApp {
         // eframe can restore older saved visual preferences after construction.
         if !ctx.style().visuals.dark_mode {setup_custom_theme(ctx);}
         self.brand.refresh_scale(ctx);
+        self.poll_apple_setup(ctx);
         self.tick_cloud(ctx);
         if (!crate::storage::is_demo() || self.auth_preview) && !self.account_authenticated && !self.library_authenticated {
             let logo=self.brand.hero.clone();
@@ -2121,6 +2145,7 @@ impl eframe::App for AirCardApp {
                                 if ui.button("Vista recuperación").clicked() {self.account_stage=2;self.account_recovery=true;}
                             });}
                             self.show_account_tab(ui,ctx);
+                            if !crate::storage::is_demo() && !self.apple_prerequisites.ready() { ui.add_space(16.0); self.show_apple_setup(ui); }
                             ui.add_space(18.0);
                             ui.label(egui::RichText::new("Acceso privado para clientes · hasta 3 equipos por cuenta").size(11.0).color(md3::ON_SURFACE_VARIANT));
                 });
@@ -2151,6 +2176,9 @@ impl eframe::App for AirCardApp {
                     if studio_button(ui,"Comprobar conexión",self.cloud_rx.is_none() && !self.is_busy,false) {self.start_cloud_sync(ctx.clone());}
                 });
             });
+        }
+        if !crate::storage::is_demo() && !self.apple_prerequisites.ready() {
+            egui::TopBottomPanel::top("apple-prerequisites").show(ctx, |ui| self.show_apple_setup(ui));
         }
 
         // Top bar
@@ -2474,6 +2502,7 @@ impl AirCardApp {
         let expected = capture_device_for_selection(connected,self.offline_baseline_device.get(hash).map(String::as_str))
             .or_else(|| self.selected_udid.clone());
         self.auto_capture = if crate::storage::is_demo() {None} else {Some(AutoCapture::selected(hash.to_string(),expected))};
+        self.capture_started = None;
 
         // The normal UI tick starts this request after snapshot safety checks.
         // Syslog detection starts it after retiring the scanner's message batch.
@@ -2518,6 +2547,134 @@ impl AirCardApp {
     fn original_verified(&self, hash: &str) -> bool {
         self.snapshot(hash).is_some_and(|snapshot| snapshot.original == OriginalState::Verified)
     }
+    fn poll_apple_setup(&mut self, ctx: &egui::Context) {
+        let mut events = Vec::new(); let mut disconnected = false;
+        if let Some(receiver) = &self.apple_setup_rx {
+            loop { match receiver.try_recv() {
+                Ok(event) => events.push(event),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => { disconnected = true; break; }
+            } }
+        }
+        for event in events {
+            use crate::apple_setup::SetupEvent;
+            match event {
+                SetupEvent::Downloading => self.apple_setup_status = "Descargando el instalador oficial de iTunes…".into(),
+                SetupEvent::Verifying => self.apple_setup_status = "Verificando la firma de Apple antes de ofrecer la instalación…".into(),
+                SetupEvent::Ready(path) => {
+                    self.apple_installer = Some(path); self.apple_setup_rx = None;
+                    self.apple_setup_status = "Instalador de Apple verificado. Pulsa Instalar iTunes para abrirlo.".into();
+                }
+                SetupEvent::Failed(message) => { self.apple_setup_rx = None; self.apple_setup_status = message.into(); }
+            }
+        }
+        if disconnected && self.apple_setup_rx.is_some() {
+            self.apple_setup_rx = None;
+            self.apple_setup_status = "La preparación del instalador no terminó. Reintenta o utiliza la página oficial de Apple.".into();
+        }
+        if let Some(receiver) = &self.apple_install_rx {
+            match receiver.try_recv() {
+                Ok(opened) => {
+                    self.apple_install_rx = None;
+                    self.apple_setup_status = if opened { "Instalador abierto. Completa los pasos de Apple y pulsa Volver a comprobar. Windows puede pedirte permiso." }
+                        else { "No se pudo verificar o abrir el instalador. Conserva tus copias y usa la descarga oficial de Apple." }.into();
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => { self.apple_install_rx = None; self.apple_setup_status = "La apertura del instalador no terminó. Vuelve a comprobar los componentes.".into(); }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {},
+            }
+        }
+        if self.apple_setup_rx.is_some() || self.apple_install_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(100)); }
+    }
+    fn show_apple_setup(&mut self, ui: &mut egui::Ui) {
+        use crate::apple_setup::ServiceState;
+        ui.label(egui::RichText::new("Conexión con el iPhone · componentes Apple").strong());
+        let explanation = if !self.apple_prerequisites.runtime {
+            "Esta versión necesita los componentes de Apple para Windows que reconoce Wallet Studio. Descarga el instalador oficial de iTunes antes de buscar tarjetas."
+        } else { match self.apple_prerequisites.service {
+            ServiceState::Missing => "Los archivos de Apple están presentes, pero falta Apple Mobile Device Service. Repara la instalación de iTunes.",
+            ServiceState::Stopped => "Apple Mobile Device Service está detenido. Abre iTunes o reinicia Windows y vuelve a comprobar.",
+            ServiceState::Unavailable => "No se pudo consultar el servicio de Apple. No significa que falte la instalación; vuelve a comprobar antes de reinstalar.",
+            ServiceState::Running => "Componentes y servicio de Apple disponibles. Desbloquea el iPhone, conecta USB y acepta Confiar.",
+        } };
+        ui.label(egui::RichText::new(explanation).size(11.5).color(md3::ON_SURFACE_VARIANT));
+        if !self.apple_setup_status.is_empty() { ui.label(&self.apple_setup_status); }
+        let idle = !crate::storage::is_demo() && !self.is_busy && !self.scanning_syslog && self.apple_setup_rx.is_none() && self.apple_install_rx.is_none();
+        let installation_needed = !self.apple_prerequisites.runtime || self.apple_prerequisites.service == ServiceState::Missing;
+        ui.horizontal_wrapped(|ui| {
+            if installation_needed && self.apple_installer.is_none()
+                && ui.add_enabled(idle, egui::Button::new("Descargar iTunes para Windows")).clicked() {
+                self.apple_setup_status = "Preparando la descarga oficial de Apple…".into();
+                self.apple_setup_rx = Some(crate::apple_setup::start_download());
+            }
+            if installation_needed && let Some(path) = self.apple_installer.clone() {
+                if ui.add_enabled(idle, egui::Button::new("Instalar iTunes")).clicked() {
+                    self.apple_setup_status = "Comprobando la firma antes de abrir el instalador…".into();
+                    let (sender, receiver) = channel(); self.apple_install_rx = Some(receiver);
+                    thread::spawn(move || { let _ = sender.send(crate::apple_setup::launch_verified_installer(&path).is_ok()); });
+                }
+            }
+            if ui.add_enabled(idle, egui::Button::new("Volver a comprobar componentes")).clicked() {
+                self.apple_prerequisites = crate::apple_setup::probe(); self.apple_ready = self.apple_prerequisites.runtime;
+                self.apple_setup_status = if self.apple_prerequisites.ready() { "Componentes listos. Conecta el iPhone por USB y actualiza los dispositivos." } else { "La conexión todavía requiere atención. Revisa el estado indicado arriba." }.into();
+            }
+            ui.add_enabled_ui(!crate::storage::is_demo(), |ui| {ui.hyperlink_to("Página oficial de Apple", "https://www.apple.com/es/itunes/");});
+        });
+        if self.apple_setup_rx.is_some() || self.apple_install_rx.is_some() { ui.spinner(); }
+        if installation_needed { ui.label(egui::RichText::new("Solo se descarga al pulsar el botón. La instalación requiere tu confirmación; Wallet Studio no instala en silencio ni inicia permisos de administrador.").size(10.5).color(md3::ON_SURFACE_VARIANT)); }
+    }
+    fn original_presentation(&self, hash: &str) -> capture_presentation::Presentation {
+        if crate::storage::is_demo() && let Ok(name) = std::env::var("WALLET_STUDIO_DEMO_CAPTURE_STATE") {
+            if let Some(view) = capture_presentation::preview(&name,self.capture_started.map_or(0,|started|started.elapsed().as_secs())) { return view; }
+        }
+        let snapshot = self.snapshot(hash);
+        let phase = self.auto_capture.as_ref().filter(|capture|capture.hash == hash).map(|capture|capture.phase);
+        capture_presentation::present(capture_presentation::Inputs {
+            phase, worker_busy:self.is_busy, elapsed:self.capture_started.map(|start|start.elapsed().as_secs()),
+            verified:self.original_verified(hash), storage_ready:self.storage_ready,
+            account_ready:self.account_authenticated && !self.session_pending,
+            cloud_ready:!self.cloud_configured || self.cloud_synced, cloud_running:self.cloud_rx.is_some(),
+            apple_ready:self.apple_ready && self.apple_prerequisites.ready(), usb_ready:self.selected_usb_ready(),
+            recovery_pending:self.pending_recovery_blocks_selected(), recovery_unknown:self.recovery_status_error.is_some(),
+            original_blocked:snapshot.is_some_and(|state|state.original == OriginalState::Blocked || state.phase.is_err()),
+            foreign_original:snapshot.is_some_and(|state|state.reference_device.is_some()),
+            cache_pending:self.card_cache_refresh || self.card_cache_rx.is_some() || snapshot.is_none(),
+        }, self.capture_phase_label)
+    }
+    fn show_original_actions(&mut self, ui: &mut egui::Ui, state: &capture_presentation::Presentation) {
+        use capture_presentation::Action;
+        if state.action == Action::Account {
+            ui.label(egui::RichText::new(&self.cloud_status).size(11.0).color(md3::ON_SURFACE_VARIANT));
+            if ui.button("Abrir Cuenta y sincronización").clicked() { self.current_tab = AppTab::Account; }
+        }
+        if matches!(state.action, Action::Recovery | Action::Retry) {
+            let checks_ready = !self.card_cache_refresh && self.card_cache_rx.is_none() && self.recovery_status_error.is_none();
+            let pending = self.pending_recoveries.iter().find(|entry|
+                self.selected_udid.as_ref().is_some_and(|udid|udid.eq_ignore_ascii_case(&entry.udid))
+                    && entry.original_path.is_some()).cloned();
+            if let Some(pending) = pending {
+                if ui.add_enabled(checks_ready && !self.is_busy && !self.scanning_syslog && self.selected_usb_ready(),
+                    egui::Button::new("Recuperar original pendiente")).clicked() {
+                    self.recover_pending_original(pending.operation_dir);
+                }
+            }
+            if ui.add_enabled(!self.is_busy && !self.scanning_syslog, egui::Button::new("Comprobar recuperaciones")).clicked() {
+                self.check_recovery_status(false);
+                self.invalidate_card_cache();
+            }
+            if state.action == Action::Retry && ui.add_enabled(checks_ready && !self.is_busy && !self.scanning_syslog
+                && self.capture_authorized() && self.storage_ready && self.selected_usb_ready()
+                && !self.pending_recovery_blocks_selected() && self.recovery_status_error.is_none(),
+                egui::Button::new("Reintentar guardar original")).clicked() {
+                if let Some(request) = self.auto_capture.as_mut() { request.retry(); }
+                self.invalidate_card_cache();
+            }
+        }
+        if matches!(state.action, Action::Logs | Action::Recovery | Action::Retry) && ui.button("Abrir Registro").clicked() {
+            self.show_logs_window = true;
+        }
+        if state.action == Action::Usb { ui.label("Desbloquea el iPhone, acepta Confiar y utiliza un cable USB de datos."); }
+        if state.action == Action::Apple { self.show_apple_setup(ui); }
+    }
     fn original_thumbnail(&mut self, _ctx: &egui::Context, hash: &str) -> Option<egui::TextureHandle> {
         self.original_thumbnails.get(hash).cloned()
     }
@@ -2546,7 +2703,7 @@ impl AirCardApp {
         self.snapshot(hash).map(|snapshot| snapshot.phase.clone()).unwrap_or(Err(()))
     }
     fn selected_usb_ready(&self) -> bool {
-        self.apple_ready && self.connection_mode != ConnectionMode::Wifi
+        self.apple_ready && self.apple_prerequisites.ready() && self.connection_mode != ConnectionMode::Wifi
             && self.selected_udid.as_ref().is_some_and(|udid| self.devices.iter().any(|device|
                 device.udid == *udid && device.has_transport(DeviceTransport::Usb)
                     && crate::device::wallet_version_warning(&device.ios_version).is_none()))
@@ -2694,12 +2851,14 @@ impl AirCardApp {
                 ui.add_space(12.0);
                 if let Some(card)=selected {
                     let current=self.applied_thumbnail(ctx,&card.hash);let original=self.original_thumbnail(ctx,&card.hash);
-                    let is_saving_original = self.is_busy && self.auto_capture.as_ref().is_some_and(|c| c.phase == CapturePhase::Running && c.hash == card.hash);
-                    studio_artwork(ui,current.as_ref().or(original.as_ref()),ui.available_width().min(420.0),is_saving_original);
+                    let state = self.original_presentation(&card.hash);
+                    studio_artwork(ui,current.as_ref().or(original.as_ref()),ui.available_width().min(420.0),Some(&state));
+                    self.show_original_actions(ui, &state);
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         if let Some(texture)=original.as_ref() {ui.add(egui::Image::new((texture.id(),texture.size_vec2())).fit_to_exact_size(egui::vec2(56.0,36.0)).maintain_aspect_ratio(true).corner_radius(4));}
-                        ui.vertical(|ui| {ui.label(egui::RichText::new(if crate::storage::is_demo() {"Original sintético"} else if current.is_some() {"Último diseño aplicado"} else {"Original guardado"}).size(11.0).strong());ui.label(egui::RichText::new(if self.snapshot(&card.hash).is_some_and(|snapshot|snapshot.reference_device.is_some()) {"Referencia local de otro iPhone · no autoriza transferir"} else {"Copia local · no es una lectura actual del iPhone"}).size(10.0).color(md3::ON_SURFACE_VARIANT));});
+                        let foreign = self.snapshot(&card.hash).is_some_and(|snapshot|snapshot.reference_device.is_some());
+                        ui.vertical(|ui| {ui.label(egui::RichText::new(capture_presentation::caption(state.kind==capture_presentation::Kind::Verified,current.is_some(),foreign,crate::storage::is_demo())).size(11.0).strong());ui.label(egui::RichText::new(if foreign {"Referencia local de otro iPhone · no autoriza transferir"} else {"Copia local · no es una lectura actual del iPhone"}).size(10.0).color(md3::ON_SURFACE_VARIANT));});
                     });
                     ui.add_space(10.0);ui.separator();ui.add_space(8.0);
                     ui.label(egui::RichText::new("Nombre de la tarjeta").size(11.0).color(md3::ON_SURFACE_VARIANT));
@@ -2708,8 +2867,7 @@ impl AirCardApp {
                     if let Some(error)=&self.rename_error {ui.label(egui::RichText::new(error).color(md3::ERROR));}
                     let verified=self.original_verified(&card.hash);ui.label(egui::RichText::new(if verified {"Original verificado en este equipo"} else {"Original pendiente de verificación"}).size(11.0).color(if verified {md3::SUCCESS} else {md3::ON_SURFACE_VARIANT}));
                 } else {
-                    let is_saving_any = self.is_busy && self.auto_capture.as_ref().is_some_and(|c| c.phase == CapturePhase::Running);
-                    studio_artwork(ui,None,ui.available_width().min(420.0),is_saving_any);
+                    studio_artwork(ui,None,ui.available_width().min(420.0),None);
                     ui.add_space(12.0);
                     ui.label("Tu tarjeta aparecerá aquí al seleccionarla. Puedes preparar una imagen mientras conectas el iPhone.");
                 }
@@ -2828,19 +2986,12 @@ impl AirCardApp {
                     ui.label(egui::RichText::new("Aplicar está bloqueado: la caché de Wallet aún no tiene retirada recuperable y comprobación exacta. No se escribirá ningún diseño.").size(11.0).color(md3::ERROR));
                 }
                 if !original_verified {
-                    let message = match self.auto_capture.as_ref().map(|capture|capture.phase) {
-                        Some(CapturePhase::Running) => "Guardando automáticamente el original y verificando su devolución…",
-                        Some(CapturePhase::Failed) => "La captura no terminó. Conserva las copias y resuelve cualquier recuperación antes de reintentar.",
-                        Some(CapturePhase::Blocked) => "Hay copia o historial incompleto. La captura automática está bloqueada para conservar el original y la evidencia.",
-                        Some(CapturePhase::ForeignOriginal) => "Hay una copia original para otro iPhone, pero falta una verificable para el seleccionado. No se capturará su diseño actual como original; conserva las copias y comprueba su procedencia.",
-                        Some(CapturePhase::Waiting) if self.auto_capture.as_ref().is_some_and(|capture|capture.device.is_none()) => "Conecta el iPhone correcto por USB y vuelve a seleccionar esta tarjeta para guardar el original.",
-                        Some(CapturePhase::Waiting) => "La copia se guardará automáticamente cuando el iPhone seleccionado esté disponible por USB y no haya recuperaciones pendientes.",
-                        _ => "Selecciona una tarjeta: su original se guardará automáticamente antes de aplicar diseños.",
-                    };
+                    let view = self.original_presentation(&self.card_hash);
+                    let message = format!("{} · {}", view.title, view.detail);
                     ui.label(egui::RichText::new(message).size(11.0).color(md3::ON_SURFACE_VARIANT));
                     ui.label(egui::RichText::new("La captura puede mover originales temporalmente y comprueba su devolución. Cierra Wallet y Libros; mantén el iPhone desbloqueado y el USB conectado.").size(10.5).color(md3::ON_SURFACE_VARIANT));
                     if self.auto_capture.as_ref().is_some_and(|capture|capture.phase == CapturePhase::Failed)
-                        && ui.add_enabled(!self.is_busy && self.selected_usb_ready() && !self.pending_recovery_blocks_selected()
+                        && ui.add_enabled(!self.card_cache_refresh && self.card_cache_rx.is_none() && !self.is_busy && self.selected_usb_ready() && !self.pending_recovery_blocks_selected()
                             && self.recovery_status_error.is_none(),egui::Button::new("Reintentar guardar original")).clicked() {
                         if let Some(capture) = &mut self.auto_capture { capture.retry(); }
                         self.invalidate_card_cache();
@@ -3194,6 +3345,57 @@ impl AirCardApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disconnected_capture_drains_terminal_messages_before_deciding_failure() {
+        for terminal in [false,true] {
+            let (sender,receiver)=channel();sender.send("phase").unwrap();
+            if terminal {sender.send("confirmed").unwrap();}drop(sender);
+            let (messages,disconnected)=drain_task_receiver(&receiver);
+            assert_eq!(messages.first(),Some(&"phase"));
+            let confirmed=messages.contains(&"confirmed");
+            assert_eq!(lost_capture_receiver(disconnected,true,confirmed,false),!terminal);
+        }
+        let (_live_sender,receiver)=channel::<()>();
+        let (_,disconnected)=drain_task_receiver(&receiver);
+        assert!(!lost_capture_receiver(disconnected,true,false,false),"a live sender must keep the capture busy");
+        assert!(!lost_capture_receiver(true,true,false,true),"scanner handoff takes precedence");
+    }
+    #[test]
+    fn original_image_area_renders_wait_failure_and_elapsed_attention_without_claiming_success() {
+        for name in ["waiting_cloud","waiting_usb","apple_missing","running","attention","failed","recovery"] {
+            let view = capture_presentation::preview(name, 24).unwrap();
+            let ctx = egui::Context::default();
+            let output = ctx.run(egui::RawInput { screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(360.0,400.0))), ..Default::default() }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| studio_artwork(ui,None,280.0,Some(&view)));
+            });
+            let text = output.shapes.iter().filter_map(|shape|match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()), _ => None,
+            }).collect::<Vec<_>>().join(" ");
+            assert!(text.contains(&view.title), "missing state label for {name}");
+            assert!(!text.contains("Original guardado"), "unverified state falsely claims success: {name}");
+            if name=="running" { assert!(text.contains("0 min 24 s")); }
+            if name=="attention" { assert!(text.contains("sigue pendiente")); }
+        }
+    }
+    #[test]
+    fn original_artwork_overlay_keeps_following_caption_below_full_image() {
+        for name in ["waiting_cloud", "running", "attention", "failed", "recovery", "verified"] {
+            let view = capture_presentation::preview(name, 24).unwrap();
+            let ctx = egui::Context::default();
+            let _ = ctx.run(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(360.0, 420.0))),
+                ..Default::default()
+            }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let image_bottom = ui.cursor().top() + 320.0 * 969.0 / 1536.0;
+                    studio_artwork(ui, None, 320.0, Some(&view));
+                    let caption = ui.label("Original sintético");
+                    assert!(caption.rect.top() >= image_bottom,
+                        "{name}: caption starts at {} inside image ending at {image_bottom}", caption.rect.top());
+                });
+            });
+        }
+    }
     #[test]
     fn capture_authorization_rejects_library_only_pending_unreconciled_and_active_sync_states() {
         for authenticated in [false,true] {for pending in [false,true] {

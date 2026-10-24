@@ -508,6 +508,9 @@ impl std::fmt::Display for SyncFailure {
 impl std::error::Error for SyncFailure {}
 pub fn sync_failure_message(error:&anyhow::Error)->String {
     if session_rejected(error) {return "El servidor rechazó la sesión. Inicia sesión de nuevo con tu correo y contraseña; tus copias se conservan.".into();}
+    if error.downcast_ref::<crate::bank_changes::PendingCloudHistory>().is_some() {
+        return "Un cambio anterior quedó sin terminar. Conecta el iPhone con el que hiciste ese cambio y usa Restaurar original en Tarjetas. Después pulsa Sincronizar ahora. Tus copias se conservan; no es una descarga en curso.".into();
+    }
     let mut message=error.downcast_ref::<SyncFailure>().map(ToString::to_string)
         .unwrap_or_else(||"Sincronización incompleta. Tus copias se conservan; comprueba conexión y almacenamiento.".into());
     if let Some(status)=error.downcast_ref::<crate::auto_update::HttpStatus>() {message.push_str(&format!(" (HTTP {})",status.0));}
@@ -576,6 +579,12 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test]fn unfinished_history_explains_recovery_instead_of_reporting_a_download_failure(){
+        let error=anyhow::Error::new(crate::bank_changes::PendingCloudHistory).context("synthetic private identity").context(SyncFailure::Import);
+        let message=sync_failure_message(&error);
+        assert!(message.contains("Restaurar original"));assert!(message.contains("Sincronizar ahora"));
+        assert!(!message.contains("synthetic private"));assert!(retained_session_after_failure(&error));
+    }
     #[test]
     #[ignore = "requires explicitly authorized read-only retained-import diagnostic"]
     fn diagnose_retained_imports_read_only() {
