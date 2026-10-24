@@ -2,6 +2,10 @@
 
 ## Reanudación actual: versión 0.6.20 en validación
 
+Compilación final de producción correcta (10 min 22 s). Ejecutable SHA-256 `f09b3542d7f442ebabef982b1504c7a27c3921f45c841b4a9b3ba8c77fd6227b`; ZIP `1f06bb2406cb5a272475f6546e9dd095a4e5278b3418d5662a31b300cec8ea0b`, disponible también en `C:/Users/danir/Documents/Codex/Wallet-Studio-0.6.20-Windows.zip`. Fuente y pruebas subidas en `80d56ff` a la rama separada.
+
+La revisión nativa `--wallet-studio-review-cloud-owned-original` terminó con categoría pendiente antes de emitir etapas. Comprobación de solo lectura inmediatamente posterior: servicio Apple disponible, cero iPhones USB. Por tanto no se preparó el plan ni se movieron archivos del teléfono. Se pidió reconectar el mismo iPhone; la autorización de devolución ya consta. Repetir primero revisión con USB disponible y solo después, si la prueba íntegra termina correctamente, ejecutar la devolución autorizada y comprobar conciliación/sincronización por separado. No anunciar recuperación física ni validación visual de la nueva UI como realizadas.
+
 Suite final de la fuente congelada, incluida la corrección de concesión retenida: 218 correctas, cero fallidas, siete ignoradas y cuatro exclusiones exigidas. Registro local ignorado `server/test-runtime/recovery-lease-final-regressions-20261025.log`. La compilación de producción está en curso. La revisión nativa de propiedad y la devolución física todavía no han empezado. No confundir los 218 tests sintéticos con una prueba física universal.
 
 La ventana de cinco horas se renovó de forma ordinaria; no se consumió el crédito de reinicio. Las dos regresiones de cuarentena anteriores terminaron correctamente. El primer bloque nuevo superó 210 pruebas nativas, ninguna fallida, siete ignoradas y cuatro exclusiones de hardware. Ese resultado precede a las últimas ediciones de interfaz, lista de originales y recuperación; no equivale a validar el código final.
