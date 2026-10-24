@@ -1012,6 +1012,18 @@ where L: FnMut(&str) {
         .context("Refusing removal without a durable bank write intent")?;
     anyhow::ensure!(intent.phase != "restored" && intent.assets.get(leaf).is_some_and(|bytes| bytes == expected_own_bytes),
         "Refusing removal: target bytes are not bound to the active Wallet Studio write intent");
+    remove_authorized_override(udid,mode,card_hash,leaf,&baseline,|bytes|Ok(bytes==expected_own_bytes),&mut log)
+}
+pub(crate) fn remove_cloud_owned_override<L>(udid:&str,mode:ConnectionMode,card_hash:&str,
+    leaf:&str,plan:&crate::bank_recovery::RecoveryPlan,mut log:L)->Result<()> where L:FnMut(&str) {
+    plan.revalidate()?;let baseline=plan.baseline();
+    anyhow::ensure!(baseline.udid==udid && baseline.card_hash==card_hash
+        && crate::wallet_backup::CARD_ARTWORK_ASSETS.contains(&leaf)
+        && matches!(baseline.local_assets.get(leaf),Some(crate::bank_backup::LocalAssetState::Absent)),"cloud recovery target was not originally absent");
+    remove_authorized_override(udid,mode,card_hash,leaf,baseline,|bytes|plan.owns(udid,card_hash,leaf,bytes),&mut log)
+}
+fn remove_authorized_override<L>(udid:&str,mode:ConnectionMode,card_hash:&str,leaf:&str,
+    baseline:&crate::bank_backup::Baseline,owns:impl Fn(&[u8])->Result<bool>,mut log:L)->Result<()> where L:FnMut(&str) {
     crate::device::ensure_wallet_version_supported(udid)?;
     anyhow::ensure!(!pending_recovery_blocks_device(Ok(&pending_recovery_operations()?), Some(udid)),
         "A prior export needs recovery before removing a bank override");
@@ -1049,7 +1061,7 @@ where L: FnMut(&str) {
             bail!("Removal/export outcome is uncertain; saved evidence remains at {}: {error:#}", operation_dir.display());
         }
     };
-    if bytes != expected_own_bytes {
+    if !owns(&bytes).unwrap_or(false) {
         journal.phase = "manual-return-intent".into();
         save_journal(&operation_dir, &mut journal)?;
         resume_pending_return(&operation_dir, udid, mode, &mut log)

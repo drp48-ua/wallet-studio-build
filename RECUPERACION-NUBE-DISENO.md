@@ -1,6 +1,6 @@
 # Recuperación de un diseño propio verificado en la nube
 
-Estado: diseño pendiente de implementación y aceptación. No habilita ninguna excepción de retirada. La recuperación física sigue pendiente; no repetir automáticamente el intento que devolvió bytes distintos al diario local.
+Estado: implementado en la fuente 0.6.20 y validado con 218 pruebas nativas, ninguna fallida. La prueba física y la sincronización del perfil real siguen pendientes. La retirada genérica conserva su control estricto; el flujo explícito nuevo exige prueba autenticada y diario durable.
 
 ## Hallazgo y límite de esta revisión
 
@@ -53,4 +53,4 @@ Después: suite nativa GNU requerida completa, regresiones de diario/retorno/con
 
 ## Punto de continuación
 
-No se ha modificado código de recuperación en esta revisión. Implementar primero selección remota tipada con los validadores existentes y pruebas negativas, acordar el registro durable/conciliación, y solo entonces conectar la capacidad con la retirada protegida. No habilitar una excepción parcial para consumir menos cuota. La sesión responsable conserva la compilación y publicación del cambio de interfaz independiente.
+Implementación en `bank_recovery.rs`, selección remota tipada en `cloud_sync.rs`, operaciones exactas en `bank_changes.rs` y vía explícita en `wallet_export.rs`/`flasher.rs`. El token de comprobación física retiene la concesión exclusiva de almacenamiento hasta cerrar el diario. La publicación de una operación nueva usa rename de un directorio privado completo y validado. El CLI ofrece revisión y devolución separadas; «Restaurar original» usa el mismo flujo y exige USB literal. Completar la prueba física autorizada y comprobar por separado conciliación y sincronización antes de anunciar resuelto el perfil real.

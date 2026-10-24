@@ -22,9 +22,23 @@ fn candidate()->Result<(String,crate::bank_changes::Intent)> {
 pub(crate) fn run_if_requested()->bool {
     let args=std::env::args().skip(1).collect::<Vec<_>>();
     let Some(command)=args.first().map(String::as_str) else{return false;};
-    if !matches!(command,"--wallet-studio-review-interrupted-write"|"--wallet-studio-restore-interrupted-write"){return false;}
+    if !matches!(command,"--wallet-studio-review-interrupted-write"|"--wallet-studio-restore-interrupted-write"|"--wallet-studio-review-cloud-owned-original"|"--wallet-studio-restore-cloud-owned-original"){return false;}
     let result=(||->Result<()> {
         anyhow::ensure!(args.len()==1,"No se aceptan argumentos adicionales");
+        if matches!(command,"--wallet-studio-review-cloud-owned-original"|"--wallet-studio-restore-cloud-owned-original") {
+            let device=exactly_one(crate::device::list_connected_devices()?.into_iter().filter(|device|device.has_transport(DeviceTransport::Usb)).collect())?;
+            crate::device::ensure_wallet_version_supported(&device.udid)?;
+            anyhow::ensure!(!crate::wallet_export::pending_recovery_blocks_device(Ok(&crate::wallet_export::pending_recovery_operations()?),Some(&device.udid)),"a prior export needs exact return first");
+            let session=crate::cloud_sync::load_session()?.context("an authenticated linked account is required")?;
+            let plan=crate::bank_recovery::prepare_for_device(&session,&device.udid,|stage|println!("{}",serde_json::json!({"recovery_stage":stage})))?;
+            println!("{}",serde_json::json!({"recovery":"cloud_ownership_and_durable_ledger_verified","exact_usb":true,"phone_restored":false}));
+            if command=="--wallet-studio-review-cloud-owned-original" {return Ok(());}
+            let physical=crate::flasher::restore_cloud_owned_original(&device.udid,ConnectionMode::Usb,&plan,
+                |step,total,_|println!("{}",serde_json::json!({"recovery_step":step,"total":total})),|_|{})?;
+            plan.finish(physical)?;
+            let _=crate::cloud_sync::reconcile_card_quarantine(&device.udid,&plan.baseline().card_hash,&mut |_|{});
+            println!("{}",serde_json::json!({"recovery":"original_verified_and_restored"}));return Ok(());
+        }
         let (udid,intent)=candidate()?;
         println!("{}",serde_json::json!({"recovery":"verified_local_original","exact_usb":true,"interrupted_write":true}));
         if command=="--wallet-studio-review-interrupted-write" {return Ok(());}

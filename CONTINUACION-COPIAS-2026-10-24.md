@@ -1,5 +1,15 @@
 # Copias y recuperación entre dispositivos — continuación
 
+## Reanudación actual: versión 0.6.20 en validación
+
+Suite final de la fuente congelada, incluida la corrección de concesión retenida: 218 correctas, cero fallidas, siete ignoradas y cuatro exclusiones exigidas. Registro local ignorado `server/test-runtime/recovery-lease-final-regressions-20261025.log`. La compilación de producción está en curso. La revisión nativa de propiedad y la devolución física todavía no han empezado. No confundir los 218 tests sintéticos con una prueba física universal.
+
+La ventana de cinco horas se renovó de forma ordinaria; no se consumió el crédito de reinicio. Las dos regresiones de cuarentena anteriores terminaron correctamente. El primer bloque nuevo superó 210 pruebas nativas, ninguna fallida, siete ignoradas y cuatro exclusiones de hardware. Ese resultado precede a las últimas ediciones de interfaz, lista de originales y recuperación; no equivale a validar el código final.
+
+Se implementaron aislamiento de conflictos remotos identificados, reutilización íntegra de ZIP retenidos, lista de originales importados, comprobación física completa al reanudar, y cierre veraz de trabajadores perdidos. El flujo nuevo de recuperación usa inventario autenticado completo con límites, unión remota aislada, historial estricto y diario durable. El backfill de operaciones nuevas se publica mediante rename de un directorio privado completo; no se exponen directorios con solo assets. La finalización exige una capacidad que solo el flasher produce después de originales, caché y originales comprobados.
+
+El usuario volvió a confirmar el iPhone habitual preparado y su devolución sigue autorizada. Diagnóstico USB de solo lectura: uno conectado y coincide con la operación pendiente. No se inició todavía una nueva recuperación física con 0.6.20. Faltan la suite final de esta fuente, compilación de distribución, revisión visual, prueba física autorizada y verificación de sincronización. El paquete 0.6.19 ya entregado no contiene este flujo nuevo.
+
 El usuario solicita resolver el flujo completo en los dispositivos compatibles. No afirmar compatibilidad universal ni recuperación terminada sin pruebas. La versión empaquetada 0.6.19 conserva las limitaciones indicadas en sus novedades; el trabajo posterior de este documento no está incluido en ese ejecutable.
 
 ## Diagnóstico nuevo

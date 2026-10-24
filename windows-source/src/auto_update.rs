@@ -87,17 +87,25 @@ fn request_with_cap(method:&str,value:&str,headers:&[(String,String)],body:&[u8]
     Ok(Response{status,body:out,location})
 }
 pub fn http_request(method:&str,url:&str,headers:&[(String,String)],body:&[u8],max_bytes:usize)->Result<Vec<u8>>{
-    let r=request(method,url,headers,body,max_bytes,REQUEST_BUDGET)?;
+    http_request_with_budget(method,url,headers,body,max_bytes,REQUEST_BUDGET)
+}
+pub(crate) fn http_request_with_budget(method:&str,url:&str,headers:&[(String,String)],body:&[u8],max_bytes:usize,remaining:Duration)->Result<Vec<u8>>{
+    anyhow::ensure!(!remaining.is_zero(),RequestTimeout);
+    let r=request(method,url,headers,body,max_bytes,remaining.min(REQUEST_BUDGET))?;
     anyhow::ensure!(matches!(r.status,200|201|204),HttpStatus(r.status));
     Ok(r.body)
 }
 /// Large immutable originals need a bounded transfer budget independent of
 /// account/catalog requests. Redirects, response caps and caller checks remain.
 pub(crate) fn http_download_bundle(url:&str,headers:&[(String,String)],max_bytes:usize)->Result<Vec<u8>> {
+    http_download_bundle_with_budget(url,headers,max_bytes,BUNDLE_DOWNLOAD_BUDGET)
+}
+pub(crate) fn http_download_bundle_with_budget(url:&str,headers:&[(String,String)],max_bytes:usize,remaining:Duration)->Result<Vec<u8>> {
+    anyhow::ensure!(!remaining.is_zero(),RequestTimeout);
     let parsed=parse_url(url)?;
     let id=parsed.path.rsplit('/').next().unwrap_or_default();
     anyhow::ensure!(parsed.path.contains("/v1/bundles/") && id.len()==64 && id.bytes().all(|b|b.is_ascii_hexdigit()) && max_bytes<=100*1024*1024,"Descarga de copia fuera de límites");
-    let response=request("GET",url,headers,&[],max_bytes,BUNDLE_DOWNLOAD_BUDGET)?;
+    let response=request("GET",url,headers,&[],max_bytes,remaining.min(BUNDLE_DOWNLOAD_BUDGET))?;
     anyhow::ensure!(response.status==200,HttpStatus(response.status));
     Ok(response.body)
 }
@@ -233,6 +241,12 @@ pub fn poll_status(rx:&Receiver<String>,status:&mut String)->bool {
     }
 }
 #[cfg(test)]mod tests{use super::*;
+ #[test]fn exhausted_recovery_budget_fails_before_any_network_request(){
+    let ordinary=http_request_with_budget("GET","invalid URL",&[],&[],64,Duration::ZERO).unwrap_err();
+    let bundle=http_download_bundle_with_budget("invalid URL",&[],64,Duration::ZERO).unwrap_err();
+    assert!(ordinary.downcast_ref::<RequestTimeout>().is_some());
+    assert!(bundle.downcast_ref::<RequestTimeout>().is_some());
+ }
  #[test]fn apple_installer_redirects_reject_foreign_and_insecure_origins(){for url in ["http://www.apple.com/a","https://apple.com.evil.test/a","https://evil.test/apple.com/a","https://www.apple.com:444/a","https://u:p@www.apple.com/a"]{assert!(!apple_download_url(url));}for url in ["https://www.apple.com/itunes/download/win64/","https://secure-appldnld.apple.com/iTunes64Setup.exe"]{assert!(apple_download_url(url));}}
 
  #[test]fn bounded_transfer_accepts_slow_complete_body_and_rejects_expired_download(){

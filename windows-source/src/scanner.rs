@@ -141,6 +141,29 @@ pub fn load_saved_cards() -> Vec<SavedCard> {
     Vec::new()
 }
 
+/// Include independently verified originals imported on another PC. This only
+/// makes a card selectable: all device/identity/recovery checks still run when
+/// loading its snapshot or performing a transfer. Never rewrite discovery data
+/// merely because a cloud original exists.
+pub fn load_visible_cards() -> Vec<SavedCard> {
+    visible_cards_at(load_saved_cards(), &crate::storage::root().join("bank-backups"))
+}
+
+fn visible_cards_at(mut cards: Vec<SavedCard>, originals: &std::path::Path) -> Vec<SavedCard> {
+    if crate::storage::safe_chain(originals).is_err() { return cards; }
+    let Ok(entries) = fs::read_dir(originals) else { return cards; };
+    let mut paths = entries.filter_map(|entry| entry.ok()).map(|entry| entry.path()).collect::<Vec<_>>();
+    paths.sort();
+    let mut seen = cards.iter().map(|card| card.hash.clone()).collect::<HashSet<_>>();
+    for path in paths {
+        let Ok(baseline) = crate::bank_backup::validate_bundle_directory(&path) else { continue; };
+        if is_valid_card_hash(&baseline.card_hash) && seen.insert(baseline.card_hash.clone()) {
+            cards.push(SavedCard { hash: baseline.card_hash, name: format!("Original recuperado {}", cards.len() + 1) });
+        }
+    }
+    cards
+}
+
 pub fn save_saved_cards(cards: &[SavedCard]) {
     let path = get_cards_storage_path();
     let _ = write_saved_cards(&path, cards);
@@ -210,7 +233,7 @@ pub fn validate_card_name(name: &str) -> anyhow::Result<String> {
 
 pub fn rename_saved_card(hash: &str, name: &str) -> anyhow::Result<()> {
     anyhow::ensure!(is_valid_card_hash(hash), "invalid card identifier");
-    let cards = renamed_cards(&load_saved_cards(), hash, name)?;
+    let cards = renamed_cards(&load_visible_cards(), hash, name)?;
     write_saved_cards(&get_cards_storage_path(), &cards)
 }
 
@@ -429,6 +452,38 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn imported_originals_are_visible_without_discovery_and_do_not_replace_names_or_invalid_evidence() {
+        use super::*;
+        let root = std::env::temp_dir().join(format!("visible-originals-{}", crate::flasher::generate_token()));
+        let mut png = Vec::new();
+        image::DynamicImage::new_rgb8(4,4).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let sha1 = crate::bank_backup::sha1(&png).unwrap();
+        let leaf = "cardBackgroundCombined@2x.png";
+        let mut baseline = crate::bank_backup::Baseline {
+            udid: "synthetic-imported-device".into(), card_hash: "OM6NYhwXMZrAw0sRUjR62wmF4ZQ=".into(),
+            manifest_bytes: serde_json::to_vec(&serde_json::json!({leaf: {"url":"https://a.apple.com/fixture", "size":png.len(), "sha1":sha1}})).unwrap(),
+            artwork_name: leaf.into(), remote_size: png.len(), remote_sha1: sha1, remote_artwork_bytes: png.clone(),
+            local_assets: crate::wallet_backup::CARD_ARTWORK_ASSETS.iter().map(|asset| (asset.to_string(),
+                if *asset==leaf { crate::bank_backup::LocalAssetState::Present {bytes:png.clone()} }
+                else { crate::bank_backup::LocalAssetState::Absent })).collect(),
+        };
+        let first = crate::bank_backup::save_fixture_at(&root, &baseline).unwrap();
+        baseline.udid = "synthetic-second-device".into();
+        let second = crate::bank_backup::save_fixture_at(&root, &baseline).unwrap();
+        let recovered = visible_cards_at(Vec::new(), &root);
+        assert_eq!(recovered.len(), 1, "same card from two devices must not duplicate the gallery");
+        assert_eq!(recovered[0].hash, baseline.card_hash);
+        let saved = vec![SavedCard {hash:baseline.card_hash.clone(), name:"Mi nombre guardado".into()}];
+        assert_eq!(visible_cards_at(saved.clone(), &root), saved);
+        let corrupt = b"preserve corrupted evidence";
+        fs::write(first.join("remote-artwork.bin"), corrupt).unwrap();
+        assert_eq!(visible_cards_at(Vec::new(), &root).len(), 1, "independent verified copy remains visible");
+        fs::write(second.join("remote-artwork.bin"), corrupt).unwrap();
+        assert!(visible_cards_at(Vec::new(), &root).is_empty(), "invalid originals are not displayed as recovered");
+        assert_eq!(fs::read(first.join("remote-artwork.bin")).unwrap(), corrupt);
+        fs::remove_dir_all(root).unwrap();
+    }
     use super::*;
 
     fn synthetic_hash(byte_count: usize, url_safe: bool) -> String {

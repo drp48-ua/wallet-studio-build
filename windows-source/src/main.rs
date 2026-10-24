@@ -20,6 +20,7 @@ mod brand;
 mod apple;
 mod apple_setup;
 mod recovery_cli;
+mod bank_recovery;
 mod device;
 mod flasher;
 mod image_skin;

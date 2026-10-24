@@ -18,7 +18,7 @@ use crate::flasher::{flash_passcode_theme, replace_wallet_skin, restore_wallet_o
 use crate::image_skin::{CardCrop, PreparedSkin};
 use crate::i18n::Language;
 use crate::passthm::{PasscodeTheme, parse_passthm_file};
-use crate::scanner::{SavedCard, load_saved_cards, scan_syslog_for_cards};
+use crate::scanner::{SavedCard, load_visible_cards as load_saved_cards, scan_syslog_for_cards};
 #[path = "ui_card_state.rs"]
 mod ui_card_state;
 use ui_card_state::{AutoCapture, CapturePhase, OriginalState, SnapshotCache, capture_device_for_selection};
@@ -43,8 +43,8 @@ fn drain_task_receiver<T>(receiver: &Receiver<T>) -> (Vec<T>, bool) {
         Err(std::sync::mpsc::TryRecvError::Disconnected) => return (messages, true),
     } }
 }
-fn lost_capture_receiver(disconnected: bool, running: bool, finished: bool, card_found: bool) -> bool {
-    disconnected && running && !finished && !card_found
+fn lost_task_receiver(disconnected: bool, active: bool, finished: bool, card_found: bool) -> bool {
+    disconnected && active && !finished && !card_found
 }
 
 /// A saved/library-only session never authorizes a device capture. Keep a
@@ -138,7 +138,9 @@ fn load_card_snapshot(selected: Option<&str>, hash: &str) -> CardSnapshot {
                 if result.original == OriginalState::Missing { result.original = OriginalState::Blocked; }
             }
         }
-        Err(_) => { result.phase = Err(()); if result.original == OriginalState::Missing { result.original = OriginalState::Blocked; } }
+        Err(_) => { result.phase = Err(()); if result.original == OriginalState::Missing { result.original = OriginalState::Blocked; }
+            result.restore=has_bank_baseline && crate::bank_recovery::has_pending_exact(&udid,hash).unwrap_or(false);
+        }
     }
     if selected.is_some() && result.original_image.is_none() && result.applied_image.is_none() {
         if let Some(reference)=unique_reference_device_at(&crate::storage::root().join("bank-backups"),hash).filter(|device|Some(device.as_str())!=selected) {
@@ -1526,7 +1528,25 @@ impl AirCardApp {
         thread::spawn(move || {
             let tx_progress = tx.clone();
             let tx_log = tx.clone();
-            let res = restore_wallet_original(
+            let res = (|| -> anyhow::Result<()> {
+            let needs_cloud=crate::bank_recovery::has_pending_exact(&udid,&hash)?
+                || (crate::storage::card_is_blocked_at(&crate::storage::root(),&udid,&hash)
+                    && crate::bank_changes::load_latest_intent(&udid,&hash).ok().flatten().is_some_and(|intent|matches!(intent.phase.as_str(),"prepared"|"originals_verified")));
+            if needs_cloud {
+                    let usb=crate::device::list_connected_devices()?.into_iter().any(|device|device.udid==udid && device.has_transport(crate::device::DeviceTransport::Usb));
+                    anyhow::ensure!(usb,"Conecta por USB el iPhone exacto antes de recuperar este original.");
+                    let session=crate::cloud_sync::load_session()?.ok_or_else(||anyhow::anyhow!("Inicia sesión con la cuenta vinculada antes de recuperar este original."))?;
+                    let plan=crate::bank_recovery::prepare_selected(&session,&udid,Some(&hash),|stage| {
+                        let _=tx_progress.send(BackgroundTaskMessage::Progress {step:0,total:3,message:stage.into()});
+                    })?;
+                    let physical=crate::flasher::restore_cloud_owned_original(&udid,crate::device::ConnectionMode::Usb,&plan,
+                        |step,total,message|{let _=tx_progress.send(BackgroundTaskMessage::Progress {step,total,message:message.into()});},
+                        |message|{let _=tx_log.send(BackgroundTaskMessage::Log(message.into()));})?;
+                    plan.finish(physical)?;
+                    crate::cloud_sync::reconcile_card_quarantine(&udid,&hash,&mut |_|{})?;
+                    return Ok(());
+            }
+            restore_wallet_original(
                 &udid,
                 connection_mode,
                 &hash,
@@ -1540,7 +1560,8 @@ impl AirCardApp {
                 move |msg| {
                     let _ = tx_log.send(BackgroundTaskMessage::Log(msg.to_string()));
                 },
-            );
+            )
+            })();
 
             match res {
                 Ok(()) => {
@@ -1550,8 +1571,8 @@ impl AirCardApp {
                             .into(),
                     )));
                 }
-                Err(e) => {
-                    let _ = tx.send(BackgroundTaskMessage::Done(Err(format!("{:#}", e))));
+                Err(_) => {
+                    let _ = tx.send(BackgroundTaskMessage::Done(Err("No se confirmó la recuperación. Conserva las copias, conecta por USB el iPhone exacto y revisa Recuperar original pendiente. No se reintentará automáticamente.".into())));
                 }
             }
         });
@@ -1943,20 +1964,26 @@ impl AirCardApp {
                 }
             }
         }
-        let lost_capture = lost_capture_receiver(disconnected,
-            self.auto_capture.as_ref().is_some_and(|capture|capture.phase==CapturePhase::Running),finished,card_found);
-        if lost_capture {
+        let was_capture = self.auto_capture.as_ref().is_some_and(|capture|capture.phase==CapturePhase::Running);
+        let lost_task = lost_task_receiver(disconnected,
+            self.is_busy || self.scanning_syslog || was_capture,finished,card_found);
+        if lost_task {
             // All senders have gone and all queued messages were drained. Never
             // release a live worker or infer that phone restoration succeeded.
-            self.is_busy=false; self.capture_started=None; finished=true;
-            if let Some(capture)=self.auto_capture.as_mut() {capture.finish(false);}
-            self.add_log("Original capture worker ended without a confirmed result; local recovery must be checked before retry.");
+            self.is_busy=false; self.scanning_syslog=false; self.capture_started=None; finished=true;
+            if let Some(flag)=self.scan_stop_flag.take() {flag.store(true,Ordering::Release);}
+            if was_capture {if let Some(capture)=self.auto_capture.as_mut() {capture.finish(false);}}
+            self.add_log("Background operation ended without a confirmed result; local recovery must be checked before retry.");
         }
         if retire_task_receiver(&mut self.task_rx, finished, card_found) {
             if card_found { self.scan_stop_flag = None; }
             self.check_recovery_status(card_found);
         }
-        if lost_capture {self.status_msg="La captura terminó sin confirmar el original ni su devolución. Conserva las copias y comprueba las recuperaciones antes de reintentar.".into();}
+        if lost_task {self.status_msg=if was_capture {
+            "La captura terminó sin confirmar el original ni su devolución. Conserva las copias y comprueba las recuperaciones antes de reintentar."
+        } else {
+            "La operación terminó sin confirmar el resultado. Conserva las copias y comprueba las recuperaciones antes de reintentar."
+        }.into();}
     }
 }
 
@@ -3353,12 +3380,13 @@ mod tests {
             let (messages,disconnected)=drain_task_receiver(&receiver);
             assert_eq!(messages.first(),Some(&"phase"));
             let confirmed=messages.contains(&"confirmed");
-            assert_eq!(lost_capture_receiver(disconnected,true,confirmed,false),!terminal);
+            assert_eq!(lost_task_receiver(disconnected,true,confirmed,false),!terminal);
         }
         let (_live_sender,receiver)=channel::<()>();
         let (_,disconnected)=drain_task_receiver(&receiver);
-        assert!(!lost_capture_receiver(disconnected,true,false,false),"a live sender must keep the capture busy");
-        assert!(!lost_capture_receiver(true,true,false,true),"scanner handoff takes precedence");
+        assert!(!lost_task_receiver(disconnected,true,false,false),"a live sender must keep the operation busy");
+        assert!(!lost_task_receiver(true,true,false,true),"scanner handoff takes precedence");
+        assert!(!lost_task_receiver(true,false,false,false),"an idle receiver is not a failed operation");
     }
     #[test]
     fn original_image_area_renders_wait_failure_and_elapsed_attention_without_claiming_success() {
