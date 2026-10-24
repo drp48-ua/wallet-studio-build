@@ -35,3 +35,7 @@ Al comenzar esta petición quedaba un 9 % de la ventana de cinco horas. Se inici
 ## Cierre de cuota de esta ejecución
 
 Corrección de cuarentena implementada en cloud_sync.rs: conserva la revisión ante archivos desconocidos, inválidos, no regulares, con digest incorrecto, carpeta ausente o ninguna copia de la identidad esperada. Nueva regresión sintética junto a la positiva existente. diff --check correcto. Pruebas GNU iniciadas en server/test-runtime/run-quarantine-review-regressions.ps1 (sesión 27129), resultado aún no revisado al alcanzar 99 % de cuota usada. No presentar estas pruebas como superadas ni distribuir ejecutable nuevo. Detener investigación, implementación y pruebas por AGENTS; sin reinicio de cuota.
+
+## Confirmación del usuario y parada de cuota
+
+El usuario confirmó después de compilar: «Ya está reconectado y preparado». No se repitió la comprobación USB ni la revisión nativa porque la herramienta de límites indicó 99 % consumido en la ventana de cinco horas. Detención obligatoria según AGENTS.md; no se consumió crédito de reinicio. La autorización de devolver ese original continúa vigente. Al renovar la cuota, comprobar primero el USB exacto, ejecutar review-cloud-owned-original de la 0.6.20 y solo si valida íntegramente continuar con restore-cloud-owned-original. Siguen pendientes la prueba física, la conciliación/sincronización real y la revisión visual final.
