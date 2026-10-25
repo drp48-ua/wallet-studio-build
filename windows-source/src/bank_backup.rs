@@ -244,12 +244,34 @@ fn load_baseline_at(root: &Path, udid: &str, card_hash: &str) -> Result<Option<B
         };
         local_assets.insert(leaf.to_string(), state);
     }
-    Ok(Some(Baseline {
+    Ok(Some(verify_present_provenance(Baseline {
         udid: disk.udid, card_hash: disk.card_hash, manifest_bytes,
         artwork_name: disk.artwork_name, remote_artwork_bytes,
         remote_size: disk.artwork_size, remote_sha1: disk.artwork_sha1,
         local_assets,
-    }))
+    })?))
+}
+
+/// Self-integrity and issuer evidence are valid, but a preserved local slot
+/// cannot be authenticated as issuer artwork. Never use this as an original.
+#[derive(Debug)]
+pub(crate) struct UnprovenOriginal {evidence:Baseline}
+impl UnprovenOriginal {pub(crate) fn evidence(&self)->&Baseline {&self.evidence}}
+impl std::fmt::Display for UnprovenOriginal {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("Una copia antigua contiene imágenes cuya procedencia original no está acreditada; se conserva para revisión")}
+}
+impl std::error::Error for UnprovenOriginal {}
+fn verify_present_provenance(baseline:Baseline)->Result<Baseline> {
+    let declarations=parse_manifest(&baseline.manifest_bytes)?;
+    for (leaf,state) in &baseline.local_assets {
+        if let LocalAssetState::Present {bytes}=state {
+            let matches=if let Some(declared)=declarations.iter().find(|item|item.name==*leaf) {
+                bytes.len()==declared.size && sha1(bytes)?.eq_ignore_ascii_case(&declared.sha1)
+            }else {false};
+            if !matches {return Err(UnprovenOriginal {evidence:baseline}.into());}
+            validate_remote_format(leaf,bytes)?;
+        }
+    }Ok(baseline)
 }
 
 fn read_regular(path: &Path) -> Result<Vec<u8>> {
@@ -383,7 +405,7 @@ mod tests {
             "cardBackgroundCombined@2x.png": {"url":"https://a.apple.com/art", "size":remote.len(), "sha1":remote_sha1}
         })).unwrap();
         let local_assets = CARD_ARTWORK_ASSETS.iter().map(|leaf| (leaf.to_string(),
-            if *leaf == "cardBackgroundCombined@3x.png" {
+            if *leaf == "cardBackgroundCombined@2x.png" {
                 LocalAssetState::Present { bytes: png() }
             } else { LocalAssetState::Absent }
         )).collect();
@@ -452,8 +474,11 @@ mod tests {
             LocalAssetState::Present { bytes: Vec::new() });
         input.local_assets.insert("cardBackgroundCombined@2x.png".into(),
             LocalAssetState::Present { bytes: b"not-an-image-but-original-bytes".to_vec() });
-        let _ = save_baseline_at(&root, &input).unwrap();
-        assert_eq!(load_baseline_at(&root, &input.udid, &input.card_hash).unwrap(), Some(input));
+        let path = save_baseline_at(&root, &input).unwrap();
+        let error=load_baseline_at(&root,&input.udid,&input.card_hash).unwrap_err();
+        assert_eq!(error.downcast_ref::<UnprovenOriginal>().unwrap().evidence(),&input);
+        assert_eq!(fs::read(path.join("cardBackgroundCombined@3x.png")).unwrap(),Vec::<u8>::new());
+        assert_eq!(fs::read(path.join("cardBackgroundCombined@2x.png")).unwrap(),b"not-an-image-but-original-bytes");
         fs::remove_dir_all(root).unwrap();
     }
 }

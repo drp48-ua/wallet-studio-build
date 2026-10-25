@@ -202,7 +202,13 @@ pub fn import_bundle(root:&Path,bytes:&[u8])->Result<()> {
             let staged=stage.join(name); crate::storage::safe_chain(&staged)?; if staged.exists() { anyhow::ensure!(fs::read(&staged)?==*data,"staging evidence conflict"); } else { crate::storage::write_new(&staged,data)?; }
         }
         let key=bank_key.context("cloud original missing")?;
-        let baseline=crate::bank_backup::validate_bundle_directory(&stage.join("bank").join(&key))?;
+        let baseline=match crate::bank_backup::validate_bundle_directory(&stage.join("bank").join(&key)) {
+            Ok(baseline)=>baseline,
+            Err(error)=>{if let Some(unproven)=error.downcast_ref::<crate::bank_backup::UnprovenOriginal>() {
+                let evidence=unproven.evidence();anyhow::ensure!(evidence.udid==manifest.udid && evidence.card_hash==manifest.card_hash,"unproven original identity mismatch");
+                verified_identity=Some((evidence.udid.clone(),evidence.card_hash.clone()));
+            }return Err(error);}
+        };
         anyhow::ensure!(baseline.udid==manifest.udid && baseline.card_hash==manifest.card_hash,"cloud baseline identity mismatch");
         verified_identity=Some((baseline.udid.clone(),baseline.card_hash.clone()));
         let staged_intents=stage.join("intents"); fs::create_dir_all(&staged_intents)?;
@@ -480,14 +486,15 @@ fn finish_login(server:&str,body:serde_json::Value,operation:&str,initial_link_c
     let path=root.join("cloud-session.dpapi"); crate::storage::write_mutable(&path,&encrypted)?; Ok(session)
 }
 #[derive(Clone,Debug,Default)]
-pub struct SyncReport { pub downloaded:usize,pub uploaded:usize,pub verified:usize,pub local_pending:usize,pub remote_pending:usize,pub pending_reasons:BTreeMap<String,usize> }
+pub struct SyncReport { pub downloaded:usize,pub uploaded:usize,pub verified:usize,pub local_pending:usize,pub remote_pending:usize,pub rejected_originals:usize,pub pending_reasons:BTreeMap<String,usize> }
 impl SyncReport {
     pub fn complete(&self)->bool { self.local_pending==0 && self.remote_pending==0 }
     pub fn message(&self)->String {
-        if self.downloaded+self.uploaded+self.verified+self.local_pending+self.remote_pending==0 {
+        if self.downloaded+self.uploaded+self.verified+self.local_pending+self.remote_pending+self.rejected_originals==0 {
             return "Cuenta conectada. No hay copias bancarias verificadas en este perfil ni en la nube. Abre la app con esta cuenta en el PC que conserva los originales para sincronizarlos.".into();
         }
-        let summary=format!("Copias: {} descargadas · {} subidas · {} verificadas",self.downloaded,self.uploaded,self.verified);
+        let mut summary=format!("Copias: {} descargadas · {} subidas · {} verificadas",self.downloaded,self.uploaded,self.verified);
+        if self.rejected_originals>0 {summary.push_str(&format!(". {} archivos antiguos no se usan como original; se conservan",self.rejected_originals));}
         if self.complete() {return summary;}
         let mut details=Vec::new();
         if self.remote_pending>0 {details.push(format!("{} copias de la nube requieren revisión; el original local y la copia en cuarentena se conservan. Las demás copias se han seguido procesando",self.remote_pending));}
@@ -564,7 +571,9 @@ pub fn synchronize_report_progress(session:&Session,mut progress:impl FnMut(&'st
 // retained conflict evidence, never an offline ownership grant or seen receipt.
 fn retained_inventory_bundle(root:&Path,id:&str,size:usize)->Result<Option<Vec<u8>>> {
     anyhow::ensure!(id.len()==64 && id.bytes().all(|byte|byte.is_ascii_hexdigit()) && size<=LIMIT,"invalid retained inventory entry");
-    let path=root.join("quarantine").join(format!("{id}.zip"));
+    let quarantine=root.join("quarantine").join(format!("{id}.zip"));
+    crate::storage::safe_chain(&quarantine)?;
+    let path=if quarantine.exists() {quarantine} else {root.join("rejected-originals").join(format!("{id}.zip"))};
     crate::storage::safe_chain(&path)?;
     let metadata=match fs::symlink_metadata(&path) {
         Err(error) if error.kind()==std::io::ErrorKind::NotFound=>return Ok(None),result=>result?
@@ -589,6 +598,8 @@ fn synchronize_owned_report(root:&Path,session:&Session,progress:&mut dyn FnMut(
     #[derive(Deserialize)] struct Listing { bundles:Vec<Entry> }
     let listing:Listing=serde_json::from_slice(&bytes)?; anyhow::ensure!(listing.bundles.len()<=1000,"cloud inventory too large");
     let mut remote_ids=std::collections::BTreeSet::new();
+    let mut pending_ids=std::collections::BTreeSet::new();
+    let mut legacy_identities=std::collections::BTreeSet::new();
     let seen=seen_directory(&root,&owner)?; crate::storage::safe_chain(&seen)?; fs::create_dir_all(&seen)?;
     for entry in listing.bundles {
         progress("Descargando y verificando originales de la nube…");
@@ -601,10 +612,15 @@ fn synchronize_owned_report(root:&Path,session:&Session,progress:&mut dyn FnMut(
         };
         anyhow::ensure!(bundle.len()==entry.size && crate::bank_backup::sha256(&bundle).context(SyncFailure::Download)?==entry.sha256,SyncFailure::Download);
         if let Err(error)=import_bundle(root,&bundle) {
+            if error.downcast_ref::<crate::bank_backup::UnprovenOriginal>().is_some() {
+                let evidence=classify_rejected_archive(root,&bundle)?.context("unproven archive failed complete classification")?;
+                persist_exact(&root.join("rejected-originals").join(format!("{}.zip",entry.id)),&bundle)?;
+                legacy_identities.insert((evidence.udid,evidence.card_hash));pending_ids.insert(entry.id.clone());report.remote_pending+=1;continue;
+            }
             if !isolated_import_conflict(&error) {return Err(error.context(SyncFailure::Import));}
             // import_bundle returns the semantic error only after the exact ZIP
             // is retained and the identity is blocked. Never write a seen receipt.
-            report.remote_pending+=1;
+            pending_ids.insert(entry.id.clone());report.remote_pending+=1;
             continue;
         }
         let (manifest,_)=parse_bundle(&bundle)?;
@@ -615,10 +631,16 @@ fn synchronize_owned_report(root:&Path,session:&Session,progress:&mut dyn FnMut(
             crate::storage::safe_chain(&retained).context(SyncFailure::Storage)?;
             if retained.exists() {anyhow::ensure!(fs::read(&retained)?==bundle,SyncFailure::Storage);}
             else {crate::storage::write_new(&retained,&bundle).context(SyncFailure::Storage)?;}
-            report.remote_pending+=1;
+            pending_ids.insert(entry.id.clone());report.remote_pending+=1;
             continue;
         }
         write_seen(&root,&seen.join(&entry.id),&entry.id,manifest).context(SyncFailure::Receipt)?;report.downloaded+=1;
+    }
+    for (udid,hash) in legacy_identities {
+        if let Some((resolved,rejected))=resolve_rejected_originals(root,&owner,&remote_ids,&udid,&hash)? {
+            report.rejected_originals+=rejected;report.downloaded+=resolved.len().saturating_sub(rejected);
+            for id in resolved {if pending_ids.remove(&id) {report.remote_pending-=1;}}
+        }
     }
     progress("Verificando y subiendo originales locales…");
     let banks=root.join("bank-backups"); if banks.is_dir() { for entry in fs::read_dir(banks)? {
@@ -637,6 +659,67 @@ fn synchronize_owned_report(root:&Path,session:&Session,progress:&mut dyn FnMut(
         anyhow::ensure!(confirmation.id==id && confirmation.sha256==id && confirmation.size==bundle.len(),SyncFailure::Receipt);
         let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&id),&id,manifest).context(SyncFailure::Receipt)?;report.uploaded+=1;
     }} Ok(report)
+}
+
+fn same_issuer(a:&crate::bank_backup::Baseline,b:&crate::bank_backup::Baseline)->bool {
+    a.udid==b.udid && a.card_hash==b.card_hash && a.manifest_bytes==b.manifest_bytes
+        && a.artwork_name==b.artwork_name && a.remote_artwork_bytes==b.remote_artwork_bytes
+        && a.remote_size==b.remote_size && a.remote_sha1==b.remote_sha1
+}
+fn classify_rejected_archive(root:&Path,bytes:&[u8])->Result<Option<crate::bank_backup::Baseline>> {
+    let (manifest,files)=parse_bundle(bytes)?;let id=crate::bank_backup::sha256(bytes)?;
+    let (evidence,unproven)=materialize_inventory_evidence(&root.join("original-review-evidence").join(id),&manifest,&files)?;
+    Ok(unproven.map(|_|evidence))
+}
+fn canonical_for_rejection(root:&Path,evidence:&crate::bank_backup::Baseline)->Result<Option<crate::bank_backup::Baseline>> {
+    let mut identity=evidence.udid.as_bytes().to_vec();identity.push(0);identity.extend_from_slice(evidence.card_hash.as_bytes());
+    let path=root.join("bank-backups").join(crate::bank_backup::sha256(&identity)?);
+    let canonical=match crate::bank_backup::validate_bundle_directory(&path) {Ok(value)=>value,Err(_)=>return Ok(None)};
+    if !same_issuer(&canonical,evidence) {return Ok(None);}
+    if crate::bank_changes::active_cloud_intent_at(&root.join("bank-change-intents"),&evidence.udid,&evidence.card_hash).is_err() {return Ok(None);}
+    let pending=crate::wallet_export::pending_recovery_operations_at(&root.join("wallet-export-recovery"))?;
+    if crate::wallet_export::pending_recovery_blocks_device(Ok(&pending),Some(&evidence.udid)) {return Ok(None);}
+    Ok(Some(canonical))
+}
+// Only an exhaustive positive disposition of matching cloud quarantine can
+// release its review. Unknown bytes/issuer/history/phone returns stay blocked.
+fn resolve_rejected_originals(root:&Path,owner:&VaultOwner,inventory:&std::collections::BTreeSet<String>,udid:&str,hash:&str)->Result<Option<(Vec<String>,usize)>> {
+    let _lease=crate::storage::operation_lease_for_import(root)?;
+    let quarantine=root.join("quarantine");crate::storage::safe_chain(&quarantine)?;
+    if !quarantine.exists() {return Ok(None);}
+    let mut archives=Vec::new();let mut rejected=0;let mut receipts=Vec::new();let mut canonical_digest=None;
+    for entry in fs::read_dir(&quarantine)? {
+        let path=entry?.path();if path.extension().and_then(|p|p.to_str())!=Some("zip") {return Ok(None);}
+        let (manifest,bytes)=read_quarantine_archive(&path)?;
+        let classified=classify_rejected_archive(root,&bytes)?;
+        if manifest.udid!=udid || manifest.card_hash!=hash {continue;}
+        let id=crate::bank_backup::sha256(&bytes)?;
+        if !inventory.contains(&id) {return Ok(None);}
+        if let Some(evidence)=classified {
+            let Some(canonical)=canonical_for_rejection(root,&evidence)? else {return Ok(None);};
+            let digest=crate::bank_backup::sha256(&serde_json::to_vec(&canonical)?)?;
+            canonical_digest=Some(digest.clone());
+            persist_exact(&root.join("rejected-originals").join(format!("{id}.zip")),&bytes)?;
+            let disposition=serde_json::json!({"version":1,"owner":owner,"archive":id,"udid":udid,"card_hash":hash,
+                "issuer":crate::bank_backup::sha256(&evidence.manifest_bytes)?,"issuer_artwork":crate::bank_backup::sha256(&evidence.remote_artwork_bytes)?,"canonical":digest,"disposition":"not_an_original_preserved"});
+            persist_exact(&root.join("rejected-originals").join(format!("{id}.json")),&serde_json::to_vec(&disposition)?)?;
+            rejected+=1;
+        } else {
+            let (files_manifest,files)=parse_bundle(&bytes)?;
+            let canonical=materialize_inventory_archive(&root.join("original-review-evidence").join(&id),&files_manifest,&files)?;
+            if canonical_for_rejection(root,&canonical)?.as_ref()!=Some(&canonical) {return Ok(None);}
+            if import_bundle(root,&bytes).is_err() {return Ok(None);}
+            receipts.push((id.clone(),manifest));
+        }
+        archives.push((id,path));
+    }
+    if rejected==0 || canonical_digest.is_none() {return Ok(None);}
+    crate::storage::clear_card_review_at(root,udid,hash)?;
+    let seen=seen_directory(root,owner)?;
+    for (id,manifest) in receipts {write_seen(root,&seen.join(&id),&id,manifest)?;}
+    let ids=archives.iter().map(|(id,_)|id.clone()).collect();
+    for (_,path) in archives {fs::remove_file(path)?;}
+    Ok(Some((ids,rejected)))
 }
 
 // This type is deliberately neither deserializable nor publicly constructible.
@@ -697,6 +780,10 @@ fn persist_exact(path:&Path,bytes:&[u8])->Result<()> {
     anyhow::ensure!(fs::read(path)?==bytes,"recovery evidence failed durable readback");Ok(())
 }
 fn materialize_inventory_archive(stage:&Path,manifest:&Manifest,files:&BTreeMap<String,Vec<u8>>)->Result<crate::bank_backup::Baseline> {
+    let (baseline,unproven)=materialize_inventory_evidence(stage,manifest,files)?;
+    if let Some(error)=unproven {return Err(error);}Ok(baseline)
+}
+fn materialize_inventory_evidence(stage:&Path,manifest:&Manifest,files:&BTreeMap<String,Vec<u8>>)->Result<(crate::bank_backup::Baseline,Option<anyhow::Error>)> {
     let mut bank_key=None;
     for (name,bytes) in files {
         let parts=name.split('/').collect::<Vec<_>>();anyhow::ensure!(parts.len()==3,"invalid recovery evidence depth");
@@ -716,11 +803,14 @@ fn materialize_inventory_archive(stage:&Path,manifest:&Manifest,files:&BTreeMap<
         }
     }
     anyhow::ensure!(&observed==files,"undeclared or contaminated recovery staging evidence");
-    let baseline=crate::bank_backup::validate_bundle_directory(&stage.join("bank").join(bank_key.context("recovery original missing")?))?;
+    let (baseline,unproven)=match crate::bank_backup::validate_bundle_directory(&stage.join("bank").join(bank_key.context("recovery original missing")?)) {
+        Ok(baseline)=>(baseline,None),
+        Err(error)=>{let baseline=error.downcast_ref::<crate::bank_backup::UnprovenOriginal>().context("original self-integrity requires review")?.evidence().clone();(baseline,Some(error))}
+    };
     anyhow::ensure!(baseline.udid==manifest.udid && baseline.card_hash==manifest.card_hash,"recovery archive identity mismatch");
     let intents=stage.join("intents");crate::storage::safe_chain(&intents)?;fs::create_dir_all(&intents)?;
-    crate::bank_changes::validate_cloud_chain(&intents,&manifest.udid,&manifest.card_hash)?;
-    Ok(baseline)
+    crate::bank_changes::active_cloud_intent_at(&intents,&manifest.udid,&manifest.card_hash)?;
+    Ok((baseline,unproven))
 }
 // The transport is injectable only inside this module for synthetic regression.
 // Production callers cannot issue this capability without current account auth.
@@ -757,7 +847,12 @@ fn prepare_remote_recovery_at(root:&Path,session:&Session,baseline:&crate::bank_
         let (manifest,files)=parse_bundle(&bytes)?;
         expanded=files.values().try_fold(expanded,|total,bytes|total.checked_add(bytes.len()).context("recovery expansion overflow"))?;
         anyhow::ensure!(expanded<=RECOVERY_INVENTORY_BYTES,"Expanded recovery evidence exceeds 512 MiB; no removal was authorized");
-        let remote=materialize_inventory_archive(&validation.join(&entry.id),&manifest,&files)?;
+        let (remote,unproven)=materialize_inventory_evidence(&validation.join(&entry.id),&manifest,&files)?;
+        if let Some(error)=unproven {
+            persist_exact(&root.join("rejected-originals").join(format!("{}.zip",entry.id)),&bytes)?;
+            if canonical_for_rejection(root,&remote)?.is_none() {return Err(error);}
+            continue;
+        }
         if manifest.udid!=baseline.udid || manifest.card_hash!=baseline.card_hash {continue;}
         anyhow::ensure!(&remote==baseline,"remote and local immutable originals differ");
         target_archives.push(entry.id);
@@ -1107,6 +1202,58 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         assert!(materialize_inventory_archive(&stage,&manifest,&files).is_err(),"undeclared staging bytes must never become remote ownership");
         fs::remove_dir_all(source).unwrap();fs::remove_dir_all(root).unwrap();
     }
+    fn legacy_archive_fixture(input:&crate::bank_backup::Baseline)->Vec<u8> {
+        let source=fixture_root();let bank=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),input).unwrap();
+        let mut files=BTreeMap::new();files_in(&bank,&format!("bank/{}",bank.file_name().unwrap().to_string_lossy()),&mut files).unwrap();
+        let records=files.iter().map(|(name,bytes)|(name.clone(),Record {size:bytes.len(),sha256:crate::bank_backup::sha256(bytes).unwrap()})).collect();
+        let bytes=repack(Manifest {schema:1,udid:input.udid.clone(),card_hash:input.card_hash.clone(),files:records},files);
+        fs::remove_dir_all(source).unwrap();bytes
+    }
+    #[test] fn rejected_legacy_original_is_preserved_while_later_canonical_and_other_device_sync() {
+        for good_later in [false,true] {
+            let target=fixture_root();let input=fixture_baseline();let mut bad=input.clone();
+            bad.local_assets.insert(input.artwork_name.clone(),crate::bank_backup::LocalAssetState::Present {bytes:b"old custom design, not issuer bytes".to_vec()});
+            let bad_zip=legacy_archive_fixture(&bad);let good_zip=legacy_archive_fixture(&input);
+            let bad_id=crate::bank_backup::sha256(&bad_zip).unwrap();let good_id=crate::bank_backup::sha256(&good_zip).unwrap();
+            let mut other=input.clone();other.udid="synthetic-other-healthy-device".into();
+            crate::bank_backup::save_fixture_at(&target.join("bank-backups"),&other).unwrap();
+            let session=Session {server:"https://synthetic.example.test".into(),access_token:"synthetic-token".into(),user_id:"fixture-owner".into()};bind_owner_at(&target,&session,true).unwrap();
+            let mut downloads=Vec::new();let mut uploads=Vec::new();
+            let report=synchronize_owned_report(&target,&session,&mut |_|{},&mut |method,url,_,body,_| {
+                if method=="GET" && url.ends_with("/v1/bundles") {
+                    let mut bundles=vec![serde_json::json!({"id":bad_id,"sha256":bad_id,"size":bad_zip.len()})];
+                    if good_later {bundles.push(serde_json::json!({"id":good_id,"sha256":good_id,"size":good_zip.len()}));}
+                    return Ok(serde_json::to_vec(&serde_json::json!({"bundles":bundles})).unwrap());
+                }
+                if method=="GET" {let id=url.rsplit('/').next().unwrap();downloads.push(id.to_string());return Ok(if id==bad_id {bad_zip.clone()}else{assert_eq!(id,good_id);good_zip.clone()});}
+                uploads.push(parse_bundle(body).unwrap().0.udid);let id=crate::bank_backup::sha256(body).unwrap();
+                Ok(serde_json::to_vec(&serde_json::json!({"id":id,"sha256":id,"size":body.len()})).unwrap())
+            }).unwrap();
+            assert_eq!(downloads.first(),Some(&bad_id));assert!(uploads.contains(&other.udid));
+            assert_eq!(report.complete(),good_later);assert_eq!(report.rejected_originals,usize::from(good_later));
+            assert_eq!(crate::storage::card_is_blocked_at(&target,&input.udid,&input.card_hash),!good_later);
+            assert!(!target.join("storage-blocked.json").exists());
+            assert_eq!(fs::read(target.join("rejected-originals").join(format!("{bad_id}.zip"))).unwrap(),bad_zip);
+            let seen=seen_directory(&target,&owner_for(&session).unwrap()).unwrap();assert!(!seen.join(&bad_id).exists());
+            if good_later {assert!(seen.join(&good_id).exists());assert!(report.message().contains("archivos antiguos no se usan como original"));assert!(target.join("rejected-originals").join(format!("{bad_id}.json")).is_file());}
+            fs::remove_dir_all(target).unwrap();
+        }
+    }
+    #[test] fn rejected_original_resolution_never_accepts_changed_issuer_or_unknown_quarantine() {
+        let root=fixture_root();let input=fixture_baseline();crate::bank_backup::save_fixture_at(&root.join("bank-backups"),&input).unwrap();
+        let session=Session {server:"https://synthetic.example.test".into(),access_token:"synthetic-token".into(),user_id:"fixture-owner".into()};bind_owner_at(&root,&session,true).unwrap();
+        let mut bad=input.clone();bad.local_assets.insert(input.artwork_name.clone(),crate::bank_backup::LocalAssetState::Present {bytes:b"modified".to_vec()});
+        bad.manifest_bytes.push(b' ');let changed=legacy_archive_fixture(&bad);let id=crate::bank_backup::sha256(&changed).unwrap();
+        crate::storage::write_new(&root.join("quarantine").join(format!("{id}.zip")),&changed).unwrap();crate::storage::block_card_at(&root,&input.udid,&input.card_hash).unwrap();
+        let inventory=[id.clone()].into_iter().collect();assert!(resolve_rejected_originals(&root,&owner_for(&session).unwrap(),&inventory,&input.udid,&input.card_hash).unwrap().is_none());
+        assert!(crate::storage::card_is_blocked_at(&root,&input.udid,&input.card_hash));
+        fs::remove_file(root.join("quarantine").join(format!("{id}.zip"))).unwrap();
+        bad.manifest_bytes=input.manifest_bytes.clone();let known=legacy_archive_fixture(&bad);let known_id=crate::bank_backup::sha256(&known).unwrap();
+        crate::storage::write_new(&root.join("quarantine").join(format!("{known_id}.zip")),&known).unwrap();let inventory=[known_id].into_iter().collect();
+        fs::write(root.join("quarantine").join("unknown.zip"),b"invalid archive").unwrap();
+        assert!(resolve_rejected_originals(&root,&owner_for(&session).unwrap(),&inventory,&input.udid,&input.card_hash).is_err());
+        assert!(crate::storage::card_is_blocked_at(&root,&input.udid,&input.card_hash));fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn customer_cloud_import_conflict_does_not_block_other_downloads_or_local_uploads() {
         for prepared in [false,true] {
             let source=fixture_root();let target=fixture_root();let input=fixture_baseline();
@@ -1170,7 +1317,7 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         let source=fixture_root();let older_source=fixture_root();let target=fixture_root();let input=fixture_baseline();
         let old_path=crate::bank_backup::save_fixture_at(&older_source.join("bank-backups"),&input).unwrap();
         let old=export_bundle(&older_source,&old_path).unwrap();
-        let mut differing=input.clone();differing.local_assets.insert("cardBackgroundCombined.pdf".into(),crate::bank_backup::LocalAssetState::Present {bytes:b"%PDF-1.7\n%%EOF".to_vec()});
+        let mut differing=input.clone();differing.local_assets.insert(input.artwork_name.clone(),crate::bank_backup::LocalAssetState::Absent);
         let bad_path=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),&differing).unwrap();
         let bad=export_bundle(&source,&bad_path).unwrap();
         let mut healthy=input.clone();healthy.udid="synthetic-healthy-remote".into();

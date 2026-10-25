@@ -1,6 +1,6 @@
 # Recuperación de un diseño propio verificado en la nube
 
-Estado: implementado en la fuente 0.6.20 y validado con 218 pruebas nativas, ninguna fallida. La prueba física y la sincronización del perfil real siguen pendientes. La retirada genérica conserva su control estricto; el flujo explícito nuevo exige prueba autenticada y diario durable.
+Estado: implementado en la fuente 0.6.20 y validado con 218 pruebas nativas, ninguna fallida. La devolución física del original autorizado terminó y quedó verificada el 25 de octubre. La sincronización del perfil sigue pendiente por otra tarjeta con un original remoto legado sin procedencia válida. La retirada genérica conserva su control estricto; el flujo explícito nuevo exige prueba autenticada y diario durable.
 
 ## Hallazgo y límite de esta revisión
 
@@ -53,4 +53,4 @@ Después: suite nativa GNU requerida completa, regresiones de diario/retorno/con
 
 ## Punto de continuación
 
-Implementación en `bank_recovery.rs`, selección remota tipada en `cloud_sync.rs`, operaciones exactas en `bank_changes.rs` y vía explícita en `wallet_export.rs`/`flasher.rs`. El token de comprobación física retiene la concesión exclusiva de almacenamiento hasta cerrar el diario. La publicación de una operación nueva usa rename de un directorio privado completo y validado. El CLI ofrece revisión y devolución separadas; «Restaurar original» usa el mismo flujo y exige USB literal. Completar la prueba física autorizada y comprobar por separado conciliación y sincronización antes de anunciar resuelto el perfil real.
+Implementación en `bank_recovery.rs`, selección remota tipada en `cloud_sync.rs`, operaciones exactas en `bank_changes.rs` y vía explícita en `wallet_export.rs`/`flasher.rs`. El token de comprobación física retiene la concesión exclusiva de almacenamiento hasta cerrar el diario. La publicación de una operación nueva usa rename de un directorio privado completo y validado. El CLI ofrece revisión y devolución separadas; «Restaurar original» usa el mismo flujo y exige USB literal. La prueba física autorizada terminó con diario completo, evidencia íntegra, cinco operaciones vinculadas restauradas y ninguna exportación pendiente. Comprobar por separado el conflicto de la otra tarjeta y la sincronización antes de anunciar resuelto el perfil real. Véase CONTINUACION-COPIAS-2026-10-24.md para el estado vigente.

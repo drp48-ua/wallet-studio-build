@@ -56,11 +56,14 @@ fn request(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usiz
     request_with_cap(method,value,headers,body,max,budget,MAX_PACKAGE)
 }
 fn request_with_cap(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usize,budget:Duration,cap:usize)->Result<Response>{
+    request_until(method,value,headers,body,max,Instant::now()+budget,cap)
+}
+fn request_until(method:&str,value:&str,headers:&[(String,String)],body:&[u8],max:usize,deadline:Instant,cap:usize)->Result<Response>{
+    anyhow::ensure!(Instant::now()<deadline,RequestTimeout);
     let url=parse_url(value)?;
     anyhow::ensure!(matches!(method,"GET"|"POST"|"PUT"|"DELETE")&&max<=cap&&body.len()<=MAX_PACKAGE,"Petición fuera de límites");
     let mut header=String::new();
     for (k,v) in headers {anyhow::ensure!(!k.is_empty()&&k.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-')&&!v.chars().any(|c|c.is_control()),"Cabecera no válida");header.push_str(&format!("{k}: {v}\r\n"));}
-    let deadline=Instant::now()+budget;
     let agent=wide("Wallet Studio/0.6");let host=wide(&url.host);let path=wide(&url.path);let verb=wide(method);let hw=wide(&header);
     let session=Handle(unsafe{WinHttpOpen(agent.as_ptr(),0,std::ptr::null(),std::ptr::null(),0)});
     anyhow::ensure!(!session.0.is_null(),"No se pudo iniciar la conexión");
@@ -86,12 +89,43 @@ fn request_with_cap(method:&str,value:&str,headers:&[(String,String)],body:&[u8]
     if Instant::now()>=deadline {return Err(RequestTimeout.into());}
     Ok(Response{status,body:out,location})
 }
+const MAX_GET_ATTEMPTS:usize=8;
+trait RetryClock {
+    fn now(&self)->Instant;
+    fn sleep(&mut self,delay:Duration);
+}
+struct WallClock;
+impl RetryClock for WallClock {
+    fn now(&self)->Instant {Instant::now()}
+    fn sleep(&mut self,delay:Duration) {std::thread::sleep(delay);}
+}
+// Only completed transient HTTP responses are retryable. Transport failures,
+// oversized/malformed reads and authentication failures retain their errors.
+fn retry_get_response(method:&str,deadline:Instant,clock:&mut dyn RetryClock,
+    attempt:&mut dyn FnMut(Instant)->Result<Response>)->Result<Response> {
+    for index in 0..MAX_GET_ATTEMPTS {
+        anyhow::ensure!(clock.now()<deadline,RequestTimeout);
+        let response=attempt(deadline)?;
+        anyhow::ensure!(clock.now()<deadline,RequestTimeout);
+        if method!="GET" || !matches!(response.status,502|503|504) || index+1==MAX_GET_ATTEMPTS {return Ok(response);}
+        let delay=Duration::from_millis((500u64<<index.min(4)).min(8000));
+        // Do not wait when the entire remaining budget would be consumed by
+        // backoff; a new request must never get a fresh caller deadline.
+        anyhow::ensure!(deadline.saturating_duration_since(clock.now())>delay,RequestTimeout);
+        clock.sleep(delay);
+    }
+    unreachable!("bounded retry loop always returns")
+}
+fn request_with_get_retry(method:&str,url:&str,headers:&[(String,String)],body:&[u8],max:usize,deadline:Instant)->Result<Response> {
+    retry_get_response(method,deadline,&mut WallClock,&mut |deadline|request_until(method,url,headers,body,max,deadline,MAX_PACKAGE))
+}
 pub fn http_request(method:&str,url:&str,headers:&[(String,String)],body:&[u8],max_bytes:usize)->Result<Vec<u8>>{
     http_request_with_budget(method,url,headers,body,max_bytes,REQUEST_BUDGET)
 }
 pub(crate) fn http_request_with_budget(method:&str,url:&str,headers:&[(String,String)],body:&[u8],max_bytes:usize,remaining:Duration)->Result<Vec<u8>>{
     anyhow::ensure!(!remaining.is_zero(),RequestTimeout);
-    let r=request(method,url,headers,body,max_bytes,remaining.min(REQUEST_BUDGET))?;
+    let deadline=Instant::now()+remaining.min(REQUEST_BUDGET);
+    let r=request_with_get_retry(method,url,headers,body,max_bytes,deadline)?;
     anyhow::ensure!(matches!(r.status,200|201|204),HttpStatus(r.status));
     Ok(r.body)
 }
@@ -102,10 +136,11 @@ pub(crate) fn http_download_bundle(url:&str,headers:&[(String,String)],max_bytes
 }
 pub(crate) fn http_download_bundle_with_budget(url:&str,headers:&[(String,String)],max_bytes:usize,remaining:Duration)->Result<Vec<u8>> {
     anyhow::ensure!(!remaining.is_zero(),RequestTimeout);
+    let deadline=Instant::now()+remaining.min(BUNDLE_DOWNLOAD_BUDGET);
     let parsed=parse_url(url)?;
     let id=parsed.path.rsplit('/').next().unwrap_or_default();
     anyhow::ensure!(parsed.path.contains("/v1/bundles/") && id.len()==64 && id.bytes().all(|b|b.is_ascii_hexdigit()) && max_bytes<=100*1024*1024,"Descarga de copia fuera de límites");
-    let response=request("GET",url,headers,&[],max_bytes,remaining.min(BUNDLE_DOWNLOAD_BUDGET))?;
+    let response=request_with_get_retry("GET",url,headers,&[],max_bytes,deadline)?;
     anyhow::ensure!(response.status==200,HttpStatus(response.status));
     Ok(response.body)
 }
@@ -241,6 +276,94 @@ pub fn poll_status(rx:&Receiver<String>,status:&mut String)->bool {
     }
 }
 #[cfg(test)]mod tests{use super::*;
+ struct SimulatedClock {start:Instant,elapsed:std::rc::Rc<std::cell::Cell<Duration>>,sleeps:Vec<Duration>,oversleep:Duration}
+ impl RetryClock for SimulatedClock {
+    fn now(&self)->Instant {self.start+self.elapsed.get()}
+    fn sleep(&mut self,delay:Duration) {self.sleeps.push(delay);self.elapsed.set(self.elapsed.get()+delay+self.oversleep);}
+ }
+ fn simulated_clock()->SimulatedClock {SimulatedClock {start:Instant::now(),elapsed:Default::default(),sleeps:Vec::new(),oversleep:Duration::ZERO}}
+ fn synthetic_response(status:u32)->Response {Response {status,body:b"ok".to_vec(),location:None}}
+ #[test]fn get_retry_uses_one_deadline_and_stops_after_eight_transient_responses() {
+    let mut clock=simulated_clock();let deadline=clock.start+Duration::from_secs(60);let mut calls=0;
+    let response=retry_get_response("GET",deadline,&mut clock,&mut |seen| {
+        assert_eq!(seen,deadline);calls+=1;Ok(synthetic_response([502,503,504][(calls-1)%3]))
+    }).unwrap();
+    assert_eq!(calls,8);assert_eq!(response.status,503);
+    assert_eq!(clock.sleeps,vec![500,1000,2000,4000,8000,8000,8000].into_iter().map(Duration::from_millis).collect::<Vec<_>>());
+ }
+ #[test]fn get_retry_deadline_covers_network_and_sleep_without_reset_or_extra_request() {
+    // First response consumed 600ms: a 500ms backoff cannot fit in 1s.
+    let mut clock=simulated_clock();let elapsed=clock.elapsed.clone();let deadline=clock.start+Duration::from_secs(1);let mut calls=0;
+    let error=retry_get_response("GET",deadline,&mut clock,&mut |seen| {
+        assert_eq!(seen,deadline);calls+=1;elapsed.set(elapsed.get()+Duration::from_millis(600));Ok(synthetic_response(503))
+    }).err().unwrap();
+    assert!(error.downcast_ref::<RequestTimeout>().is_some());assert_eq!(calls,1);assert!(clock.sleeps.is_empty());
+    // Scheduler oversleep must be checked before the second network attempt.
+    let mut clock=simulated_clock();clock.oversleep=Duration::from_secs(1);let deadline=clock.start+Duration::from_secs(1);let mut calls=0;
+    let error=retry_get_response("GET",deadline,&mut clock,&mut |_|{calls+=1;Ok(synthetic_response(503))}).err().unwrap();
+    assert!(error.downcast_ref::<RequestTimeout>().is_some());assert_eq!(calls,1);assert_eq!(clock.sleeps.len(),1);
+    // A response that itself reaches the deadline is never accepted/retried.
+    let mut clock=simulated_clock();let elapsed=clock.elapsed.clone();let deadline=clock.start+Duration::from_secs(1);
+    let error=retry_get_response("GET",deadline,&mut clock,&mut |_| {elapsed.set(Duration::from_secs(1));Ok(synthetic_response(200))}).err().unwrap();
+    assert!(error.downcast_ref::<RequestTimeout>().is_some());
+ }
+ #[test]fn get_retry_does_not_retry_mutations_auth_redirects_or_transport_errors() {
+    for method in ["POST","PUT","DELETE","GET"] {
+        for status in [401,403,429,301,500,503] {
+            if method=="GET" && status==503 {continue;}
+            let mut clock=simulated_clock();let deadline=clock.start+Duration::from_secs(60);let mut calls=0;
+            assert_eq!(retry_get_response(method,deadline,&mut clock,&mut |_|{calls+=1;Ok(synthetic_response(status))}).unwrap().status,status);
+            assert_eq!(calls,1);assert!(clock.sleeps.is_empty());
+        }
+    }
+    let mut clock=simulated_clock();let deadline=clock.start+Duration::from_secs(60);let mut calls=0;
+    assert!(retry_get_response("GET",deadline,&mut clock,&mut |_|{calls+=1;anyhow::bail!("synthetic invalid response")}).is_err());
+    assert_eq!(calls,1);assert!(clock.sleeps.is_empty());
+ }
+ fn status_server(statuses:Vec<u32>,path:&str)->(String,std::thread::JoinHandle<Vec<String>>) {
+    use std::io::{Read,Write};
+    let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+    let url=format!("http://{}{path}",listener.local_addr().unwrap());
+    let worker=std::thread::spawn(move|| {
+        let mut methods=Vec::new();
+        for status in statuses {
+            let deadline=Instant::now()+Duration::from_secs(15);
+            let mut socket=loop {match listener.accept() {
+                Ok((socket,_))=>break socket,
+                Err(error) if error.kind()==std::io::ErrorKind::WouldBlock && Instant::now()<deadline=>std::thread::sleep(Duration::from_millis(5)),
+                _=>return methods,
+            }};
+            socket.set_read_timeout(Some(Duration::from_secs(15))).unwrap();let mut bytes=Vec::new();let mut part=[0u8;1024];
+            loop {
+                let n=match socket.read(&mut part) {Ok(0)|Err(_)=>return methods,Ok(n)=>n};bytes.extend_from_slice(&part[..n]);assert!(bytes.len()<=16384);
+                if let Some(end)=bytes.windows(4).position(|part|part==b"\r\n\r\n") {
+                    let header=std::str::from_utf8(&bytes[..end]).unwrap();
+                    let size=header.lines().find_map(|line|line.split_once(':').filter(|(name,_)|name.eq_ignore_ascii_case("content-length")).map(|(_,size)|size.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                    if bytes.len()>=end+4+size {methods.push(header.split_whitespace().next().unwrap().to_string());break;}
+                }
+            }
+            let response=format!("HTTP/1.1 {status} Synthetic\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+            socket.write_all(response.as_bytes()).unwrap();
+        }methods
+    });(url,worker)
+ }
+ #[test]fn production_http_wrappers_retry_get_503_but_not_post_or_get_401() {
+    let (url,worker)=status_server(vec![503,200],"/inventory");
+    let result=http_request_with_budget("GET",&url,&[],&[],8,Duration::from_secs(15));let methods=worker.join().unwrap();
+    assert_eq!(result.unwrap(),b"ok");assert_eq!(methods,vec!["GET","GET"]);
+    for (method,status) in [("POST",503),("PUT",503),("DELETE",503),("GET",401),("GET",403)] {
+        let (url,worker)=status_server(vec![status],"/single");
+        let result=http_request_with_budget(method,&url,&[],&[],8,Duration::from_secs(15));let methods=worker.join().unwrap();
+        assert_eq!(result.unwrap_err().downcast_ref::<HttpStatus>().unwrap().0,status);assert_eq!(methods,vec![method]);
+    }
+    let (url,worker)=status_server(vec![503,200],&format!("/v1/bundles/{}","a".repeat(64)));
+    let result=http_download_bundle_with_budget(&url,&[],8,Duration::from_secs(15));let methods=worker.join().unwrap();
+    assert_eq!(result.unwrap(),b"ok");assert_eq!(methods,vec!["GET","GET"]);
+    // Insufficient budget cannot buy another network request after backoff.
+    let (url,worker)=status_server(vec![503],"/deadline");
+    let result=http_request_with_budget("GET",&url,&[],&[],8,Duration::from_millis(200));let methods=worker.join().unwrap();
+    assert!(result.unwrap_err().downcast_ref::<RequestTimeout>().is_some());assert_eq!(methods,vec!["GET"]);
+ }
  #[test]fn exhausted_recovery_budget_fails_before_any_network_request(){
     let ordinary=http_request_with_budget("GET","invalid URL",&[],&[],64,Duration::ZERO).unwrap_err();
     let bundle=http_download_bundle_with_budget("invalid URL",&[],64,Duration::ZERO).unwrap_err();

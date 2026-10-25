@@ -1,41 +1,46 @@
-# Copias y recuperación entre dispositivos — continuación
+# Copias y recuperación — continuación del 25 de octubre de 2026
 
-## Reanudación actual: versión 0.6.20 en validación
+## Estado comprobado
 
-Compilación final de producción correcta (10 min 22 s). Ejecutable SHA-256 `f09b3542d7f442ebabef982b1504c7a27c3921f45c841b4a9b3ba8c77fd6227b`; ZIP `1f06bb2406cb5a272475f6546e9dd095a4e5278b3418d5662a31b300cec8ea0b`, disponible también en `C:/Users/danir/Documents/Codex/Wallet-Studio-0.6.20-Windows.zip`. Fuente y pruebas subidas en `80d56ff` a la rama separada.
+La recuperación física autorizada del original concreto del iPhone habitual terminó correctamente con 0.6.20. Primero pasó la revisión autenticada completa; después el CLI devolvió `original_verified_and_restored`, código cero. La comprobación posterior confirmó cero exportaciones pendientes, cero intentos preparados, diario completo, evidencia íntegra y las cinco operaciones vinculadas restauradas. No repetir esta devolución por rutina.
 
-La revisión nativa `--wallet-studio-review-cloud-owned-original` terminó con categoría pendiente antes de emitir etapas. Comprobación de solo lectura inmediatamente posterior: servicio Apple disponible, cero iPhones USB. Por tanto no se preparó el plan ni se movieron archivos del teléfono. Se pidió reconectar el mismo iPhone; la autorización de devolución ya consta. Repetir primero revisión con USB disponible y solo después, si la prueba íntegra termina correctamente, ejecutar la devolución autorizada y comprobar conciliación/sincronización por separado. No anunciar recuperación física ni validación visual de la nueva UI como realizadas.
+Esto no equivale a sincronizar toda la cuenta ni a validar todos los iPhones. Al abrir Cuenta apareció un conflicto de otra tarjeta del mismo dispositivo. La tarjeta recuperada sigue conciliada.
 
-Suite final de la fuente congelada, incluida la corrección de concesión retenida: 218 correctas, cero fallidas, siete ignoradas y cuatro exclusiones exigidas. Registro local ignorado `server/test-runtime/recovery-lease-final-regressions-20261025.log`. La compilación de producción está en curso. La revisión nativa de propiedad y la devolución física todavía no han empezado. No confundir los 218 tests sintéticos con una prueba física universal.
+## Causa adicional localizada
 
-La ventana de cinco horas se renovó de forma ordinaria; no se consumió el crédito de reinicio. Las dos regresiones de cuarentena anteriores terminaron correctamente. El primer bloque nuevo superó 210 pruebas nativas, ninguna fallida, siete ignoradas y cuatro exclusiones de hardware. Ese resultado precede a las últimas ediciones de interfaz, lista de originales y recuperación; no equivale a validar el código final.
+Una copia remota antigua de esa otra tarjeta contiene imágenes modificadas entre los archivos declarados originales. Sus checksums internos son coherentes, pero los bytes no coinciden con los recursos del emisor. El manifiesto y los recursos del emisor sí coinciden con un original local válido. El staging mezclado añade dos operaciones aplicadas y tampoco constituye un historial válido.
 
-Se implementaron aislamiento de conflictos remotos identificados, reutilización íntegra de ZIP retenidos, lista de originales importados, comprobación física completa al reanudar, y cierre veraz de trabajadores perdidos. El flujo nuevo de recuperación usa inventario autenticado completo con límites, unión remota aislada, historial estricto y diario durable. El backfill de operaciones nuevas se publica mediante rename de un directorio privado completo; no se exponen directorios con solo assets. La finalización exige una capacidad que solo el flasher produce después de originales, caché y originales comprobados.
+No borrar ese archivo antiguo, sobrescribir originales ni escoger entre originales legítimos distintos. El trabajo de 0.6.21 refuerza la procedencia de cada archivo presente y prepara una clasificación conservadora del archivo antiguo, preservándolo como evidencia. Errores de lectura, identidad distinta o emisor distinto deben seguir bloqueando. La 0.6.20 abierta todavía muestra sincronización pendiente; no anunciar resuelto ese conflicto hasta validar la nueva fuente y el perfil real.
 
-El usuario volvió a confirmar el iPhone habitual preparado y su devolución sigue autorizada. Diagnóstico USB de solo lectura: uno conectado y coincide con la operación pendiente. No se inició todavía una nueva recuperación física con 0.6.20. Faltan la suite final de esta fuente, compilación de distribución, revisión visual, prueba física autorizada y verificación de sincronización. El paquete 0.6.19 ya entregado no contiene este flujo nuevo.
+## Fuente y validación
 
-El usuario solicita resolver el flujo completo en los dispositivos compatibles. No afirmar compatibilidad universal ni recuperación terminada sin pruebas. La versión empaquetada 0.6.19 conserva las limitaciones indicadas en sus novedades; el trabajo posterior de este documento no está incluido en ese ejecutable.
+Repositorio `drp48-ua/wallet-studio-build`, rama separada `codex/recovery-onboarding-2026-10-24`. Último checkpoint publicado: `78d9350`. No sobrescribir main ni cambios de colaboradores. Los cambios posteriores de 0.6.21 aún requieren revisión, pruebas, compilación y publicación.
 
-## Diagnóstico nuevo
+La fuente final de 0.6.20 superó 218 pruebas nativas, cero fallidas, siete ignoradas y cuatro exclusiones exigidas. Ejecutable SHA-256: `f09b3542d7f442ebabef982b1504c7a27c3921f45c841b4a9b3ba8c77fd6227b`. ZIP: `C:/Users/danir/Documents/Codex/Wallet-Studio-0.6.20-Windows.zip`, SHA-256 `1f06bb2406cb5a272475f6546e9dd095a4e5278b3418d5662a31b300cec8ea0b`.
 
-1. `reconcile_card_quarantine_at` puede omitir ZIP ilegibles o inválidos y después quitar la marca de revisión. La falta de carpeta de cuarentena tampoco acredita una conciliación. Conservar el bloqueo si hay evidencia desconocida o no existe una importación positiva del archivo correspondiente. Corrección y pruebas a cargo del trabajador de esta sesión.
-2. `synchronize_report_progress` devuelve error en el primer `import_bundle` fallido. Esto impide procesar otros archivos remotos y subir originales locales sanos. El aislamiento por tarjeta del bucle de subidas no llega a ejecutarse. Pendiente: contar importaciones pendientes en `SyncReport`, continuar las demás importaciones y subidas, no escribir recibos de importaciones fallidas, y mantener `complete()==false` si queda cualquier conflicto. No ocultar errores de autenticación, inventario, transporte o almacenamiento mediante un catch general. Probar con servidor simulado y archivos sintéticos.
-3. La selección remota autenticada propuesta en `RECUPERACION-NUBE-DISENO.md` todavía no existe. Los validadores de baseline/historial requieren directorios; preparar un adaptador aislado o validación en memoria sin confiar en staging previamente mezclado. La coincidencia con un diseño remoto no autoriza por sí sola retirarlo del teléfono.
+En 0.6.21 se añadieron reintentos GET para HTTP 502/503/504 dentro de un único plazo. No se repiten mutaciones, activaciones ni transferencias físicas. El bloque inicial superó 222 pruebas en serie; una fixture WinHTTP falló en paralelo por presupuesto de prueba. Se está corrigiendo la fixture y añadiendo regresiones de procedencia antes de repetir la suite final. No atribuir esos resultados anteriores a la fuente posterior.
 
-## Restricciones y pruebas pendientes
+## Próximos pasos
 
-Conservar baseline, diarios, cuarentena, identidad exacta, prueba de propiedad y lectura física posterior. Nunca fabricar fases ni borrar marcadores para desbloquear. La autorización para devolver el original concreto del iPhone habitual ya consta; primero completar el flujo seguro. No tocar el iPhone del amigo sin sus propios datos y prueba autorizada.
+1. Revisar el trabajo del único implementador configurado en bank_backup.rs, cloud_sync.rs y adaptadores mínimos. El responsable mantiene versiones, documentación, perfil privado, UI y hardware.
+2. Congelar fuente, ejecutar las comprobaciones requeridas y compilar 0.6.21 con el script privado ignorado server/test-runtime/build-release-0.6.21.ps1 mediante el PowerShell incluido.
+3. Cerrar 0.6.20 cuando esté inactiva, abrir la nueva app y comprobar Cuenta y sincronización real. No repetir la recuperación física completada ni escribir sobre otra tarjeta sin autorización propia.
+4. Revisar UI grande y pequeña, auditar ZIP, guardar hashes, actualizar notas y subir solo fuente y documentación segura a la rama separada.
 
-Faltan pruebas de interrupción/reanudación en todas las fronteras durables, desconexión USB, reinicio de Windows, recuperación en otro PC de la misma cuenta y aislamiento entre dispositivos. También falta completar la conciliación de historiales local y remoto y repetir la prueba física. Los archivos privados y sus diagnósticos locales no se suben a Git.
+## Privacidad y cuota
 
-## Cuota
+Diagnósticos, ZIP remotos, imágenes, identificadores y tokens permanecen fuera de Git. No se consumió ningún crédito de reinicio. Consultar límites en checkpoints; reservar margen para guardar y publicar. Detener investigación, implementación y pruebas al quedar un 1 % o menos, según las instrucciones del usuario.
 
-Al comenzar esta petición quedaba un 9 % de la ventana de cinco horas. Se inició checkpoint al acercarse al 3 %, según AGENTS.md del usuario. No se consumió crédito de reinicio. Continuar desde este documento y el commit de la rama separada; conservar cambios de colaboradores y no sobrescribir main.
+## Validación y pendientes al cerrar esta ejecución
 
-## Cierre de cuota de esta ejecución
+La 0.6.21 compiló correctamente en producción (3 min 10 s). Ejecutable SHA-256 `6fd6f7128505fb5360cf3783c6b6e0daf53dc3c53be740aa1ccbcfc8e9cf884c`; ZIP `1f97f2ccbbdb0cc4d8ac418dd9843d69420312dfa37219dc7d1694115e304cae`, copiado a `C:/Users/danir/Documents/Codex/Wallet-Studio-0.6.21-Windows.zip`. Auditoría del paquete: 684 entradas, ninguna entrada privada detectada. Fuente final: 224 pruebas correctas, cero fallidas, siete ignoradas y cuatro exclusiones, ejecutadas en serie; registro privado `provenance-final-serial-regressions-20261025.log`. El ensayo anterior en paralelo falló en WinHTTP y tres fixtures; las fixtures se corrigieron y WinHTTP continúa como limitación de paralelismo documentada. No afirmar que la suite paralela final pasó.
 
-Corrección de cuarentena implementada en cloud_sync.rs: conserva la revisión ante archivos desconocidos, inválidos, no regulares, con digest incorrecto, carpeta ausente o ninguna copia de la identidad esperada. Nueva regresión sintética junto a la positiva existente. diff --check correcto. Pruebas GNU iniciadas en server/test-runtime/run-quarantine-review-regressions.ps1 (sesión 27129), resultado aún no revisado al alcanzar 99 % de cuota usada. No presentar estas pruebas como superadas ni distribuir ejecutable nuevo. Detener investigación, implementación y pruebas por AGENTS; sin reinicio de cuota.
+La app real 0.6.21 está abierta y la sesión guardada funciona. Cuenta terminó el intento con HTTP 413, sincronización pendiente. El servidor remoto fija `MAX_REMOTE_BUNDLE=32*1024*1024`; un payload local de historial completo ocupa unos 39,32 MiB antes del pequeño overhead ZIP (exportación Stored). No subir el límite a ciegas: revisar memoria/concurrencia, límite del bucket, cuotas y conservación inmutable; o diseñar particionado verificable. No borrar historial para reducir tamaño.
 
-## Confirmación del usuario y parada de cuota
+La prueba real preservó dos archivos en rejected-originals, pero no produjo ninguna disposición positiva; quedan dos ZIP en cuarentena. Por tanto NO afirmar resuelto el conflicto antiguo del perfil. Revisar de forma privada qué validación impide la resolución exhaustiva y si hay una copia principal antigua sin procedencia válida. Esta versión bloquea esas primarias y no implementa variantes/puntero activo ni las sobrescribe. Conservar todos los bytes y los originales fiables existentes.
 
-El usuario confirmó después de compilar: «Ya está reconectado y preparado». No se repitió la comprobación USB ni la revisión nativa porque la herramienta de límites indicó 99 % consumido en la ventana de cinco horas. Detención obligatoria según AGENTS.md; no se consumió crédito de reinicio. La autorización de devolver ese original continúa vigente. Al renovar la cuota, comprobar primero el USB exacto, ejecutar review-cloud-owned-original de la 0.6.20 y solo si valida íntegramente continuar con restore-cloud-owned-original. Siguen pendientes la prueba física, la conciliación/sincronización real y la revisión visual final.
+La recuperación física anterior sigue comprobada: diario íntegro/completo, cinco operaciones restauradas, revisión de esa tarjeta liberada, cero exportaciones pendientes y cero intentos preparados. No repetirla para intentar arreglar HTTP 413.
+
+Revisión visual: app real a 1182×685 y demo aislada a 1182×791, con galería y controles legibles. El parámetro demo 800×600 no produjo ese tamaño efectivo; la revisión de ventana realmente pequeña sigue pendiente. Demo cerrada; app real queda abierta en Cuenta. No se hizo una nueva transferencia al teléfono.
+
+Implementación dirigida con el único worker crack_builder configurado; sin cambios de servidor ni despliegue remoto en esta fase. Pendientes principales: límite HTTP 413, conflicto real restante, migración preservadora de originales antiguos inválidos y prueba en otro PC/dispositivo. No anunciar que todos los dispositivos están resueltos. Reservar cuota para checkpoint y no consumir crédito de reinicio.
