@@ -1,5 +1,23 @@
 # Continuación: migración privada, 26 de octubre de 2026
 
+## Estado vigente: migración activa y verificada el 27 de octubre
+
+El usuario autorizó continuar corrigiendo errores. Se corrigió la carga del auxiliar privado mediante `runpy.run_path`, sin cambiar código de la app. La importación del script se comprobó antes de ejecutar. Se suspendió de nuevo el escritor de Render y se verificó la pausa en su interfaz; después se ejecutó la migración con una confirmación de pausa nueva.
+
+Resultado real: **15 ZIP de copias copiados a R2 mediante creación condicional y lectura posterior exacta; ocho tablas y 37 filas copiadas a Supabase nuevo en una única transacción con comparación exacta**. Se conservaron IDs, hashes, sesiones, licencias, equipos e historial. El inventario de `storage.objects` del bucket de copias coincidió exhaustivamente con los 15 objetos indexados. El origen quedó intacto. El resultado privado está en `server/test-runtime/verified-local-migration-result.json`.
+
+Se guardó el entorno del mismo servicio Render con PostgreSQL de destino y proveedor explícito R2, y se cambió su rama a `codex/recovery-onboarding-2026-10-24`. La importación inicial añadió una segunda fila DATABASE_URL: se marcó esa fila nueva para retirar y se actualizó la fila original antes de guardar. No se modificaron WALLET_AUTH_SECRET, correo, webhooks ni productos. Se reanudó el servicio y se desplegó manualmente el commit **60bcc97f0bee7bd1f8b48bf633aef421b391cbb7**, que figura Live. La URL pública se conservó y `/health` respondió HTTP 200 con `status: ok`.
+
+Validación de extremo a extremo desde el ejecutable existente Wallet Studio 0.6.23: **112 peticiones realizadas, 56 originales y 56 miniaturas verificadas, cero fallos, cero originales ausentes**, resultado completo y proceso con salida cero. No fue una prueba sintética: utilizó la sesión guardada y el servidor desplegado. Otra comprobación autenticada confirmó la cuenta, el inventario completo de sus 15 copias y la descarga de la copia mayor: **33 364 712 bytes con SHA-256 exacto**. Por tanto, la sesión existente sigue aceptada sin extraer o publicar el secreto de autenticación.
+
+La revisión automática rechazó exportar todas las variables de Render al portapapeles por la exposición innecesaria de secretos. No se repitió ni se sustituyó por otra extracción de secretos. La continuidad de autenticación se comprobó mediante uso legítimo de la sesión existente contra el servicio nuevo.
+
+La biblioteca activa tiene 56 originales de 1536×969 y sus 56 miniaturas. Las 180 variantes históricas de diseños del almacenamiento antiguo siguen conservadas en el origen; no se afirma haber copiado todas las variantes retiradas. Todas las copias bancarias indexadas sí fueron preservadas y verificadas. Los archivos privados, recetas, imágenes, ZIP y claves siguen ignorados localmente. Firebase no se usó: no fue necesario para este reparto.
+
+La aplicación distribuida sigue en 0.6.23, sin cambios Rust ni necesidad de recompilar para este cambio de servidor. No se realizó una nueva prueba física de captura/restauración con iPhone, ni se repitió la devolución ya completada. No prometer ausencia universal de errores. El siguiente paso de aceptación física, si se solicita, es comprobar con un dispositivo preparado sin alterar originales ni fabricar estados de recuperación.
+
+Los apartados siguientes son antecedentes y quedan superados por este estado vigente. Los commits posteriores que solo documentan el resultado no requieren otro despliegue; Render tiene despliegue automático desactivado.
+
 ## Último punto de continuación: migración abortada antes de escribir
 
 Los dos ZIP faltantes se reconstruyeron con el mismo codificador `zip 2.4.2`, los manifiestos canónicos de los recibos y miembros locales verificados. Ambos resultados coinciden exactamente en SHA-256 y tamaño con los registros PostgreSQL originales. Hay **15 de 15 ZIP indexados disponibles localmente**, incluida la historia completa que registra la base de datos. El índice privado actualizado está en `server/test-runtime/migration-local-backups-audit.json`; no publicar sus rutas ni contenido.
