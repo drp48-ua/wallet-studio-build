@@ -4,7 +4,7 @@ All SQL transactions take one advisory xact lock. This intentionally serialises
 this small service across processes, including credential rotation and OTPs.
 No session locks, search_path state or prepared statements (transaction pooler).
 """
-import contextlib,hashlib,json,os,re,ssl,threading,urllib.request,urllib.error,urllib.parse
+import contextlib,datetime,hashlib,hmac,json,os,re,ssl,threading,urllib.request,urllib.error,urllib.parse
 
 MAX_REMOTE_BUNDLE=32*1024*1024
 TABLES=('users','sessions','bundles','purchase_orders','purchase_packs','webhook_events','activation','computers')
@@ -208,3 +208,77 @@ class SupabaseBlobs:
         # An orphan from an interrupted DB commit may already exist. Accept it
         # only after authenticated readback proves exactly the expected bytes.
         if self.read(user,ident)!=data:raise RemoteError('immutable_object_conflict')
+
+class R2Blobs:
+    """Private path-style S3, fixed-owner HTTPS endpoint; no public/signed URLs.
+
+    S3 cannot attest R2 public-domain settings. A separate read-only Cloudflare
+    API token checks BOTH r2.dev and custom domains; missing evidence fails closed.
+    No bucket/domain creation, policy mutation, deletion or upsert is supported.
+    """
+    def __init__(self,config,bucket,request=https_request,clock=None):
+        account=config.get('R2_ACCOUNT_ID','');access=config.get('R2_ACCESS_KEY_ID','');secret=config.get('R2_SECRET_ACCESS_KEY','');token=config.get('CLOUDFLARE_API_TOKEN','')
+        if not isinstance(account,str) or not re.fullmatch('[0-9a-f]{32}',account) or not isinstance(bucket,str) or not re.fullmatch('[a-z0-9][a-z0-9-]{1,61}[a-z0-9]',bucket):raise RemoteError('invalid_r2_configuration')
+        if any(not isinstance(value,str) or not value or len(value)>4096 or any(ord(c)<=32 or ord(c)>=127 for c in value) for value in (access,secret,token)):raise RemoteError('invalid_r2_configuration')
+        self.account=account;self.bucket=bucket;self.host=account+'.r2.cloudflarestorage.com';self.base='https://'+self.host
+        self.access=access;self.secret=secret;self.token=token;self.request=request;self.clock=clock or (lambda:datetime.datetime.now(datetime.timezone.utc))
+    def _object_key(self,key):
+        if not isinstance(key,str) or len(key)>512 or any(not re.fullmatch('[a-zA-Z0-9][a-zA-Z0-9_.-]{0,255}',part) for part in key.split('/')):raise RemoteError('invalid_object_key')
+        return key
+    def _signed(self,method,key='',data=None,extra=None,maximum=MAX_REMOTE_BUNDLE):
+        if key:self._object_key(key)
+        uri=urllib.parse.quote('/'+self.bucket+('/'+key if key else ''),safe='/~')
+        now=self.clock();stamp=now.strftime('%Y%m%dT%H%M%SZ');day=now.strftime('%Y%m%d');digest=hashlib.sha256(data or b'').hexdigest()
+        headers={'host':self.host,'x-amz-content-sha256':digest,'x-amz-date':stamp};headers.update(extra or {})
+        names=';'.join(sorted(headers));canonical=method+'\n'+uri+'\n\n'+''.join(name+':'+headers[name]+'\n' for name in sorted(headers))+'\n'+names+'\n'+digest
+        scope=day+'/auto/s3/aws4_request';message='AWS4-HMAC-SHA256\n'+stamp+'\n'+scope+'\n'+hashlib.sha256(canonical.encode()).hexdigest()
+        signing=('AWS4'+self.secret).encode()
+        for value in (day,'auto','s3','aws4_request'):signing=hmac.new(signing,value.encode(),hashlib.sha256).digest()
+        signature=hmac.new(signing,message.encode(),hashlib.sha256).hexdigest()
+        headers['Authorization']='AWS4-HMAC-SHA256 Credential='+self.access+'/'+scope+', SignedHeaders='+names+', Signature='+signature
+        return self.request(self.base+uri,method,headers,data,maximum)
+    def _control(self,suffix):
+        url='https://api.cloudflare.com/client/v4/accounts/'+self.account+'/r2/buckets/'+self.bucket+'/domains/'+suffix
+        status,body=self.request(url,'GET',{'Authorization':'Bearer '+self.token},maximum=65536)
+        if status!=200:raise RemoteError('r2_privacy_unverified',reason='storage_http',http_status=status)
+        try:
+            value=json.loads(body)
+            if not isinstance(value,dict) or value.get('success') is not True or not isinstance(value.get('result'),dict):raise ValueError()
+            return value['result']
+        except (ValueError,TypeError):raise RemoteError('r2_privacy_unverified',reason='storage_invalid_response') from None
+    def verify_bucket(self):
+        managed=self._control('managed');custom=self._control('custom')
+        domains=custom.get('domains')
+        if managed.get('enabled') is not False or not isinstance(domains,list) or len(domains)>1000 or any(not isinstance(domain,dict) or domain.get('enabled') is not False for domain in domains):raise RemoteError('storage_bucket_must_be_private',reason='storage_not_private')
+        status,_=self._signed('HEAD',maximum=65536)
+        if status!=200:raise RemoteError('storage_bucket_unavailable',reason='storage_http',http_status=status)
+    def path(self,user,ident):
+        if not re.fullmatch('[a-zA-Z0-9-]{1,64}',user) or not re.fullmatch('[0-9a-f]{64}',ident):raise RemoteError('invalid_object_key')
+        return user+'/'+ident
+    def read_key(self,key,maximum):
+        if type(maximum) is not int or not 0<maximum<=MAX_REMOTE_BUNDLE:raise RemoteError('invalid_object_limit')
+        status,data=self._signed('GET',self._object_key(key),maximum=maximum)
+        if status!=200 or len(data)>maximum:raise RemoteError('object_unavailable_or_corrupt')
+        return data
+    def create_key(self,key,data,maximum,content_type):
+        self._object_key(key)
+        if type(maximum) is not int or not 0<maximum<=MAX_REMOTE_BUNDLE or not isinstance(data,bytes) or not 0<len(data)<=maximum or content_type not in ('image/png','application/zip'):raise RemoteError('invalid_remote_object')
+        status,_=self._signed('PUT',key,data,{'content-type':content_type,'if-none-match':'*'},maximum=65536)
+        # R2 evaluates this condition atomically. Never retry without it, even
+        # after a concurrent write; exact authenticated readback decides success.
+        if status not in (200,201,409,412):raise RemoteError('object_not_saved')
+        if self.read_key(key,maximum)!=data:raise RemoteError('immutable_object_conflict')
+    def read(self,user,ident):
+        data=self.read_key(self.path(user,ident),MAX_REMOTE_BUNDLE)
+        if hashlib.sha256(data).hexdigest()!=ident:raise RemoteError('object_unavailable_or_corrupt')
+        return data
+    def create(self,user,ident,data):
+        if hashlib.sha256(data).hexdigest()!=ident:raise RemoteError('invalid_remote_object')
+        self.create_key(self.path(user,ident),data,MAX_REMOTE_BUNDLE,'application/zip')
+
+def configured_blobs(config,*,designs=False):
+    provider=config.get('WALLET_OBJECT_STORAGE','supabase')
+    if provider=='supabase':
+        return SupabaseBlobs(config['SUPABASE_URL'],config['SUPABASE_SERVICE_ROLE_KEY'],'wallet-designs' if designs else config['SUPABASE_STORAGE_BUCKET'])
+    if provider=='r2':return R2Blobs(config,config.get('R2_DESIGN_BUCKET' if designs else 'R2_BACKUP_BUCKET',''))
+    raise RemoteError('invalid_storage_configuration')

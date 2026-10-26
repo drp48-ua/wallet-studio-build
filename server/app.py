@@ -3,7 +3,7 @@ import argparse,contextlib,hashlib,hmac,json,os,pathlib,re,secrets,sqlite3,threa
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from accounts import Accounts,AccountError
 from designs import DesignCatalog,catalog_for_client,EXPANDED_CATALOG_HEADER
-from remote import PgDatabase,SupabaseBlobs,RemoteError,MAX_REMOTE_BUNDLE,StartupError,startup_stage
+from remote import PgDatabase,SupabaseBlobs,RemoteError,MAX_REMOTE_BUNDLE,StartupError,startup_stage,configured_blobs
 
 HEX=re.compile(r'^[0-9a-f]{64}$')
 MAX_BUNDLE=100*1024*1024
@@ -16,12 +16,14 @@ class Store:
         if os.environ.get('RENDER') and not self.remote:raise StartupError('configuration',ValueError())
         if self.remote:
             with startup_stage('configuration'):
-                required=('DATABASE_URL','SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','SUPABASE_STORAGE_BUCKET')
+                provider=os.environ.get('WALLET_OBJECT_STORAGE','supabase')
+                if provider not in ('supabase','r2'):raise ValueError('remote_storage_configuration_required')
+                required=('DATABASE_URL',) if provider=='r2' else ('DATABASE_URL','SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','SUPABASE_STORAGE_BUCKET')
                 if not all(os.environ.get(key) for key in required):raise ValueError('remote_storage_configuration_required')
                 if allow_registration:raise ValueError('remote_registration_fixture_forbidden')
                 self.remote_db=PgDatabase(os.environ['DATABASE_URL']);self.lock=self.remote_db.lock
             with startup_stage('storage_configuration'):
-                self.blob_store=SupabaseBlobs(os.environ['SUPABASE_URL'],os.environ['SUPABASE_SERVICE_ROLE_KEY'],os.environ['SUPABASE_STORAGE_BUCKET'])
+                self.blob_store=configured_blobs(os.environ) if provider=='r2' else SupabaseBlobs(os.environ['SUPABASE_URL'],os.environ['SUPABASE_SERVICE_ROLE_KEY'],os.environ['SUPABASE_STORAGE_BUCKET'])
             with startup_stage('database_schema'):self.remote_db.initialize()
             with startup_stage('storage_bucket'):self.blob_store.verify_bucket()
             self.allow_registration=False;self.session_seconds=session_seconds;self.limits={}

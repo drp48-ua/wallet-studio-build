@@ -1,5 +1,7 @@
 # Continuación — Wallet Studio 0.6.23 — 26 de octubre de 2026
 
+Estado posterior de preparación de servicios: consultar `CONTINUACION-MIGRACION-2026-10-26.md`. La migración real y el despliegue siguen pendientes; no confundir el adaptador y las pruebas sintéticas con un cambio de proveedor realizado.
+
 ## Estado vigente
 
 El usuario autorizó probar el ahorro de tráfico. Mantiene la condición de parar ante un error de compilación o pruebas. Ninguna ejecución de esta entrega falló; no se hicieron reparaciones ni reintentos tras una prueba fallida. Se conserva el trabajo local anterior de 0.6.22; último checkpoint remoto al comenzar: c8cf5b8, rama codex/recovery-onboarding-2026-10-24 de drp48-ua/wallet-studio-build.

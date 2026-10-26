@@ -1,6 +1,6 @@
 """Private paid catalog. No signed/public URLs, client product claims or asset paths."""
 import collections,hashlib,json,pathlib,re,struct,threading,zlib
-from remote import SupabaseBlobs,RemoteError
+from remote import SupabaseBlobs,RemoteError,configured_blobs
 PACK='studio-50-v1'
 MAX_ASSET=4*1024*1024
 LEGACY_ASSET=1024*1024
@@ -117,9 +117,10 @@ class DesignCatalog:
         if legacy_path.is_file():
             return load_legacy_catalog(legacy_path)
         return load_legacy_catalog(self.native_catalog_path())
-    def blobs(self):return SupabaseBlobs(self.config['SUPABASE_URL'],self.config['SUPABASE_SERVICE_ROLE_KEY'],'wallet-designs')
+    def blobs(self):return configured_blobs(self.config,designs=True)
     def read(self,item,capability=None):
-        key=(self.config.get('SUPABASE_URL',''),object_key(item,capability),item['sha256'],item['bytes'],item['width'],item['height'])
+        origin=(self.config.get('WALLET_OBJECT_STORAGE','supabase'),self.config.get('SUPABASE_URL',''),self.config.get('R2_ACCOUNT_ID',''),self.config.get('R2_DESIGN_BUCKET',''))
+        key=(origin,object_key(item,capability),item['sha256'],item['bytes'],item['width'],item['height'])
         with self._cache_lock:
             data=self._cache.get(key)
             if data is not None:
@@ -136,6 +137,9 @@ class DesignCatalog:
             return data
     def _read_verified(self,item,capability):
         blobs=self.blobs()
+        if self.config.get('WALLET_OBJECT_STORAGE','supabase')=='r2':
+            blobs.verify_bucket();data=blobs.read_key(object_key(item,capability),MAX_ASSET)
+            verify_asset(item,data);return data
         status,body=blobs.request(blobs.base+'/bucket/wallet-designs','GET',blobs.headers,maximum=65536)
         if status!=200:raise RemoteError('design_bucket_unavailable_or_public')
         metadata=json.loads(body)
