@@ -1,5 +1,17 @@
 # Continuación: migración privada, 26 de octubre de 2026
 
+## Actualización del 27 de octubre: biblioteca recuperada
+
+El usuario autorizó utilizar las seis variantes suministradas siempre que conservaran al menos 1536×969. La biblioteca activa está completa: 56 PNG de 1536×969 y 56 miniaturas separadas de 320×200. Se actualizaron únicamente seis huellas/tamaños nativos y seis de miniaturas en los catálogos. Los PNG grandes conservan sus bytes, sin ampliación ni compresión nueva. Los 112 objetos fueron creados de forma condicional y leídos después desde el bucket privado R2 para comprobar igualdad exacta. No se activó el proveedor en producción.
+
+Suite Python tras los catálogos: 97 pruebas ejecutadas, cero fallos y tres omitidas. La preparación independiente verificó los 112 PNG y sus dimensiones. No hubo cambios Rust ni nueva compilación de la aplicación. Los artefactos, imágenes y registros quedan ignorados en `server/test-runtime`; nunca se incluyen en Git.
+
+Se crearon las dos credenciales R2 después de confirmación del usuario. Una tiene acceso de objetos restringido a los dos buckets; la otra tiene lectura R2 de la cuenta, incluido contenido y configuración, alcance que se explicó y confirmó por separado. Las credenciales permanecen en configuración privada, sin imprimirse ni publicarse. Ambos buckets superaron la comprobación real de privacidad y acceso S3.
+
+El inventario completo de objetos se pudo consultar mediante PostgreSQL de origen, sin usar el API de almacenamiento bloqueada: 15 copias y 180 objetos de diseños, incluidos históricos. Se localizaron 13 ZIP locales con SHA y tamaño exactos. Para los dos restantes existen recibos y todos los miembros locales con huellas exactas; todavía debe verificarse si es posible reconstruir los ZIP idénticos. No afirmar que esos dos ya están recuperados. El esquema de las ocho tablas de origen (37 filas), sus relaciones y permisos superó la validación real de solo lectura; el destino no tiene tablas de Wallet Studio.
+
+Antes de migrar cuentas o activar el servidor: terminar la verificación de los 15 ZIP, pausar y drenar al escritor de origen, copiar de forma inmutable y verificar todos los ZIP, copiar y comparar exactamente las ocho tablas en una transacción. Conservar metadatos de copias e identidades, secreto de autenticación y URL pública. Los diseños históricos del origen siguen conservados allí; la biblioteca nueva no implica que se hayan recuperado sus 180 variantes antiguas.
+
 ## Estado real
 
 El usuario autorizó migrar Wallet Studio a sus nuevos servicios y publicar el código necesario en una rama separada. R2 está activado. Se crearon `wallet-designs` y `wallet-private`, ambos Standard, con acceso público desactivado; todavía están vacíos. El nuevo Supabase está disponible. Firebase tiene sesión abierta, pero solo muestra dos proyectos ajenos a Wallet Studio; no se modificaron.

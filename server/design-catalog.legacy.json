@@ -457,8 +457,8 @@
       "id": "ws-051",
       "title": "Sakura Fuji plata",
       "filename": "ws-051.png",
-      "sha256": "f68168668d26f9de76c2466d5d3b4922f68b77b71db6c5fb4996dbb01bfe69b6",
-      "bytes": 120945,
+      "sha256": "df8f0c62c863c4e9dd76b52f4fc0c524da27f0894bcbc906205fab97d8f9f726",
+      "bytes": 107123,
       "width": 320,
       "height": 200
     },
@@ -466,8 +466,8 @@
       "id": "ws-052",
       "title": "Telaraña roja y oro",
       "filename": "ws-052.png",
-      "sha256": "ce7913524917b59b0833c35fc2841af28b9b9472fefd556ce53015852b1cf86c",
-      "bytes": 174038,
+      "sha256": "68b68639dc8f87662c5d17f6ac36f9749db7dc6beee1c49a9c7612c7741b06e8",
+      "bytes": 152522,
       "width": 320,
       "height": 200
     },
@@ -475,8 +475,8 @@
       "id": "ws-053",
       "title": "Mármol blanco y oro",
       "filename": "ws-053.png",
-      "sha256": "bab3d4e5c7a71eb1b575523c9ef0e6b04509fc15d59df209c15f7285c21f1b6c",
-      "bytes": 114465,
+      "sha256": "42be936cb53fb3a73f12d836186177a6031304f6ffd6f4daaf36d9924cae6466",
+      "bytes": 100639,
       "width": 320,
       "height": 200
     },
@@ -484,8 +484,8 @@
       "id": "ws-054",
       "title": "Topografía esmeralda",
       "filename": "ws-054.png",
-      "sha256": "2f4923a181983b84268846da3017743a9c8d0aa48be72207c70f68bbd4b72f40",
-      "bytes": 139774,
+      "sha256": "7feab2dab28454b28afa7e39b01113fce08e6f71c6f4eb135726073dcb7e8d84",
+      "bytes": 126123,
       "width": 320,
       "height": 200
     },
@@ -493,8 +493,8 @@
       "id": "ws-055",
       "title": "La gran ola japonesa",
       "filename": "ws-055.png",
-      "sha256": "603553b43bb2c68df54598a4d7e0de9adba78d4e9b61e2768d81b1f82fe922dd",
-      "bytes": 163058,
+      "sha256": "fe3d3ad561ed17c17325c24c46c7c5d5c0957523d35af54ab66e2eec8748c3ed",
+      "bytes": 144476,
       "width": 320,
       "height": 200
     },
@@ -502,8 +502,8 @@
       "id": "ws-056",
       "title": "Clásica negra y oro",
       "filename": "ws-056.png",
-      "sha256": "2b9dc4460f2986aa1efa2c38b4eebb49e9765ab28424091739190a1092504c63",
-      "bytes": 94230,
+      "sha256": "3837dd06d505080e1acfda99cbd3224344fa62ea9318d928da0a47247db92c6f",
+      "bytes": 82101,
       "width": 320,
       "height": 200
     }
