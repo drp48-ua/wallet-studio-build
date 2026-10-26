@@ -58,6 +58,12 @@ impl std::fmt::Display for PendingCloudHistory {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("uncertain intent needs local recovery before cloud export")}
 }
 impl std::error::Error for PendingCloudHistory {}
+#[derive(Debug)]
+pub(crate) struct OverlappingCloudHistory;
+impl std::fmt::Display for OverlappingCloudHistory {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("Multiple unresolved bank write intents exist for this device/card; manual review is required")}
+}
+impl std::error::Error for OverlappingCloudHistory {}
 pub(crate) fn cloud_operation_dirs(root:&Path,udid:&str,hash:&str)->Result<Vec<PathBuf>> {
     let states=matching_states_at(root,udid,hash,false)?;
     anyhow::ensure!(states.iter().all(|(_,state)| matches!(state.phase.as_str(),"applied"|"restored")),PendingCloudHistory);
@@ -344,6 +350,12 @@ fn matching_states_at(root: &Path, udid: &str, card_hash: &str,
         // Historical clients restarted sequence at one. Accept only a strictly
         // dated chain whose preceding operation is already durably restored.
         // Preserve every immutable state and payload; ambiguous evidence blocks.
+        if older.sequence==1 && newer.sequence==1 && older.phase!="restored"
+            && older.created_unix_ms>0 && older.created_unix_ms<newer.created_unix_ms {
+            // A validated newer snapshot may carry the missing restored revision.
+            // This remains an error; only cloud import can defer its exact union.
+            bail!(OverlappingCloudHistory);
+        }
         anyhow::ensure!(older.sequence < newer.sequence
             || (older.sequence == 1 && newer.sequence == 1
                 && older.phase == "restored" && older.created_unix_ms > 0
@@ -351,11 +363,9 @@ fn matching_states_at(root: &Path, udid: &str, card_hash: &str,
             "Ambiguous duplicate bank write-intent sequence for this device/card");
     }
     let unresolved = found.iter().filter(|(_, state)| state.phase != "restored").count();
-    anyhow::ensure!(unresolved <= 1,
-        "Multiple unresolved bank write intents exist for this device/card; manual review is required");
+    anyhow::ensure!(unresolved <= 1,OverlappingCloudHistory);
     anyhow::ensure!(found.iter().take(found.len().saturating_sub(1))
-        .all(|(_, state)| state.phase == "restored"),
-        "An older unresolved bank write intent exists; manual review is required");
+        .all(|(_, state)| state.phase == "restored"),OverlappingCloudHistory);
     Ok(found)
 }
 

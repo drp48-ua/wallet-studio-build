@@ -329,8 +329,12 @@ pub fn account_dir(session:&crate::cloud_sync::Session)->Result<PathBuf> {
     let root=crate::storage::root().join("design-library").join(key);crate::storage::safe_chain(&root)?;Ok(root)
 }
 pub fn purchased_catalog(session:&crate::cloud_sync::Session)->Result<PurchasedCatalog> {
+    purchased_catalog_using(session,&mut |session,path,maximum|design_request(session,path,maximum))
+}
+type DesignTransport<'a>=dyn FnMut(&crate::cloud_sync::Session,&str,usize)->Result<Vec<u8>>+'a;
+fn purchased_catalog_using(session:&crate::cloud_sync::Session,request:&mut DesignTransport<'_>)->Result<PurchasedCatalog> {
     anyhow::ensure!(crate::cloud_sync::valid_server(&session.server),"Servicio no válido");
-    let bytes=design_request(session,"/v1/designs",65536)
+    let bytes=request(session,"/v1/designs",65536)
         .context("No se pudo actualizar el pack: revisa tu conexión o actualiza el servidor")?;
     parse_purchased_catalog(&bytes)
 }
@@ -351,14 +355,37 @@ pub fn verify_purchased(item:&PurchasedDesign,bytes:&[u8])->Result<()> {
     let image=decode_still(bytes)?;anyhow::ensure!((image.width(),image.height())==(item.width,item.height),"Tamaño de diseño no válido");Ok(())
 }
 pub fn download_purchased(session:&crate::cloud_sync::Session,item:&PurchasedDesign)->Result<PathBuf> {
-    anyhow::ensure!(native_geometry(item.width,item.height),"Este diseño aún no tiene un original de alta resolución publicado. Actualiza la biblioteca; no se ampliará la miniatura.");
-    anyhow::ensure!(crate::cloud_sync::valid_server(&session.server) && item.id.len()==6 && item.id.starts_with("ws-") && item.id[3..].bytes().all(|b|b.is_ascii_digit()),"Diseño no válido");
-    // Always ask the service when using a paid design, including cached designs.
-    let bytes=design_request(session,&format!("/v1/designs/{}",item.id),MAX_ASSET_BYTES)?;
-    verify_purchased(item,&bytes)?;
+    validate_purchase_request(session,item)?;
     let path=purchased_cache_path(session,item)?;
-    store_purchased_cache(&path,item,&bytes)?;
-    Ok(path)
+    download_purchased_at(session,item,&path,&mut |session,path,maximum|design_request(session,path,maximum))
+}
+fn validate_purchase_request(session:&crate::cloud_sync::Session,item:&PurchasedDesign)->Result<()> {
+    anyhow::ensure!(native_geometry(item.width,item.height),"Este diseño aún no tiene un original de alta resolución publicado. Actualiza la biblioteca; no se ampliará la miniatura.");
+    anyhow::ensure!(crate::cloud_sync::valid_server(&session.server) && !session.user_id.is_empty() && !session.access_token.is_empty()
+        && item.id.len()==6 && item.id.starts_with("ws-") && item.id[3..].bytes().all(|b|b.is_ascii_digit())
+        && item.filename==format!("{}.png",item.id),"Diseño o cuenta no válidos");
+    Ok(())
+}
+fn download_purchased_at(session:&crate::cloud_sync::Session,item:&PurchasedDesign,path:&Path,request:&mut DesignTransport<'_>)->Result<PathBuf> {
+    validate_purchase_request(session,item)?;crate::storage::safe_chain(path)?;
+    if read_image(path).is_ok_and(|bytes|verify_purchased(item,&bytes).is_ok()) {
+        // Cached pixels never attest entitlement. Ask for fresh authenticated
+        // metadata, then bind the selected version exactly; never fall back offline.
+        let catalog=purchased_catalog_using(session,request)?;
+        anyhow::ensure!(catalog.entitled,"Tu cuenta no tiene acceso a este pack. Actualiza la biblioteca.");
+        let current=catalog.designs.iter().find(|current|current.id==item.id).context("Este diseño ya no está disponible. Actualiza la biblioteca y vuelve a seleccionarlo.")?;
+        anyhow::ensure!(current.filename==item.filename && current.sha256==item.sha256 && current.bytes==item.bytes
+            && current.width==item.width && current.height==item.height,
+            "El diseño ha cambiado. Actualiza la biblioteca y vuelve a seleccionarlo.");
+        // Recheck after the network wait, since preview workers can repair cache.
+        verify_purchased(item,&read_image(path)?)?;return Ok(path.to_path_buf());
+    }
+    // Missing/corrupt cache still uses the authenticated asset endpoint and the
+    // existing exact verification plus atomic replacement, without re-encoding.
+    let bytes=request(session,&format!("/v1/designs/{}",item.id),MAX_ASSET_BYTES)?;
+    verify_purchased(item,&bytes)?;
+    store_purchased_cache(path,item,&bytes)?;
+    Ok(path.to_path_buf())
 }
 static DESIGN_NETWORK:std::sync::Mutex<()>=std::sync::Mutex::new(());
 fn design_request(session:&crate::cloud_sync::Session,path:&str,maximum:usize)->Result<Vec<u8>> {
@@ -539,6 +566,74 @@ mod paid_tests {
     fn native_fixture()->(PurchasedDesign,Vec<u8>) {
         let mut bytes=Vec::new();image::DynamicImage::new_rgb8(NATIVE_DESIGN_SIZE.0,NATIVE_DESIGN_SIZE.1).write_to(&mut Cursor::new(&mut bytes),image::ImageFormat::Png).unwrap();
         (PurchasedDesign {id:"ws-051".into(),title:"Nativo".into(),filename:"ws-051.png".into(),sha256:crate::bank_backup::sha256(&bytes).unwrap(),bytes:bytes.len(),width:NATIVE_DESIGN_SIZE.0,height:NATIVE_DESIGN_SIZE.1,thumbnail:None},bytes)
+    }
+    fn selected_catalog(item:&PurchasedDesign)->serde_json::Value {
+        let mut catalog:serde_json::Value=serde_json::from_slice(include_bytes!("../../server/design-catalog.json")).unwrap();
+        catalog["entitled"]=true.into();catalog["designs"][50]=serde_json::json!({"id":item.id,"title":item.title,"filename":item.filename,
+            "sha256":item.sha256,"bytes":item.bytes,"width":item.width,"height":item.height});catalog
+    }
+    fn selected_session()->crate::cloud_sync::Session {
+        crate::cloud_sync::Session {server:"https://synthetic.example.test".into(),user_id:"fixture-owner".into(),access_token:"synthetic-token".into()}
+    }
+    #[test] fn warm_native_apply_fetches_only_fresh_metadata_and_keeps_exact_original_pixels() {
+        let (item,bytes)=native_fixture();let root=std::env::temp_dir().join(format!("ws-warm-selected-{}",crate::flasher::generate_token()));let path=root.join("selected.png");
+        store_purchased_cache(&path,&item,&bytes).unwrap();let catalog=serde_json::to_vec(&selected_catalog(&item)).unwrap();let session=selected_session();let mut calls=Vec::new();
+        let selected=download_purchased_at(&session,&item,&path,&mut |authorized,endpoint,maximum| {
+            assert_eq!(authorized.access_token,session.access_token);assert_eq!(authorized.user_id,session.user_id);
+            calls.push((endpoint.to_string(),maximum));assert_eq!(endpoint,"/v1/designs");assert_eq!(maximum,65536);Ok(catalog.clone())
+        }).unwrap();
+        assert_eq!(calls,vec![("/v1/designs".to_string(),65536)]);assert_eq!(selected,path);assert_eq!(read_image(&selected).unwrap(),bytes);
+        let decoded=decode_still(&bytes).unwrap();assert_eq!((decoded.width(),decoded.height()),NATIVE_DESIGN_SIZE);assert_eq!(std::fs::read_dir(&root).unwrap().count(),1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn absent_or_corrupt_native_cache_downloads_verified_asset_and_repairs_atomically() {
+        let (item,bytes)=native_fixture();let root=std::env::temp_dir().join(format!("ws-cold-selected-{}",crate::flasher::generate_token()));let path=root.join("selected.png");let session=selected_session();
+        for corrupt in [false,true] {
+            if corrupt {std::fs::write(&path,b"interrupted cache").unwrap();}
+            let mut calls=0;download_purchased_at(&session,&item,&path,&mut |_,endpoint,maximum| {
+                calls+=1;assert_eq!(endpoint,"/v1/designs/ws-051");assert_eq!(maximum,MAX_ASSET_BYTES);Ok(bytes.clone())
+            }).unwrap();assert_eq!(calls,1);assert_eq!(read_image(&path).unwrap(),bytes);assert_eq!(std::fs::read_dir(&root).unwrap().count(),1);
+        }
+        std::fs::write(&path,b"preserved corrupt cache").unwrap();
+        assert!(download_purchased_at(&session,&item,&path,&mut |_,_,_|Ok(b"invalid asset".to_vec())).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(),b"preserved corrupt cache");assert_eq!(std::fs::read_dir(&root).unwrap().count(),1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn warm_cache_never_bypasses_revocation_catalog_changes_or_authentication_failure() {
+        let (item,bytes)=native_fixture();let root=std::env::temp_dir().join(format!("ws-denied-selected-{}",crate::flasher::generate_token()));let path=root.join("selected.png");let session=selected_session();
+        store_purchased_cache(&path,&item,&bytes).unwrap();
+        for case in ["revoked","missing_id","sha256","bytes","width","height","filename","pack","invalid_json","oversized_catalog","offline","unauthorized","forbidden"] {
+            let mut catalog=selected_catalog(&item);
+            match case {
+                "revoked"=>{catalog["entitled"]=false.into();catalog["designs"]=serde_json::json!([]);},
+                "missing_id"=>catalog["designs"].as_array_mut().unwrap().truncate(50),
+                "sha256"=>catalog["designs"][50]["sha256"]="0".repeat(64).into(),
+                "bytes"=>catalog["designs"][50]["bytes"]=(item.bytes+1).into(),
+                "width"=>catalog["designs"][50]["width"]=(item.width+1).into(),
+                "height"=>catalog["designs"][50]["height"]=(item.height+1).into(),
+                "filename"=>catalog["designs"][50]["filename"]="other.png".into(),
+                "pack"=>catalog["pack_id"]="other-pack".into(),_=>{},
+            }
+            let mut calls=0;let result=download_purchased_at(&session,&item,&path,&mut |_,endpoint,maximum| {
+                calls+=1;assert_eq!(endpoint,"/v1/designs");assert_eq!(maximum,65536);
+                match case {"offline"=>anyhow::bail!("synthetic offline"),"unauthorized"=>Err(crate::auto_update::HttpStatus(401).into()),"forbidden"=>Err(crate::auto_update::HttpStatus(403).into()),
+                    "invalid_json"=>Ok(b"invalid metadata".to_vec()),"oversized_catalog"=>Ok(vec![b' ';65537]),_=>Ok(serde_json::to_vec(&catalog).unwrap())}
+            });
+            assert!(result.is_err(),"case {case} must not authorize cached pixels");assert_eq!(calls,1);assert_eq!(read_image(&path).unwrap(),bytes);
+        }
+        for invalid in ["server","empty_token","empty_account","unsafe_id","wrong_filename"] {
+            let mut invalid_session=session.clone();let mut invalid_item=item.clone();
+            match invalid {"server"=>invalid_session.server="http://untrusted.example.test".into(),"empty_token"=>invalid_session.access_token.clear(),"empty_account"=>invalid_session.user_id.clear(),"unsafe_id"=>invalid_item.id="../../".into(),_=>invalid_item.filename="other.png".into()}
+            let mut called=false;assert!(download_purchased_at(&invalid_session,&invalid_item,&path,&mut |_,_,_| {called=true;Ok(Vec::new())}).is_err());assert!(!called);assert_eq!(read_image(&path).unwrap(),bytes);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn warm_cache_changed_during_entitlement_check_is_not_returned() {
+        let (item,bytes)=native_fixture();let root=std::env::temp_dir().join(format!("ws-raced-selected-{}",crate::flasher::generate_token()));let path=root.join("selected.png");
+        store_purchased_cache(&path,&item,&bytes).unwrap();let mut calls=0;
+        assert!(download_purchased_at(&selected_session(),&item,&path,&mut |_,endpoint,_| {
+            calls+=1;assert_eq!(endpoint,"/v1/designs");std::fs::write(&path,b"concurrently changed cache").unwrap();Ok(serde_json::to_vec(&selected_catalog(&item)).unwrap())
+        }).is_err());assert_eq!(calls,1);assert_eq!(std::fs::read(&path).unwrap(),b"concurrently changed cache");std::fs::remove_dir_all(root).unwrap();
     }
     #[test] fn native_card_assets_keep_their_four_mib_bound_and_capability_while_legacy_stays_one_mib() {
         assert_eq!(NATIVE_CATALOG_CAPABILITY,"native-2k-v2");
