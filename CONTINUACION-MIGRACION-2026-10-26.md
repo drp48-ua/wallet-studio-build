@@ -1,5 +1,17 @@
 # Continuación: migración privada, 26 de octubre de 2026
 
+## Último punto de continuación: migración abortada antes de escribir
+
+Los dos ZIP faltantes se reconstruyeron con el mismo codificador `zip 2.4.2`, los manifiestos canónicos de los recibos y miembros locales verificados. Ambos resultados coinciden exactamente en SHA-256 y tamaño con los registros PostgreSQL originales. Hay **15 de 15 ZIP indexados disponibles localmente**, incluida la historia completa que registra la base de datos. El índice privado actualizado está en `server/test-runtime/migration-local-backups-audit.json`; no publicar sus rutas ni contenido.
+
+Se suspendió el servicio Render antiguo para drenar escrituras. La primera ejecución del script privado `migrate-from-verified-local.py` terminó al importar un auxiliar: `ModuleNotFoundError: No module named 'stage_local_library_r2'`. El archivo auxiliar existente se llama `stage-local-library-r2.py`, con guiones. El fallo ocurrió en los imports, antes de entrar en `run()`: no se copió ningún ZIP a R2, no se abrieron conexiones de migración y no se escribió ninguna tabla de destino. No se corrigió ni reintentó tras el error, por la condición del usuario de detenerse ante fallos.
+
+Se revirtió inmediatamente la suspensión con `Resume Web Service`. La interfaz retiró el estado Suspended y volvió a ofrecer `Suspend Web Service`; la configuración del proveedor, rama y credenciales del servicio anterior no se modificó. No se ha probado su salud después de reanudar; la restricción conocida de almacenamiento del Supabase antiguo no se ha resuelto.
+
+Siguiente ejecución autorizada: corregir únicamente la carga del auxiliar privado (el módulo con guiones no se puede importar por el nombre con guiones bajos). Revisar la herramienta antes de ejecutarla. Volver a pausar y verificar el escritor, copiar los 15 ZIP de forma condicional con lectura posterior exacta, copiar y comparar las ocho tablas en una transacción y conservar el origen. El script privado ya comprueba el inventario exhaustivo de copias mediante `storage.objects` y lo compara con todos los índices de `wallet_private.bundles`; el destino solo se activa después de validar la copia. No reutilizar un marcador de pausa de una ejecución anterior.
+
+Los 112 objetos de la biblioteca siguen verificados en R2; las credenciales limitadas permanecen en el archivo privado de destino. El servidor aún no utiliza esa biblioteca nueva. Tras migrar, actualizar la rama y el entorno del mismo servicio Render, mantener `WALLET_AUTH_SECRET` y URL pública, desplegar y comprobar la aplicación 0.6.23. No afirmar que la app nueva ya está activa ni repetir operaciones físicas del teléfono.
+
 ## Actualización del 27 de octubre: biblioteca recuperada
 
 El usuario autorizó utilizar las seis variantes suministradas siempre que conservaran al menos 1536×969. La biblioteca activa está completa: 56 PNG de 1536×969 y 56 miniaturas separadas de 320×200. Se actualizaron únicamente seis huellas/tamaños nativos y seis de miniaturas en los catálogos. Los PNG grandes conservan sus bytes, sin ampliación ni compresión nueva. Los 112 objetos fueron creados de forma condicional y leídos después desde el bucket privado R2 para comprobar igualdad exacta. No se activó el proveedor en producción.
