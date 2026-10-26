@@ -1,5 +1,5 @@
 """Private paid catalog. No signed/public URLs, client product claims or asset paths."""
-import hashlib,json,pathlib,re,struct,zlib
+import collections,hashlib,json,pathlib,re,struct,threading,zlib
 from remote import SupabaseBlobs,RemoteError
 PACK='studio-50-v1'
 MAX_ASSET=4*1024*1024
@@ -8,6 +8,8 @@ LEGACY_SIZE=(320,200)
 NATIVE_SIZE=(1536,969)
 ASSET_LIMITS={LEGACY_SIZE:LEGACY_ASSET,NATIVE_SIZE:MAX_ASSET}
 MAX_DESIGNS=100
+DESIGN_CACHE_BYTES=64*1024*1024
+DESIGN_CACHE_ENTRIES=128
 LEGACY_COUNT=50
 EXPANDED_CATALOG_HEADER='X-Wallet-Studio-Catalog'
 EXPANDED_CATALOG_CAPABILITY='expanded-v1'
@@ -94,8 +96,16 @@ def verify_asset(item,data):
     if (width,height)!=(item.get('width'),item.get('height')):raise ValueError('invalid_design_dimensions')
 
 class DesignCatalog:
-    def __init__(self,config):
+    def __init__(self,config,*,cache_bytes=DESIGN_CACHE_BYTES,cache_entries=DESIGN_CACHE_ENTRIES):
+        if type(cache_bytes) is not int or not 0<=cache_bytes<=DESIGN_CACHE_BYTES or type(cache_entries) is not int or not 0<=cache_entries<=DESIGN_CACHE_ENTRIES:raise ValueError('invalid_design_cache_limit')
         self.config=config
+        # Process-local, ephemeral PNGs only. Authorization/pack checks remain
+        # in the existing HTTP route before every call, including cache hits.
+        self._cache=collections.OrderedDict();self._cache_size=0
+        self._cache_bytes=cache_bytes;self._cache_entries=cache_entries
+        # One bounded lock also deduplicates simultaneous cold reads without
+        # an unbounded table of per-key locks or in-flight payload copies.
+        self._cache_lock=threading.Lock()
     def native_catalog_path(self):
         return pathlib.Path(self.config.get('WALLET_DESIGN_CATALOG',str(DEFAULT_CATALOG_PATH)))
     def legacy_catalog_path(self):
@@ -109,6 +119,22 @@ class DesignCatalog:
         return load_legacy_catalog(self.native_catalog_path())
     def blobs(self):return SupabaseBlobs(self.config['SUPABASE_URL'],self.config['SUPABASE_SERVICE_ROLE_KEY'],'wallet-designs')
     def read(self,item,capability=None):
+        key=(self.config.get('SUPABASE_URL',''),object_key(item,capability),item['sha256'],item['bytes'],item['width'],item['height'])
+        with self._cache_lock:
+            data=self._cache.get(key)
+            if data is not None:
+                try:verify_asset(item,data)
+                except ValueError:
+                    self._cache_size-=len(self._cache.pop(key))
+                else:
+                    self._cache.move_to_end(key);return data
+            data=self._read_verified(item,capability)
+            if len(data)<=self._cache_bytes and self._cache_entries:
+                while self._cache and (self._cache_size+len(data)>self._cache_bytes or len(self._cache)>=self._cache_entries):
+                    _,previous=self._cache.popitem(last=False);self._cache_size-=len(previous)
+                self._cache[key]=data;self._cache_size+=len(data)
+            return data
+    def _read_verified(self,item,capability):
         blobs=self.blobs()
         status,body=blobs.request(blobs.base+'/bucket/wallet-designs','GET',blobs.headers,maximum=65536)
         if status!=200:raise RemoteError('design_bucket_unavailable_or_public')
