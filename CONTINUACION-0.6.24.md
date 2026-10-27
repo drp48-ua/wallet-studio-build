@@ -39,3 +39,11 @@ Las dos comprobaciones Windows/MSVC del commit a28cd93aa7fa36acf067cc967c773eb48
 PR #7 integrado mediante merge normal, sin force-push ni reescritura: https://github.com/drp48-ua/wallet-studio-build/pull/7. Main resultante: aca5756ff372bca6a040e9ee9cbc2418c20e4d66. La publicación automática autorizada empezó en https://github.com/drp48-ua/wallet-studio-build/actions/runs/40494748264, build 1. Todavía debe comprobarse su resultado, firma y aceptación del canal real. El paquete local lleva build_id=0 y puede aceptar ese build 1 de la misma versión.
 
 El servicio Supabase/R2 migrado sigue activo y no se cambia para esta entrega. No se han realizado nuevas escrituras en el iPhone. No se ha probado un PC limpio sin componentes Apple ni se certifica compatibilidad universal.
+
+## Resultado final del canal
+
+Publicación 40494748264 terminada correctamente en 14m54s. Release estable: https://github.com/drp48-ua/wallet-studio-build/releases/tag/desktop-build-1. Versión 0.6.24, build 1, commit main aca5756ff372bca6a040e9ee9cbc2418c20e4d66. Se descargaron los assets reales y se verificó RSA-PSS/SHA-256 con la clave pública fijada del cliente, longitud y SHA-256 del ZIP, SHA-256 del EXE y 676 archivos sin rutas privadas/prohibidas.
+
+ZIP publicado SHA-256: 02fa8e2d1d5bb4e34a4bd669ecae9725063d0918f6ba68586be3e5435143381b. EXE MSVC publicado SHA-256: 0467a8853d407247201cc96f1a5fc545d8bd9d3226d777ee6d4a8625b4f3ec40. Copia de entrega: C:/Users/danir/Documents/Codex/Wallet-Studio-0.6.24-Windows-publicada.zip. El ZIP GNU anterior se conserva separado.
+
+En la app normal que ya estaba abierta, Buscar actualizaciones pasó de canal no disponible a «Wallet Studio está actualizado» con el canal real publicado. El código verifica firma y metadatos antes de emitir ese resultado. No se presenta ese mensaje como prueba de una sustitución/reinicio: no se ha forzado un reinicio mientras la app comprobaba una copia. Las pruebas del actualizador cubren preparación y protección ante retroceso; la publicación completa demuestra el flujo main, pruebas, firma y assets reales. Los cambios futuros en main publicarán builds nuevos solo si superan el workflow, y el cliente los aplicará al volver a abrirse.
