@@ -21,3 +21,11 @@ El responsable revisó el diff final de los tres módulos. CaptureInventory se c
 Las pruebas de nube terminaron con 31 correctas y 3 ignoradas; app/presentación/cola, con 27 correctas. La primera suite completa del entorno restringido obtuvo 239 correctas y dos fallos en pruebas existentes de transporte WinHTTP local. Sin cambiar esas pruebas, el responsable repitió el mismo binario con acceso normal: 241 correctas, cero fallidas, 7 ignoradas y cuatro exclusiones de hardware, en 30,80 s. Registros protegidos e ignorados: server/test-runtime/scoped-capture-0625-*.log.
 
 El usuario autorizó expresamente integrar en main al terminar para probar la actualización desde 0.6.24. Se conservará su instancia 0.6.24 sin actualizarla en su lugar. Pendiente de este checkpoint: paquete de distribución, comprobación Windows/MSVC y publicación firmada; la captura física en el segundo iPhone todavía no se da por comprobada.
+
+## Integración autorizada en main
+
+Las dos comprobaciones Windows/MSVC del commit 74e67e3556da21f9f90eec480beb722e436267a6 terminaron correctamente: ejecuciones 40566844072 y 40566934600. PR #8: https://github.com/drp48-ua/wallet-studio-build/pull/8. Se integró mediante merge normal, sin force-push: main fcd5e0849be594709a59e939f5b08073611e5079.
+
+El paquete GNU local contiene 676 archivos, sin datos privados, con EXE idéntico al candidato. ZIP SHA-256: 4eb5ec8defa58f3e01d00a7122a65b4158718dd1fc84e2bb985099205c255ad6. EXE SHA-256: 54835d4448a1ca2fd78358e40e531b897e99e271f16d946a7144f73e8d05db9b. Se revisó la demostración aislada 0.6.25 en tamaño pequeño/maximizado y con tres tarjetas ficticias/estado vacío, sin red ni USB. Los nuevos mensajes de incidencias se validaron mediante pruebas de presentación; no se atribuye a esta revisión visual una captura real.
+
+La publicación firmada build 2 está en curso: https://github.com/drp48-ua/wallet-studio-build/actions/runs/40569332467. Falta verificar resultado, firma, ZIP y EXE reales. Verificador privado ignorado preparado: server/test-runtime/verify-published-0625.py. El perfil real conserva su actualización activa 0.6.24 build 1. El responsable no ha actualizado ese perfil ni iniciado la captura física del segundo iPhone: el usuario quiere probar personalmente el salto desde 0.6.24.
