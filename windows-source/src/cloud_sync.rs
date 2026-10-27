@@ -557,24 +557,46 @@ fn finish_login(server:&str,body:serde_json::Value,operation:&str,initial_link_c
     let encrypted=protect(&serde_json::to_vec(&session)?,false)?;
     let path=root.join("cloud-session.dpapi"); crate::storage::write_mutable(&path,&encrypted)?; Ok(session)
 }
+/// In-memory evidence of one fully processed, authenticated inventory. A partial
+/// report may authorize a different phone, never the phone with pending evidence.
+/// No constructor is public and this grant is never persisted as an offline receipt.
+#[derive(Clone,Debug)]
+pub struct CaptureInventory { owner:VaultOwner,session_fingerprint:String,blocked_devices:std::collections::BTreeSet<String> }
+impl CaptureInventory {
+    fn matches_session(&self,session:&Session)->bool {
+        owner_for(session).is_ok_and(|owner|owner==self.owner)
+            && session_fingerprint(session).is_ok_and(|fingerprint|fingerprint==self.session_fingerprint)
+    }
+    pub fn review_pending_for(&self,session:&Session,udid:&str)->bool {
+        self.matches_session(session) && self.blocked_devices.contains(&udid.to_ascii_lowercase())
+    }
+    pub fn allows(&self,session:&Session,udid:&str,hash:&str)->bool {
+        !udid.is_empty() && udid.len()<=256 && crate::wallet_export::is_exact_card_hash(hash)
+            && self.matches_session(session)
+            && !self.blocked_devices.contains(&udid.to_ascii_lowercase())
+    }
+}
+fn session_fingerprint(session:&Session)->Result<String> { crate::bank_backup::sha256(&serde_json::to_vec(&(owner_for(session)?,&session.access_token))?) }
 #[derive(Clone,Debug,Default)]
-pub struct SyncReport { pub downloaded:usize,pub uploaded:usize,pub verified:usize,pub local_pending:usize,pub remote_pending:usize,pub rejected_originals:usize,pub pending_reasons:BTreeMap<String,usize> }
+pub struct SyncReport { pub downloaded:usize,pub uploaded:usize,pub verified:usize,pub local_pending:usize,pub remote_pending:usize,pub rejected_originals:usize,pub pending_reasons:BTreeMap<String,usize>,pub capture_inventory:Option<CaptureInventory>,pub capture_identity_unknown:bool }
 impl SyncReport {
-    pub fn complete(&self)->bool { self.local_pending==0 && self.remote_pending==0 }
+    pub fn complete(&self)->bool { self.local_pending==0 && self.remote_pending==0 && !self.capture_identity_unknown }
     pub fn message(&self)->String {
-        if self.downloaded+self.uploaded+self.verified+self.local_pending+self.remote_pending+self.rejected_originals==0 {
+        if self.downloaded+self.uploaded+self.verified+self.local_pending+self.remote_pending+self.rejected_originals==0 && !self.capture_identity_unknown {
             return "Cuenta conectada. No hay copias bancarias verificadas en este perfil ni en la nube. Abre la app con esta cuenta en el PC que conserva los originales para sincronizarlos.".into();
         }
         let mut summary=format!("Copias: {} descargadas · {} subidas · {} verificadas",self.downloaded,self.uploaded,self.verified);
         if self.rejected_originals>0 {summary.push_str(&format!(". {} archivos antiguos no se usan como original; se conservan",self.rejected_originals));}
         if self.complete() {return summary;}
         let mut details=Vec::new();
+        if self.capture_identity_unknown {details.push("No se pudo verificar la identidad de todas las copias o el registro de recuperación; se bloquean las capturas nuevas".into());}
         if self.remote_pending>0 {details.push(format!("{} copias de la nube requieren revisión; el original local y la copia en cuarentena se conservan. Las demás copias se han seguido procesando",self.remote_pending));}
         if self.local_pending>0 {
             let reasons=self.pending_reasons.iter().map(|(reason,count)|format!("{count}: {reason}")).collect::<Vec<_>>().join(" · ");
             details.push(format!("{} copias locales requieren revisión; se conservan sin subir. {reasons}",self.local_pending));
         }
-        format!("{summary}. {}. No se capturará un original ausente.",details.join(". "))
+        let eligibility=if self.capture_inventory.is_some() {"La revisión bloquea los iPhones afectados; las tarjetas de otros iPhones pueden guardar su original tras comprobar sus requisitos."} else {"No se capturará un original ausente: falta clasificar con seguridad todas las copias."};
+        format!("{summary}. {}. {eligibility}",details.join(". "))
     }
 }
 #[derive(Debug)]
@@ -669,6 +691,8 @@ fn synchronize_owned_report_with_limit(root:&Path,session:&Session,progress:&mut
     request:&mut SyncTransport<'_>,upload_limit:usize)->Result<SyncReport> {
     let mut report=SyncReport::default();
     let owner=require_owner_at(root,session)?;
+    let mut blocked_devices=std::collections::BTreeSet::new();
+    let mut identity_unknown=false;
     let headers=vec![("Authorization".into(),format!("Bearer {}",session.access_token))];
     progress("Consultando las copias de tu cuenta…");
     let bytes=request("GET",&format!("{}/v1/bundles",session.server),&headers,&[],1024*1024).context(SyncFailure::Inventory)?;
@@ -677,6 +701,7 @@ fn synchronize_owned_report_with_limit(root:&Path,session:&Session,progress:&mut
     let listing:Listing=serde_json::from_slice(&bytes)?; anyhow::ensure!(listing.bundles.len()<=1000,"cloud inventory too large");
     let mut remote_ids=std::collections::BTreeSet::new();
     let mut pending_ids=std::collections::BTreeSet::new();
+    let mut pending_devices=BTreeMap::new();
     let mut legacy_identities=std::collections::BTreeSet::new();
     let mut pending_manifests=BTreeMap::new();
     let seen=seen_directory(&root,&owner)?; crate::storage::safe_chain(&seen)?; fs::create_dir_all(&seen)?;
@@ -694,12 +719,14 @@ fn synchronize_owned_report_with_limit(root:&Path,session:&Session,progress:&mut
             if error.downcast_ref::<crate::bank_backup::UnprovenOriginal>().is_some() {
                 let evidence=classify_rejected_archive(root,&bundle)?.context("unproven archive failed complete classification")?;
                 persist_exact(&root.join("rejected-originals").join(format!("{}.zip",entry.id)),&bundle)?;
+                pending_devices.insert(entry.id.clone(),evidence.udid.to_ascii_lowercase());
                 legacy_identities.insert((evidence.udid,evidence.card_hash));pending_ids.insert(entry.id.clone());report.remote_pending+=1;continue;
             }
             if !isolated_import_conflict(&error) {return Err(error.context(SyncFailure::Import));}
             // import_bundle returns the semantic error only after the exact ZIP
             // is retained and the identity is blocked. Never write a seen receipt.
             pending_ids.insert(entry.id.clone());report.remote_pending+=1;
+            pending_devices.insert(entry.id.clone(),parse_bundle(&bundle)?.0.udid.to_ascii_lowercase());
             pending_manifests.insert(entry.id.clone(),parse_bundle(&bundle)?.0);
             continue;
         }
@@ -712,6 +739,7 @@ fn synchronize_owned_report_with_limit(root:&Path,session:&Session,progress:&mut
             if retained.exists() {anyhow::ensure!(fs::read(&retained)?==bundle,SyncFailure::Storage);}
             else {crate::storage::write_new(&retained,&bundle).context(SyncFailure::Storage)?;}
             pending_ids.insert(entry.id.clone());report.remote_pending+=1;
+            pending_devices.insert(entry.id.clone(),manifest.udid.to_ascii_lowercase());
             pending_manifests.insert(entry.id.clone(),manifest);
             continue;
         }
@@ -740,12 +768,22 @@ fn synchronize_owned_report_with_limit(root:&Path,session:&Session,progress:&mut
             pending_ids.remove(&id);report.remote_pending-=1;report.downloaded+=1;
         }
     }
+    for id in &pending_ids {
+        if let Some(device)=pending_devices.get(id) {blocked_devices.insert(device.clone());}
+        else {identity_unknown=true;}
+    }
     progress("Verificando y subiendo originales locales…");
     let banks=root.join("bank-backups"); if banks.is_dir() { for entry in fs::read_dir(banks)? {
         // A recovery or incomplete original for one card must not prevent other
         // verified originals being uploaded. Never upload or alter the failed one.
         let path=entry?.path();
         let bundles=match export_bundles(&root,&path,upload_limit) {Ok(bundles)=>bundles,Err(error)=>{
+            // Only a validated baseline can scope a failed local export. A path
+            // name or unreadable/corrupt identity cannot exempt another phone.
+            match (error.downcast_ref::<LocalReview>(),crate::bank_backup::validate_bundle_directory(&path)) {
+                (Some(LocalReview::Conflict | LocalReview::Recovery | LocalReview::OriginalSize | LocalReview::OperationSize),Ok(baseline))=>{blocked_devices.insert(baseline.udid.to_ascii_lowercase());},
+                _=>identity_unknown=true,
+            }
             report.local_pending+=1;*report.pending_reasons.entry(local_review_message(&error)).or_default()+=1;continue;
         }};
         for bundle in bundles {
@@ -758,7 +796,18 @@ fn synchronize_owned_report_with_limit(root:&Path,session:&Session,progress:&mut
         anyhow::ensure!(confirmation.id==id && confirmation.sha256==id && confirmation.size==bundle.len(),SyncFailure::Receipt);
         let (manifest,_)=parse_bundle(&bundle)?;write_seen(&root,&seen.join(&id),&id,manifest).context(SyncFailure::Receipt)?;report.uploaded+=1;
         }
-    }} Ok(report)
+    }}
+    // Every network/inventory/import/receipt failure above returns without a
+    // proof. Known conflicts are isolated only after the full loop completes.
+    match crate::wallet_export::pending_recovery_operations_at(&root.join("wallet-export-recovery")) {
+        Ok(pending)=>for item in pending {blocked_devices.insert(item.udid.to_ascii_lowercase());},
+        Err(_)=>identity_unknown=true,
+    }
+    report.capture_identity_unknown=identity_unknown;
+    if !identity_unknown {
+        report.capture_inventory=Some(CaptureInventory {owner,session_fingerprint:session_fingerprint(session)?,blocked_devices});
+    }
+    Ok(report)
 }
 
 fn same_issuer(a:&crate::bank_backup::Baseline,b:&crate::bank_backup::Baseline)->bool {
@@ -1584,6 +1633,17 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         }).unwrap();
         assert_eq!(downloaded,bundles.iter().map(|(id,_)|id.clone()).collect::<Vec<_>>());assert_eq!(uploaded,vec![local.udid]);
         assert_eq!((report.remote_pending,report.downloaded,report.uploaded),(2,1,1));assert!(!report.complete());
+        let inventory=report.capture_inventory.as_ref().expect("complete inventory has only positively identified conflicts");
+        assert!(inventory.allows(&session,"synthetic-new-phone",&input.card_hash),"foreign review must not block another phone");
+        assert!(!inventory.allows(&session,&input.udid,&input.card_hash));
+        assert!(inventory.review_pending_for(&session,&input.udid));
+        assert!(!inventory.review_pending_for(&session,"synthetic-new-phone"));
+        assert!(!inventory.allows(&session,&input.udid,"zM6NYhwXMZrAw0sRUjR62wmF4ZQ="),"same-device review blocks all its cards");
+        assert!(!inventory.allows(&Session {access_token:"different-session".into(),..session.clone()},"synthetic-new-phone",&input.card_hash));
+        assert!(!inventory.allows(&Session {user_id:"different-owner".into(),..session.clone()},"synthetic-new-phone",&input.card_hash));
+        assert!(!inventory.allows(&Session {server:"https://different.example.test".into(),..session.clone()},"synthetic-new-phone",&input.card_hash));
+        assert!(!inventory.allows(&session,"synthetic-new-phone","unknown-card"));
+        assert!(report.message().contains("otros iPhones pueden guardar"));
         let seen=seen_directory(&target,&owner_for(&session).unwrap()).unwrap();
         for (id,bytes) in &bundles[..2] {assert!(!seen.join(id).exists());assert_eq!(fs::read(target.join("quarantine").join(format!("{id}.zip"))).unwrap(),*bytes);}
         assert!(crate::storage::card_is_blocked_at(&target,&input.udid,&input.card_hash));assert!(seen.join(&bundles[2].0).exists());
@@ -1616,6 +1676,24 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         }
         let report=SyncReport {remote_pending:1,..Default::default()};
         assert!(!report.complete());assert!(!report.message().contains("No hay copias bancarias"));
+        assert!(report.capture_inventory.is_none(),"a synthetic partial count is not an authenticated inventory grant");
+    }
+    #[test] fn capture_inventory_denies_unknown_local_identity_and_corrupt_recovery_ledger() {
+        for corrupt_recovery in [false,true] {
+            let root=fixture_root();let input=fixture_baseline();
+            let path=crate::bank_backup::save_fixture_at(&root.join("bank-backups"),&input).unwrap();
+            let session=Session {server:"https://synthetic.example.test".into(),access_token:"synthetic-token".into(),user_id:"fixture-owner".into()};
+            bind_owner_at(&root,&session,true).unwrap();
+            if corrupt_recovery {
+                crate::storage::write_new(&root.join("wallet-export-recovery").join("abcdef0123456789abcd").join("state-0001-prepared.json"),b"corrupt journal").unwrap();
+            } else {fs::write(path.join("baseline.json"),b"corrupt identity").unwrap();}
+            let report=synchronize_owned_report(&root,&session,&mut |_|{},&mut |method,url,_,_,_| {
+                assert_eq!(method,"GET");assert!(url.ends_with("/v1/bundles"));Ok(br#"{"bundles":[]}"#.to_vec())
+            }).unwrap();
+            assert_eq!(report.local_pending,1);assert!(report.capture_inventory.is_none());assert!(report.capture_identity_unknown);assert!(!report.complete());
+            assert!(report.message().contains("falta clasificar con seguridad"));
+            fs::remove_dir_all(root).unwrap();
+        }
     }
     #[test] fn customer_owner_binding_requires_consent_and_denies_account_or_server_switch() {
         let root=fixture_root(); let a=Session {server:"https://EXAMPLE.com:443/".into(),user_id:"account-a".into(),access_token:"fixture-token".into()};
