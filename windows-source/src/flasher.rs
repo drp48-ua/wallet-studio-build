@@ -72,6 +72,7 @@ pub fn generate_token() -> String {
 }
 
 fn preflight_wallet_write(udid: &str) -> Result<()> {
+    crate::storage::ensure_ready()?;
     crate::device::ensure_wallet_version_supported(udid)?;
     let pending = crate::wallet_export::pending_recovery_operations()?;
     anyhow::ensure!(pending.iter().all(|operation| !operation.udid.eq_ignore_ascii_case(udid)),
@@ -103,6 +104,8 @@ where
     L: FnMut(&str),
 {
     validate_write_destination(target_dir, leaf_name, payload.len())?;
+    let _lease = crate::storage::operation_lease()?;
+    crate::storage::ensure_ready()?;
     let token = generate_token();
     let source = format!("{}{}", SOURCE_PREFIX, token);
     let link_dest = format!("{}{}", LINK_PREFIX, token);
@@ -185,6 +188,8 @@ where
     for (leaf, payload) in items {
         validate_write_destination(target_dir, leaf, payload.len())?;
     }
+    let _lease = crate::storage::operation_lease()?;
+    crate::storage::ensure_ready()?;
     if items.len() == 1 {
         return write_system_file(
             udid,
@@ -285,9 +290,11 @@ where
 {
     anyhow::ensure!(BANK_APPLY_READY,
         "La aplicación está bloqueada: falta una invalidación de caché con diario y restauración exacta. No se escribió nada.");
+    let _lease = crate::storage::operation_lease()?;
     preflight_wallet_write(udid)?;
     anyhow::ensure!(crate::wallet_export::is_exact_card_hash(card_hash),
         "Invalid Wallet card path identifier");
+    crate::storage::ensure_card_ready(udid,card_hash)?;
 
     if let Some(baseline) = crate::bank_backup::load_baseline(udid, card_hash)? {
         return flash_bank_wallet_skin(udid, connection_mode, card_hash, &baseline,
@@ -357,6 +364,8 @@ where
     F: FnMut(usize, usize, &str),
     L: FnMut(&str),
 {
+    let _lease = crate::storage::operation_lease()?;
+    crate::storage::ensure_card_ready(udid,card_hash)?;
     if !crate::bank_backup::baseline_exists(udid, card_hash) {
         // Legacy non-bank passes retain the original hash-verified backup route.
         load_original_assets(udid, card_hash)
@@ -392,13 +401,18 @@ where
     F: FnMut(usize, usize, &str),
     L: FnMut(&str),
 {
+    let _lease = crate::storage::operation_lease()?;
     preflight_wallet_write(udid)?;
     anyhow::ensure!(crate::scanner::is_valid_card_hash(card_hash),
         "El identificador de la tarjeta no es válido");
+    crate::storage::ensure_ready()?;
     if let Some(baseline) = crate::bank_backup::load_baseline(udid, card_hash)? {
-        return restore_bank_wallet_original(udid, connection_mode, card_hash, &baseline,
-            &mut progress, &mut log);
+        restore_bank_wallet_original(udid, connection_mode, card_hash, &baseline,
+            &mut progress, &mut log)?;
+        let _ = crate::cloud_sync::reconcile_card_quarantine(udid, card_hash, &mut log);
+        return Ok(());
     }
+    crate::storage::ensure_card_ready(udid,card_hash)?;
     let original_assets = load_original_assets(udid, card_hash)
         .context("Could not load the original Wallet card face backup")?;
     let asset_refs: Vec<(&str, &[u8])> = original_assets
@@ -465,6 +479,38 @@ fn original_needs_write(expected: &[u8], observed: Option<&[u8]>) -> bool {
     observed != Some(expected)
 }
 
+fn verify_restored_observations<R>(baseline: &crate::bank_backup::Baseline,
+    states: &std::collections::BTreeMap<String, crate::wallet_export::MetadataState>, mut read: R) -> Result<()>
+where R: FnMut(&str) -> Result<Vec<u8>> {
+    use crate::{bank_backup::LocalAssetState, wallet_export::MetadataState};
+    anyhow::ensure!(baseline.local_assets.len() == TARGET_WALLET_ASSETS.len()
+        && states.len() == TARGET_WALLET_ASSETS.len(), "Faltan estados originales actuales");
+    for leaf in TARGET_WALLET_ASSETS {
+        match baseline.local_assets.get(*leaf).context("Falta el estado original exacto")? {
+            LocalAssetState::Absent => anyhow::ensure!(matches!(states.get(*leaf), Some(MetadataState::Absent)),
+                "La ausencia original de {leaf} ya no está confirmada; conserva la recuperación"),
+            LocalAssetState::Present { bytes } => {
+                anyhow::ensure!(matches!(states.get(*leaf), Some(MetadataState::Present { .. } | MetadataState::Unreadable)),
+                    "El original presente {leaf} ya no está confirmado");
+                anyhow::ensure!(read(leaf)? == *bytes,
+                    "El original {leaf} cambió después del checkpoint; conserva la recuperación");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_resumed_originals<L>(udid: &str, mode: ConnectionMode, card_hash: &str,
+    baseline: &crate::bank_backup::Baseline, log: &mut L) -> Result<()>
+where L: FnMut(&str) {
+    let manifest = crate::wallet_export::capture_verified_original_asset(udid, mode, card_hash,
+        crate::wallet_export::BANK_MANIFEST, &mut *log)?;
+    anyhow::ensure!(manifest == baseline.manifest_bytes, "El manifiesto actual difiere del original guardado");
+    let states = crate::wallet_export::inspect_bank_overrides(udid, mode, card_hash, &manifest, &mut *log)?;
+    verify_restored_observations(baseline, &states, |leaf|
+        crate::wallet_export::capture_verified_original_asset(udid, mode, card_hash, leaf, &mut *log))
+}
+
 fn absent_restore_payload<'a>(intent: &'a crate::bank_changes::Intent, leaf: &str) -> Result<Option<&'a [u8]>> {
     if intent.absent_assets.iter().any(|absent| absent == leaf) {
         anyhow::ensure!(!intent.assets.contains_key(leaf), "El intento mezcla presencia y ausencia");
@@ -495,8 +541,10 @@ where L: FnMut(&str) {
 pub fn replace_bank_animation<F, L>(udid: &str, mode: ConnectionMode, card_hash: &str,
     png_3x: &[u8], png_2x: &[u8], mut progress: F, mut log: L) -> Result<()>
 where F: FnMut(usize, usize, &str), L: FnMut(&str) {
+    let _lease = crate::storage::operation_lease()?;
     anyhow::ensure!(BANK_APPLY_READY && crate::wallet_export::is_exact_card_hash(card_hash),
         "No se cumplen las condiciones de escritura experimental");
+    crate::storage::ensure_card_ready(udid,card_hash)?;
     crate::animated_artwork::validate_pair(png_3x, png_2x)?;
     let baseline = crate::bank_backup::load_baseline(udid, card_hash)?
         .context("El experimento requiere un baseline bancario exacto y verificable")?;
@@ -559,6 +607,8 @@ where F: FnMut(usize, usize, &str), L: FnMut(&str) {
         .context("No hay un intento de escritura bancario que restaurar")?;
     anyhow::ensure!(intent.phase != "restored", "El intento bancario ya está restaurado");
     if intent.phase != "originals_verified" {
+        let manifest=crate::wallet_export::capture_verified_original_asset(udid,mode,card_hash,crate::wallet_export::BANK_MANIFEST,&mut *log)?;
+        anyhow::ensure!(manifest==baseline.manifest_bytes,"issuer manifest changed before original restoration");
         let originals = bank_baseline_payloads(baseline)?;
         if !originals.is_empty() {
             let mut needs_write = Vec::new();
@@ -602,12 +652,56 @@ where F: FnMut(usize, usize, &str), L: FnMut(&str) {
             .context("Se restauraron los originales, pero no se pudo guardar el checkpoint de verificación")?;
     }
     if intent.phase == "originals_verified" {
-        // A retry after cache failure cannot silently accept a newly appeared PDF.
-        verify_absent_assets(udid, mode, card_hash, baseline, &intent.absent_assets, log)?;
+        // A persisted checkpoint describes an earlier device observation. A
+        // different PC, Wallet refresh or interrupted retry may have changed it.
+        // Recheck every original before finishing; never promote stale proof.
+        verify_resumed_originals(udid, mode, card_hash, baseline, log)?;
     }
     progress(3, 3, "Originales ya verificados; comprobando caché de Wallet…");
     invalidate_wallet_caches(udid, mode, card_hash, progress, log)?;
     crate::bank_changes::mark_restored(&intent.operation_dir)
+}
+
+// Only this module can mint this token, after fresh physical readback of the
+// complete baseline and cache completion. A downloaded plan cannot construct it.
+pub(crate) struct VerifiedOriginalRestoration {plan:String,_lease:crate::storage::StorageLease}
+impl VerifiedOriginalRestoration {
+    #[cfg(test)] pub(crate) fn synthetic_completed(plan:&crate::bank_recovery::RecoveryPlan)->Self {Self {plan:plan.id().unwrap(),_lease:crate::storage::operation_lease_for_import(plan.root()).unwrap()}}
+    pub(crate) fn matches(&self,plan:&crate::bank_recovery::RecoveryPlan)->bool {plan.id().is_ok_and(|id|id==self.plan)}
+}
+pub(crate) fn restore_cloud_owned_original<F,L>(udid:&str,mode:ConnectionMode,
+    plan:&crate::bank_recovery::RecoveryPlan,mut progress:F,mut log:L)->Result<VerifiedOriginalRestoration>
+where F:FnMut(usize,usize,&str),L:FnMut(&str) {
+    let _lease=crate::storage::operation_lease()?;crate::storage::ensure_ready()?;
+    anyhow::ensure!(matches!(mode,ConnectionMode::Usb),"explicit cloud-owned original recovery requires USB");
+    plan.revalidate()?;let baseline=plan.baseline();let hash=&baseline.card_hash;
+    anyhow::ensure!(baseline.udid==udid && crate::wallet_export::is_exact_card_hash(hash),"recovery device differs from plan");
+    preflight_wallet_write(udid)?;
+    anyhow::ensure!(!crate::wallet_export::pending_recovery_blocks_device(Ok(&crate::wallet_export::pending_recovery_operations()?),Some(udid)),"a prior export must be returned before recovery");
+    let manifest=crate::wallet_export::capture_verified_original_asset(udid,mode,hash,crate::wallet_export::BANK_MANIFEST,&mut log)?;
+    anyhow::ensure!(manifest==baseline.manifest_bytes,"issuer manifest changed before cloud-owned restoration");
+    let originals=bank_baseline_payloads(baseline)?;let mut needs_write=Vec::new();
+    for (leaf,expected) in &originals {
+        let observed=crate::wallet_export::capture_verified_original_asset(udid,mode,hash,leaf,&mut log);
+        if !observed.is_ok_and(|observed|observed==*expected) {needs_write.push((leaf.clone(),expected.clone()));}
+    }
+    if !needs_write.is_empty() {
+        progress(1,3,"Devolviendo los originales del emisor aún distintos…");
+        let refs=needs_write.iter().map(|(leaf,bytes)|(leaf.as_str(),bytes.as_slice())).collect::<Vec<_>>();
+        write_system_files_batch(udid,mode,&format!("/var/mobile/Library/Passes/Cards/{hash}.pkpass"),&refs,&mut log)?;
+        verify_written_assets(udid,mode,hash,&needs_write,&mut log)?;
+    }
+    for leaf in TARGET_WALLET_ASSETS {
+        if matches!(baseline.local_assets.get(*leaf),Some(crate::bank_backup::LocalAssetState::Absent)) {
+            progress(2,3,"Comprobando y retirando únicamente un diseño propio acreditado…");
+            crate::wallet_export::remove_cloud_owned_override(udid,mode,hash,leaf,plan,&mut log)?;
+        }
+    }
+    verify_resumed_originals(udid,mode,hash,baseline,&mut log)?;
+    progress(3,3,"Comprobando caché y originales antes de cerrar la recuperación…");
+    invalidate_wallet_caches(udid,mode,hash,&mut progress,&mut log)?;
+    verify_resumed_originals(udid,mode,hash,baseline,&mut log)?;
+    Ok(VerifiedOriginalRestoration {plan:plan.id()?,_lease})
 }
 
 fn resize_wallet_artwork_2x(png_3x: &[u8]) -> Result<Vec<u8>> {
@@ -672,6 +766,7 @@ where
     F: FnMut(usize, usize, &str),
     L: FnMut(&str),
 {
+    let _lease = crate::storage::operation_lease()?;
     preflight_wallet_write(udid)?;
     let total = items.len();
     log(&format!("Flashing passcode theme ({} assets)...", total));
@@ -715,6 +810,30 @@ where
 #[cfg(test)]
 mod wallet_artwork_tests {
     use super::*;
+
+    #[test]
+    fn resume_requires_fresh_exact_present_bytes_and_protected_absence_for_every_leaf() {
+        use crate::{bank_backup::LocalAssetState, wallet_export::MetadataState};
+        let mut baseline = crate::bank_backup::Baseline {
+            udid: "synthetic-device".into(), card_hash: "synthetic-card".into(), manifest_bytes: Vec::new(),
+            artwork_name: String::new(), remote_size: 0, remote_sha1: String::new(), remote_artwork_bytes: Vec::new(),
+            local_assets: TARGET_WALLET_ASSETS.iter().map(|leaf| ((*leaf).into(), LocalAssetState::Absent)).collect(),
+        };
+        let mut states = TARGET_WALLET_ASSETS.iter().map(|leaf| ((*leaf).into(), MetadataState::Absent))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert!(verify_restored_observations(&baseline, &states, |_| panic!("absence must not read a payload")).is_ok());
+        for uncertain in [MetadataState::Unreadable, MetadataState::Present { size: 1 }] {
+            states.insert(TARGET_WALLET_ASSETS[0].into(), uncertain);
+            assert!(verify_restored_observations(&baseline, &states, |_| Ok(Vec::new())).is_err());
+        }
+        baseline.local_assets.insert(TARGET_WALLET_ASSETS[0].into(), LocalAssetState::Present { bytes: b"saved original".to_vec() });
+        states.insert(TARGET_WALLET_ASSETS[0].into(), MetadataState::Unreadable);
+        assert!(verify_restored_observations(&baseline, &states, |_| Ok(b"saved original".to_vec())).is_ok());
+        assert!(verify_restored_observations(&baseline, &states, |_| Ok(b"new design".to_vec())).is_err());
+        assert!(verify_restored_observations(&baseline, &states, |_| anyhow::bail!("readback failed")).is_err());
+        states.remove(TARGET_WALLET_ASSETS[2]);
+        assert!(verify_restored_observations(&baseline, &states, |_| Ok(b"saved original".to_vec())).is_err());
+    }
 
     #[test]
     fn restoration_plans_explicit_absence_without_guessing_missing_owned_payloads() {

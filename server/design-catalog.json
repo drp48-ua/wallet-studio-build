@@ -1,0 +1,511 @@
+{
+  "schema": 1,
+  "pack_id": "studio-50-v1",
+  "title": "56 diseños",
+  "designs": [
+    {
+      "id": "ws-001",
+      "title": "Mosaico imperial",
+      "filename": "ws-001.png",
+      "sha256": "b64cccc0ee704ce0b0877cf830929f98d7d8eeb975031153c745b3617d6ba2aa",
+      "bytes": 2394616,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-002",
+      "title": "Ébano y oro",
+      "filename": "ws-002.png",
+      "sha256": "30b92af1b3ff95a1bcba93729ccf3611bf1720abca1db08c824f129f599b5e1c",
+      "bytes": 1229560,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-003",
+      "title": "Reactor carmesí",
+      "filename": "ws-003.png",
+      "sha256": "1bc2265a3223fc942bd196997bc3cd35dd6ed66793a9dfd4d61363d6b458127c",
+      "bytes": 2115346,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-004",
+      "title": "Escorpión de cromo",
+      "filename": "ws-004.png",
+      "sha256": "d7962dca474f80992c3e1654ca14fe77d0e04026f41518efd61a7df4dd30e06f",
+      "bytes": 2317557,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-005",
+      "title": "Dragón mecánico",
+      "filename": "ws-005.png",
+      "sha256": "8bb266c6ce39484a1f4a7b8f05a2415c772045e0bcbb3cf9cc5df4dc7e5a1026",
+      "bytes": 2165120,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-006",
+      "title": "Guerrero del dragón",
+      "filename": "ws-006.png",
+      "sha256": "30fae2cc8c0169f3e7b2980410601faf199485442625b189f7627330942c4451",
+      "bytes": 3278395,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-007",
+      "title": "León de malaquita",
+      "filename": "ws-007.png",
+      "sha256": "9be4da85bbede850c80418514da4a4f7ce6f7b2734b0ae72e7a61b04fedf81eb",
+      "bytes": 2765398,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-008",
+      "title": "Samurái neón",
+      "filename": "ws-008.png",
+      "sha256": "120737076d9e9a6d2eb6e7df281b0e09ed19cc7d6124661543c8df7811783945",
+      "bytes": 2168953,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-009",
+      "title": "Araña de plata",
+      "filename": "ws-009.png",
+      "sha256": "506ea8569d968906a0c281eb9d4f6ed7295e38fce2a44bec44cfb0b617da3aa5",
+      "bytes": 1903471,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-010",
+      "title": "Dragón oceánico",
+      "filename": "ws-010.png",
+      "sha256": "53faf950ded2c2d52663ba27faa19bd3ab2f783befd05c8d9df77f72f02c9fa4",
+      "bytes": 2368243,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-011",
+      "title": "Caballero oscuro",
+      "filename": "ws-011.png",
+      "sha256": "4e8099b8ef45b0188419b2ff308ef023f53e564e01f5b956a267d60892e3e362",
+      "bytes": 1837578,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-012",
+      "title": "Mármol imperial",
+      "filename": "ws-012.png",
+      "sha256": "c85afabc66b4f75ad172cacddf6500896426b9d251b8a9b79091d7d5e2b596fd",
+      "bytes": 1573219,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-013",
+      "title": "Telaraña carmesí",
+      "filename": "ws-013.png",
+      "sha256": "8e23ad79edc4ba03a3595a9b0db8c81aa6362f38c33ab67d45049ec92e832903",
+      "bytes": 2359994,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-014",
+      "title": "León de plata",
+      "filename": "ws-014.png",
+      "sha256": "e7864beaf768e2dd4f6a441bb94a71827d32eafeea3f86d06852f9a4e1e76085",
+      "bytes": 2416008,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-015",
+      "title": "Calavera alada",
+      "filename": "ws-015.png",
+      "sha256": "9bfb0899fbb82c05b6c178dc0526df62806ec1fe4e0da63d27e3184390888e0f",
+      "bytes": 2737692,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-016",
+      "title": "Lobo de cromo",
+      "filename": "ws-016.png",
+      "sha256": "72c4693e41beb9510e516e1cb3aaba0412cce5f2e7be761f20ffc76d61c47603",
+      "bytes": 2358129,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-017",
+      "title": "Clásica negra",
+      "filename": "ws-017.png",
+      "sha256": "075b37b6fb9aacdf32b7fbad677a9df6a864152a327f14e245301918564be1c5",
+      "bytes": 1127910,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-018",
+      "title": "BMW · Medianoche",
+      "filename": "ws-018.png",
+      "sha256": "127a5819b1838eea9010a995703742c1e4460e65e85199587a8d23f5bd013a3a",
+      "bytes": 1461622,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-019",
+      "title": "Lamborghini · Lluvia",
+      "filename": "ws-019.png",
+      "sha256": "c7bafac1963e3e574097c85fce9f625d1a3f34917b03f260e7495019b56505d0",
+      "bytes": 1671511,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-020",
+      "title": "Audi · Noche",
+      "filename": "ws-020.png",
+      "sha256": "9d088630f9154c4a655575e2524af057853034028209683629fa9ee7af2fd54e",
+      "bytes": 1678661,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-021",
+      "title": "Nissan GT-R · Asfalto",
+      "filename": "ws-021.png",
+      "sha256": "f016d6e8a498fb408620364b4e5a1ece1adec47e097aaadf55f492839906df98",
+      "bytes": 1721029,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-022",
+      "title": "Porsche · Ciudad",
+      "filename": "ws-022.png",
+      "sha256": "7fabfafd2c0524f2ae03738ea0a047ce412546a8f7582da26357212b6f955e39",
+      "bytes": 1629706,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-023",
+      "title": "Lamborghini · Villa",
+      "filename": "ws-023.png",
+      "sha256": "cd193baa4bf31380ba79b4fb87436dcbde07c5223fc253ccee8275afb1cbdad2",
+      "bytes": 1667010,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-024",
+      "title": "Ferrari · Avenida",
+      "filename": "ws-024.png",
+      "sha256": "d08853a4c9869b03d261cfab4c191a3575dc22d60b7110f4ab59712017b06d5d",
+      "bytes": 1772527,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-025",
+      "title": "BMW · Horizonte",
+      "filename": "ws-025.png",
+      "sha256": "5db5bae3f93176da6ea943bf177579efe0ea996fee7985157b73346a7eaf70ec",
+      "bytes": 1258467,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-026",
+      "title": "Porsche · Atardecer",
+      "filename": "ws-026.png",
+      "sha256": "d879dd455997014913fdc32170d832376417659979bb8a95e84da60d5d4a3a52",
+      "bytes": 1679005,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-027",
+      "title": "Perro Sánchez Express",
+      "filename": "ws-027.png",
+      "sha256": "847905508ecbb152774fedeeb0a144e0e39e162f97cbdaec3dbfb96749d3ea87",
+      "bytes": 3004395,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-028",
+      "title": "Abascal Express",
+      "filename": "ws-028.png",
+      "sha256": "0a5a8f8fde12224e461edf97559e74bd3b1ca9579db3bc436f2c36e20f9e2d2d",
+      "bytes": 2939818,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-029",
+      "title": "El Cocas Express",
+      "filename": "ws-029.png",
+      "sha256": "81258ae9ac1f95d76fdaa023cac493a4302f4598ae1ba8bb5789cfb9e4053ced",
+      "bytes": 2745175,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-030",
+      "title": "Pantera de obsidiana",
+      "filename": "ws-030.png",
+      "sha256": "9d13a19226e60e60f4f5cf156238f4b78c522d3b94be01cbb7d8dc912fb1a5ca",
+      "bytes": 3359244,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-031",
+      "title": "Fénix imperial",
+      "filename": "ws-031.png",
+      "sha256": "99e06a95e246dcfa2c64f1394bb0448db62105e6256f5843e35e2b5f5f5cdac4",
+      "bytes": 2992210,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-032",
+      "title": "Koi de plata",
+      "filename": "ws-032.png",
+      "sha256": "8570c8d51dc8ed6169862ad4b4bdcf166da93591fc079ea4702741130c5e7c7a",
+      "bytes": 3656522,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-033",
+      "title": "Dragón de jade",
+      "filename": "ws-033.png",
+      "sha256": "8d7206ec09fb7b949cbd0d9b8736f3e9c55e672f2931f03f1ad614f277e54437",
+      "bytes": 4047015,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-034",
+      "title": "Lobo lunar",
+      "filename": "ws-034.png",
+      "sha256": "2a0a4b258ca3b6140956c1f46f8eaa984205ac531b6db02628033137a88ff93a",
+      "bytes": 3799262,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-035",
+      "title": "Máscara imperial",
+      "filename": "ws-035.png",
+      "sha256": "cb8620332a5209ba4cee2def8d387a1c0088919e533c46dfd63f116d1f463ee9",
+      "bytes": 3645861,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-036",
+      "title": "Halcón zafiro",
+      "filename": "ws-036.png",
+      "sha256": "a49e2a5dcf8eee14862781154217c9cf9a647d220d879fd4df812d3528943c1a",
+      "bytes": 2561940,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-037",
+      "title": "Escarabajo amatista",
+      "filename": "ws-037.png",
+      "sha256": "f162a5f9a5eeacb4e8db5ebadafc3f6127831601e289ca684459d5f934917718",
+      "bytes": 1996986,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-038",
+      "title": "León rubí",
+      "filename": "ws-038.png",
+      "sha256": "b9532a18e74459d9a917c05d82a10ed8929c72fbfa45f1718d605098594e1adf",
+      "bytes": 2255789,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-039",
+      "title": "Tigre de platino",
+      "filename": "ws-039.png",
+      "sha256": "cdd037aa444ba7d0983068e6919a5f10eea946b39e4618f6bc25aa295775ddb0",
+      "bytes": 3550610,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-040",
+      "title": "Serpiente dorada",
+      "filename": "ws-040.png",
+      "sha256": "f2ea0dc8b5201503674a7c81591f0f4d51ceb6af330321011a4020a9d957ffb2",
+      "bytes": 3526000,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-041",
+      "title": "Pulpo de mercurio",
+      "filename": "ws-041.png",
+      "sha256": "fae77a69f2c4ee489123d51deae317411f92b406e034e455d3e0cdc56c423aff",
+      "bytes": 3570774,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-042",
+      "title": "Águila ártica",
+      "filename": "ws-042.png",
+      "sha256": "fadbf72fb4d73c368a5515d8b7fed73007e0e47f86adb55a962b672800a56565",
+      "bytes": 2622956,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-043",
+      "title": "Superdeportivo · Lluvia",
+      "filename": "ws-043.png",
+      "sha256": "096451481959d95d29216455fb6cfc8d9604e5a0d826829c9dc86730627ee6d7",
+      "bytes": 3584664,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-044",
+      "title": "Coupé · Puesta de sol",
+      "filename": "ws-044.png",
+      "sha256": "4e37ec01e795230a1ba39d79c1bb2590afc97af76b99931d68e82b7990a2fc9b",
+      "bytes": 3802206,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-045",
+      "title": "GT · Montaña",
+      "filename": "ws-045.png",
+      "sha256": "2723e8985d1550dedc7c248d39d4c8d81df588e6d835d200ec9b801899bb70ca",
+      "bytes": 3684462,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-046",
+      "title": "Cyber · Neón",
+      "filename": "ws-046.png",
+      "sha256": "d51c8056eb5e806cd03ea80db9a6c7921c4a9676c7d24f19aa3ac03d4b2a0121",
+      "bytes": 2841505,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-047",
+      "title": "Hypercar · Villa",
+      "filename": "ws-047.png",
+      "sha256": "6a89aa896a7ff1ee7718e5ab37850feb22c5ebf3c00d1b6f93295101481441df",
+      "bytes": 3685072,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-048",
+      "title": "Roadster · Costa",
+      "filename": "ws-048.png",
+      "sha256": "e4f761fe5e074c88ed0ce678a6de6de6fd3f20b617e6798a78807c22b1505839",
+      "bytes": 3623993,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-049",
+      "title": "Sport · Túnel",
+      "filename": "ws-049.png",
+      "sha256": "2e86f10b50211024a8d4796d63a70f4b48ec33569b565f061ea6e42023e8c605",
+      "bytes": 3524871,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-050",
+      "title": "Órbita imperial",
+      "filename": "ws-050.png",
+      "sha256": "d2b13c8dc4d5612b1b193b48b778a8710ade0244e196e6f25e1b6a27bd32a1f1",
+      "bytes": 3856183,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-051",
+      "title": "Sakura Fuji plata",
+      "filename": "ws-051.png",
+      "sha256": "4cac7c6538a3828a521e5e8cf6083f36ee49df69c060e204c334354b8bc69a12",
+      "bytes": 1831284,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-052",
+      "title": "Telaraña roja y oro",
+      "filename": "ws-052.png",
+      "sha256": "6ebe25fd49569f3c7f0b0c3cdd7d363c147711b3114f906ea2d738f5921b63db",
+      "bytes": 2861738,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-053",
+      "title": "Mármol blanco y oro",
+      "filename": "ws-053.png",
+      "sha256": "0ae4211f2c47e57ae49511bb6871f7cf0c36952e4268257b1af36edcd997c3e8",
+      "bytes": 1588459,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-054",
+      "title": "Topografía esmeralda",
+      "filename": "ws-054.png",
+      "sha256": "f7563f22072a70d65da38fc3aca24c26cabc74253c0086615579cf297eeecc56",
+      "bytes": 2302171,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-055",
+      "title": "La gran ola japonesa",
+      "filename": "ws-055.png",
+      "sha256": "83787434e10508a9bd577bbcbde90032e77c19c0f023d3264a1388e7237c7c91",
+      "bytes": 2689068,
+      "width": 1536,
+      "height": 969
+    },
+    {
+      "id": "ws-056",
+      "title": "Clásica negra y oro",
+      "filename": "ws-056.png",
+      "sha256": "a5df0ac90a500b0d6af55416ce7dde7eeb873e203e4b9c593137d2736b14c404",
+      "bytes": 1179870,
+      "width": 1536,
+      "height": 969
+    }
+  ]
+}

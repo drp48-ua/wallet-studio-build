@@ -9,6 +9,8 @@ jobs:
   test-build:
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      WALLET_STUDIO_CLOUD_URL: 'https://wallet-studio-accounts.onrender.com'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -21,6 +23,12 @@ jobs:
       - name: Compilar Wallet Studio
         shell: pwsh
         run: ./scripts/build-windows.ps1
+      - name: Validate activation, resend and account isolation with synthetic data
+        shell: pwsh
+        run: python -m unittest discover -s server/tests -v
+      - name: Validate desktop cloud sync with two synthetic profiles
+        shell: pwsh
+        run: python server/tests/desktop_integration.py
       - name: Preparar paquete portable
         shell: pwsh
         run: ./scripts/package-windows.ps1 -Version ((Get-Item 'windows/Wallet Studio.exe').VersionInfo.FileVersion)

@@ -29,9 +29,7 @@ pub struct SavedCard {
 }
 
 pub fn get_cards_storage_path() -> PathBuf {
-    let local_app_data = std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string());
-    let dir = PathBuf::from(local_app_data).join("AirCard");
+    let dir = crate::storage::root();
     let _ = fs::create_dir_all(&dir);
     dir.join("cards.json")
 }
@@ -46,11 +44,6 @@ pub fn is_valid_card_hash(h: &str) -> bool {
 
     // Must be base64 alphabet characters
     if !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '-' || c == '_' || c == '=') {
-        return false;
-    }
-
-    // Reject strings with multiple underscores or hyphens (typical of system asset/bundle names)
-    if trimmed.chars().filter(|&c| c == '_').count() > 1 || trimmed.chars().filter(|&c| c == '-').count() > 2 {
         return false;
     }
 
@@ -88,14 +81,19 @@ pub fn is_valid_card_hash(h: &str) -> bool {
         }
     }
 
-    // Normalize URL-safe base64 and pad
-    let mut b64 = trimmed.replace('-', "+").replace('_', "/");
+    // Accept either canonical alphabet, never a mixture of the two.
+    let engine = if trimmed.contains('-') || trimmed.contains('_') {
+        &base64::engine::general_purpose::URL_SAFE
+    } else {
+        &base64::engine::general_purpose::STANDARD
+    };
+    let mut b64 = trimmed.to_owned();
     while b64.len() % 4 != 0 {
         b64.push('=');
     }
 
     use base64::Engine;
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+    if let Ok(decoded) = engine.decode(&b64) {
         // Must be exactly 20 bytes (SHA-1) or 32 bytes (SHA-256)
         if decoded.len() == 20 || decoded.len() == 32 {
             // Reject trivial all-identical bytes
@@ -141,6 +139,29 @@ pub fn load_saved_cards() -> Vec<SavedCard> {
         }
     }
     Vec::new()
+}
+
+/// Include independently verified originals imported on another PC. This only
+/// makes a card selectable: all device/identity/recovery checks still run when
+/// loading its snapshot or performing a transfer. Never rewrite discovery data
+/// merely because a cloud original exists.
+pub fn load_visible_cards() -> Vec<SavedCard> {
+    visible_cards_at(load_saved_cards(), &crate::storage::root().join("bank-backups"))
+}
+
+fn visible_cards_at(mut cards: Vec<SavedCard>, originals: &std::path::Path) -> Vec<SavedCard> {
+    if crate::storage::safe_chain(originals).is_err() { return cards; }
+    let Ok(entries) = fs::read_dir(originals) else { return cards; };
+    let mut paths = entries.filter_map(|entry| entry.ok()).map(|entry| entry.path()).collect::<Vec<_>>();
+    paths.sort();
+    let mut seen = cards.iter().map(|card| card.hash.clone()).collect::<HashSet<_>>();
+    for path in paths {
+        let Ok(baseline) = crate::bank_backup::validate_bundle_directory(&path) else { continue; };
+        if is_valid_card_hash(&baseline.card_hash) && seen.insert(baseline.card_hash.clone()) {
+            cards.push(SavedCard { hash: baseline.card_hash, name: format!("Original recuperado {}", cards.len() + 1) });
+        }
+    }
+    cards
 }
 
 pub fn save_saved_cards(cards: &[SavedCard]) {
@@ -212,7 +233,7 @@ pub fn validate_card_name(name: &str) -> anyhow::Result<String> {
 
 pub fn rename_saved_card(hash: &str, name: &str) -> anyhow::Result<()> {
     anyhow::ensure!(is_valid_card_hash(hash), "invalid card identifier");
-    let cards = renamed_cards(&load_saved_cards(), hash, name)?;
+    let cards = renamed_cards(&load_visible_cards(), hash, name)?;
     write_saved_cards(&get_cards_storage_path(), &cards)
 }
 
@@ -275,10 +296,10 @@ static DESC_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 static CARD_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"/(?:Cards|Passes/Cards)/([A-Za-z0-9+/_-]{27,44})(?:\.pkpass|\.cache|\.pkcache|/|\s|\x22|'|\)|,|$)").unwrap(),
-        Regex::new(r"/([A-Za-z0-9+/_-]{27,44})\.(?:pkpass|cache|pkcache)").unwrap(),
-        Regex::new(r"(?:^|[^A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{27}=)(?:$|[^A-Za-z0-9+/_-])").unwrap(),
-        Regex::new(r"(?i)(?:card[_\s]?(?:hash|id)|pass[_\s]?(?:hash|id)|unique[_\s]?id)\s*[:=]\s*['\x22]?([A-Za-z0-9+=_-]{27,44})").unwrap(),
+        Regex::new(r"/(?:Cards|Passes/Cards)/([A-Za-z0-9+_=-]+)(?:\.pkpass|\.cache|\.pkcache|/|\s|\x22|'|\)|,|$)").unwrap(),
+        Regex::new(r"/([A-Za-z0-9+_=-]+)\.(?:pkpass|cache|pkcache)(?:/|\s|\x22|'|\)|,|$)").unwrap(),
+        Regex::new(r"([A-Za-z0-9+/_-]+=+)").unwrap(),
+        Regex::new(r"(?i)(?:card[_\s]?(?:hash|id)|pass[_\s]?(?:hash|id)|unique[_\s]?id)\s*[:=]\s*['\x22]?([A-Za-z0-9+/=_-]+)").unwrap(),
     ]
 });
 
@@ -295,28 +316,71 @@ pub fn extract_card_name_from_line(line: &str) -> Option<String> {
 }
 
 pub fn extract_card_hash_from_line(line: &str) -> Option<String> {
+    extract_card_hash_matching(line, |_| true)
+}
+
+fn extract_card_hash_matching(line: &str, accept: impl Fn(&str) -> bool) -> Option<String> {
     let lower = line.to_lowercase();
     let has_wallet = WALLET_KEYWORDS.iter().any(|k| lower.contains(k));
     if !has_wallet {
         return None;
     }
 
-    for r in CARD_REGEXES.iter() {
-        if let Some(caps) = r.captures(line) {
+    for (pattern_index, r) in CARD_REGEXES.iter().enumerate() {
+        for caps in r.captures_iter(line) {
             if let Some(m) = caps.get(1) {
+                // A padded token must be complete, not a valid-looking fragment
+                // of a longer or internally padded identifier.
+                if pattern_index == 2 {
+                    let is_token_byte = |b: u8| b.is_ascii_alphanumeric() || b"+/_-=".contains(&b);
+                    if line.as_bytes().get(m.start().wrapping_sub(1)).is_some_and(|b| is_token_byte(*b))
+                        || line.as_bytes().get(m.end()).is_some_and(|b| is_token_byte(*b))
+                    {
+                        continue;
+                    }
+                }
                 let h = m.as_str().trim().trim_matches(['\'', '"']).trim_end_matches(['.', ',']);
                 if is_valid_card_hash(h) {
                     let mut norm = h.to_string();
                     if norm.len() == 27 {
                         norm.push('=');
                     }
-                    return Some(norm);
+                    if accept(&norm) {
+                        return Some(norm);
+                    }
                 }
             }
         }
     }
 
     None
+}
+
+/// One user-requested scan selects one exact card, then releases the relay.
+/// Bounded line storage also prevents a malformed syslog stream growing memory.
+fn receive_first_card(stop:&AtomicBool,mut receive:impl FnMut(&mut [u8])->isize)->Option<(String,String)> {
+    let mut buffer=[0u8;8192];let mut line=Vec::with_capacity(1024);let mut oversized=false;
+    while !stop.load(Ordering::Acquire) {
+        let count=receive(&mut buffer);
+        if count==0 {break;}
+        if count<0 {std::thread::sleep(std::time::Duration::from_millis(50));continue;}
+        if count as usize>buffer.len() {break;}
+        for &byte in &buffer[..count as usize] {
+            if stop.load(Ordering::Acquire) {return None;}
+            if byte==b'\n' || byte==0 {
+                if !oversized && !line.is_empty() {
+                    let text=String::from_utf8_lossy(&line);
+                    if let Some(hash)=extract_card_hash_matching(&text,crate::wallet_export::is_exact_card_hash) {
+                        let name=extract_card_name_from_line(&text).unwrap_or_default();
+                        stop.store(true,Ordering::Release);return Some((hash,name));
+                    }
+                }
+                line.clear();oversized=false;
+            } else if byte!=b'\r' && !oversized {
+                if line.len()<16384 {line.push(byte);} else {line.clear();oversized=true;}
+            }
+        }
+    } None
 }
 
 pub fn scan_syslog_for_cards<F, L>(
@@ -327,12 +391,13 @@ pub fn scan_syslog_for_cards<F, L>(
     mut log: L,
 ) -> Result<()>
 where
-    F: FnMut(String, String),
+    F: FnMut(String, String, String),
     L: FnMut(String),
 {
     log("Connecting to device session for syslog monitoring...".to_string());
     let session = ActiveDeviceSession::open(udid, connection_mode)
         .context("Failed to connect to device for syslog scanning")?;
+    let device_udid = session.udid.clone();
     log(format!(
         "Connected to {} over {}.",
         session.udid,
@@ -353,72 +418,184 @@ where
     #[cfg(windows)]
     unsafe {
         let timeout_ms: u32 = 500;
-        setsockopt(
+        let result=setsockopt(
             raw_socket as usize,
             SOL_SOCKET,
             SO_RCVTIMEO,
             &timeout_ms as *const u32 as *const i8,
             std::mem::size_of::<u32>() as i32,
         );
+        if result!=0 {
+            (libs.amd_service_connection_invalidate)(service_conn);
+            anyhow::bail!("No se pudo configurar el tiempo de espera del receptor");
+        }
     }
 
     log("Syslog relay established. Listening for Wallet & PassKit events...".to_string());
     log("Tip: Open Apple Wallet on your iPhone or tap your card to trigger events.".to_string());
 
-    let mut buffer = [0u8; 8192];
-    let mut line_acc = Vec::with_capacity(1024);
-
-    while !stop_flag.load(Ordering::Relaxed) {
-        let bytes_read = unsafe {
-            (libs.amd_service_connection_receive)(
-                service_conn,
-                buffer.as_mut_ptr(),
-                buffer.len(),
-            )
-        };
-
-        if bytes_read > 0 {
-            let slice = &buffer[..bytes_read as usize];
-            for &b in slice {
-                if b == b'\n' || b == b'\0' {
-                    if !line_acc.is_empty() {
-                        let line = String::from_utf8_lossy(&line_acc);
-                        if let Some(hash) = extract_card_hash_from_line(&line) {
-                            let name = extract_card_name_from_line(&line).unwrap_or_default();
-                            log(format!(
-                                "Found card pass! Name: '{}', Hash: {}",
-                                if name.is_empty() { "Unknown" } else { &name },
-                                hash
-                            ));
-                            add_or_update_card(&hash, &name);
-                            on_card_found(hash, name);
-                        }
-                        line_acc.clear();
-                    }
-                } else if b != b'\r' {
-                    line_acc.push(b);
-                }
-            }
-        } else if bytes_read == 0 {
-            log("Syslog socket closed by device.".to_string());
-            break; // Socket closed
-        } else {
-            // Timeout or transient: sleep briefly to avoid pegging CPU
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
+    let found=receive_first_card(&stop_flag,|buffer| unsafe {
+        (libs.amd_service_connection_receive)(service_conn,buffer.as_mut_ptr(),buffer.len()) as isize
+    });
+    // Release both the relay and the device session BEFORE notifying the UI.
+    // The next task (original capture) must never compete with this receiver.
+    unsafe { (libs.amd_service_connection_invalidate)(service_conn); }
+    drop(session);
+    if let Some((hash,name))=found {
+        if !load_saved_cards().iter().any(|card|card.hash==hash) {add_or_update_card(&hash,&name);}
+        on_card_found(device_udid, hash, name);
     }
-
-    unsafe {
-        (libs.amd_service_connection_invalidate)(service_conn);
-    }
-    log("Syslog scan stopped.".to_string());
+    log("Syslog scan stopped; relay and device session released.".to_string());
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn imported_originals_are_visible_without_discovery_and_do_not_replace_names_or_invalid_evidence() {
+        use super::*;
+        let root = std::env::temp_dir().join(format!("visible-originals-{}", crate::flasher::generate_token()));
+        let mut png = Vec::new();
+        image::DynamicImage::new_rgb8(4,4).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let sha1 = crate::bank_backup::sha1(&png).unwrap();
+        let leaf = "cardBackgroundCombined@2x.png";
+        let mut baseline = crate::bank_backup::Baseline {
+            udid: "synthetic-imported-device".into(), card_hash: "OM6NYhwXMZrAw0sRUjR62wmF4ZQ=".into(),
+            manifest_bytes: serde_json::to_vec(&serde_json::json!({leaf: {"url":"https://a.apple.com/fixture", "size":png.len(), "sha1":sha1}})).unwrap(),
+            artwork_name: leaf.into(), remote_size: png.len(), remote_sha1: sha1, remote_artwork_bytes: png.clone(),
+            local_assets: crate::wallet_backup::CARD_ARTWORK_ASSETS.iter().map(|asset| (asset.to_string(),
+                if *asset==leaf { crate::bank_backup::LocalAssetState::Present {bytes:png.clone()} }
+                else { crate::bank_backup::LocalAssetState::Absent })).collect(),
+        };
+        let first = crate::bank_backup::save_fixture_at(&root, &baseline).unwrap();
+        baseline.udid = "synthetic-second-device".into();
+        let second = crate::bank_backup::save_fixture_at(&root, &baseline).unwrap();
+        let recovered = visible_cards_at(Vec::new(), &root);
+        assert_eq!(recovered.len(), 1, "same card from two devices must not duplicate the gallery");
+        assert_eq!(recovered[0].hash, baseline.card_hash);
+        let saved = vec![SavedCard {hash:baseline.card_hash.clone(), name:"Mi nombre guardado".into()}];
+        assert_eq!(visible_cards_at(saved.clone(), &root), saved);
+        let corrupt = b"preserve corrupted evidence";
+        fs::write(first.join("remote-artwork.bin"), corrupt).unwrap();
+        assert_eq!(visible_cards_at(Vec::new(), &root).len(), 1, "independent verified copy remains visible");
+        fs::write(second.join("remote-artwork.bin"), corrupt).unwrap();
+        assert!(visible_cards_at(Vec::new(), &root).is_empty(), "invalid originals are not displayed as recovered");
+        assert_eq!(fs::read(first.join("remote-artwork.bin")).unwrap(), corrupt);
+        fs::remove_dir_all(root).unwrap();
+    }
     use super::*;
+
+    fn synthetic_hash(byte_count: usize, url_safe: bool) -> String {
+        use base64::Engine;
+        let mut bytes: Vec<u8> = (0..byte_count).map(|n| (n * 73 + 19) as u8).collect();
+        bytes[..6].copy_from_slice(&[0xfb, 0xff, 0xbf, 0xfb, 0xff, 0xbf]);
+        if url_safe {
+            base64::engine::general_purpose::URL_SAFE.encode(bytes)
+        } else {
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        }
+    }
+
+    #[test]
+    fn canonical_url_safe_hashes_allow_repeated_alphabet_separators() {
+        for byte_count in [20, 32] {
+            let hash = synthetic_hash(byte_count, true);
+            assert!(hash.matches('_').count() > 1);
+            assert!(hash.matches('-').count() > 2);
+            assert!(is_valid_card_hash(&hash));
+            assert!(is_valid_card_hash(hash.trim_end_matches('=')));
+            assert!(crate::wallet_export::is_exact_card_hash(&hash));
+        }
+    }
+
+    #[test]
+    fn padded_sha1_and_sha256_are_found_in_wallet_paths_and_bare_events() {
+        for byte_count in [20, 32] {
+            let hash = synthetic_hash(byte_count, true);
+            for line in [
+                format!("passd: /var/mobile/Library/Passes/Cards/{hash}.pkpass"),
+                format!("wallet: /Cards/{hash}/artwork.png"),
+                format!("passkit: /temporary/{hash}.pkcache loaded"),
+                format!("passd: selected '{hash}'"),
+                format!("passd: card_hash='{hash}'"),
+            ] {
+                assert_eq!(extract_card_hash_from_line(&line), Some(hash.clone()), "{line}");
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_first_candidates_do_not_mask_later_candidates() {
+        let hash = synthetic_hash(32, true);
+        for line in [
+            format!("passd: card_hash='{}' card_hash='{hash}'", "x".repeat(44)),
+            format!("passd: /Cards/{}.pkpass /Cards/{hash}.pkpass", "x".repeat(44)),
+            format!("passd: hwAtAmHKYwsQrJbT5cTNDsaxVME= {hash}"),
+        ] {
+            assert_eq!(extract_card_hash_from_line(&line), Some(hash.clone()));
+        }
+    }
+
+    #[test]
+    fn scanner_skips_path_unsafe_candidate_before_first_exact_card() {
+        let unsafe_hash = synthetic_hash(20, false);
+        let exact_hash = synthetic_hash(32, true);
+        assert!(unsafe_hash.contains('/'));
+        assert!(is_valid_card_hash(&unsafe_hash));
+        assert!(!crate::wallet_export::is_exact_card_hash(&unsafe_hash));
+        let bytes = format!("passd: card_hash='{unsafe_hash}' card_hash='{exact_hash}'\n").into_bytes();
+        let stop = AtomicBool::new(false);
+        let mut receives = 0;
+        let found = receive_first_card(&stop, |buffer| {
+            receives += 1;
+            assert_eq!(receives, 1, "the exact later candidate must finish this receive");
+            buffer[..bytes.len()].copy_from_slice(&bytes);
+            bytes.len() as isize
+        });
+        assert_eq!(found, Some((exact_hash, String::new())));
+        assert!(stop.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn malformed_or_unrelated_tokens_never_become_card_candidates() {
+        let hash = synthetic_hash(32, true);
+        let invalid = [
+            format!("passd: card_hash='{hash}MORE'"),
+            format!("passd: card_hash='prefix={hash}'"),
+            format!("passd: card_hash='{hash}='"),
+            format!("passd: card_hash='{}'", hash.replacen('-', "+", 1)),
+            format!("unrelated: selected '{hash}'"),
+            "passd: card_hash='AAAAAAAAAAAAAAAAAAAAAAAAAAA='".to_owned(),
+        ];
+        for line in invalid {
+            assert_eq!(extract_card_hash_from_line(&line), None, "{line}");
+        }
+        let mut noncanonical = hash.into_bytes();
+        noncanonical[42] = if noncanonical[42] == b'A' { b'B' } else { noncanonical[42] + 1 };
+        assert!(!is_valid_card_hash(std::str::from_utf8(&noncanonical).unwrap()));
+    }
+
+    #[test]
+    fn scan_stops_after_one_exact_card_even_when_same_receive_contains_more() {
+        let stop=AtomicBool::new(false);let mut receives=0;
+        let bytes=b"passd: Card hash: 'OM6NYhwXMZrAw0sRUjR62wmF4ZQ=' title='Mi tarjeta' loaded\npassd: Card hash: 'OM6NYhwXMZrAw0sRUjR62wmF4ZQ=' loaded\n";
+        let found=receive_first_card(&stop,|buffer| {receives+=1;buffer[..bytes.len()].copy_from_slice(bytes);bytes.len() as isize});
+        assert_eq!(found,Some(("OM6NYhwXMZrAw0sRUjR62wmF4ZQ=".into(),"Mi tarjeta".into())));
+        assert!(stop.load(Ordering::Acquire));assert_eq!(receives,1);
+    }
+    #[test]
+    fn cancelled_scan_never_receives_or_reports_a_card() {
+        let stop=AtomicBool::new(true);
+        assert_eq!(receive_first_card(&stop,|_|panic!("cancelled receiver must not run")),None);
+    }
+    #[test]
+    fn partial_and_invalid_syslog_lines_do_not_finish_scan() {
+        let stop=AtomicBool::new(false);let mut count=0;
+        let parts:Vec<&[u8]>=vec![b"passd: Card hash: 'not-a-card'\npassd: Card hash: 'OM6NYhwXMZrA",b"w0sRUjR62wmF4ZQ=' loaded\n"];
+        let found=receive_first_card(&stop,|buffer| {let part=parts[count];count+=1;buffer[..part.len()].copy_from_slice(part);part.len() as isize});
+        assert!(found.is_some());assert_eq!(count,2);
+    }
 
     #[test]
     fn test_extract_card_hash() {

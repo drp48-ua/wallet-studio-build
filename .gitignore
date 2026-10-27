@@ -3,4 +3,12 @@ windows/*.exe
 dist/
 __pycache__/
 *.pyc
+server/test-runtime/
+server/data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.pem
+*.key
 ios-diagnostics/shader-probe/build/
+test-assets/

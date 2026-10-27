@@ -11,10 +11,27 @@ unsafe extern "system" {
     fn SetDllDirectoryW(lpPathName: *const u16) -> i32;
 }
 
-const APPLE_SUPPORT_DIRS: &[&str] = &[
-    r"C:\Program Files\Common Files\Apple\Mobile Device Support",
-    r"C:\Program Files (x86)\Common Files\Apple\Mobile Device Support",
-];
+// Resolve Windows' machine-wide directories through the Shell API, never a
+// caller-controlled DLL directory or a hard-coded system drive.
+#[repr(C)]
+struct KnownFolderId {a:u32,b:u16,c:u16,d:[u8;8]}
+const COMMON_X64:KnownFolderId=KnownFolderId{a:0x6365d5a7,b:0x0f0d,c:0x45e5,d:[0x87,0xf6,0x0d,0xa5,0x6b,0x6a,0x4f,0x7d]};
+const COMMON_X86:KnownFolderId=KnownFolderId{a:0xde974d24,b:0xd9c6,c:0x4d3e,d:[0xbf,0x91,0xf4,0x45,0x51,0x20,0xb9,0x17]};
+fn common_files(id:&KnownFolderId)->Option<PathBuf> {
+    #[link(name="shell32")] unsafe extern "system" {fn SHGetKnownFolderPath(id:*const KnownFolderId,flags:u32,token:*mut std::ffi::c_void,output:*mut *mut u16)->i32;}
+    #[link(name="ole32")] unsafe extern "system" {fn CoTaskMemFree(pointer:*mut std::ffi::c_void);}
+    use std::os::windows::ffi::OsStringExt;
+    let mut output=std::ptr::null_mut();
+    let status=unsafe{SHGetKnownFolderPath(id,0x00004000,std::ptr::null_mut(),&mut output)};
+    if output.is_null(){return None;}
+    let result=if status<0 {None} else {
+        let mut length=0;while length<32768 && unsafe{*output.add(length)}!=0 {length+=1;}
+        if length==32768 {None} else {Some(PathBuf::from(std::ffi::OsString::from_wide(unsafe{std::slice::from_raw_parts(output,length)})))}
+    };
+    unsafe{CoTaskMemFree(output.cast());}
+    result.filter(|path|path.is_absolute())
+}
+fn support_in_common(common:&std::path::Path)->PathBuf {common.join("Apple").join("Mobile Device Support")}
 
 pub type CFTypeRef = *const std::ffi::c_void;
 pub type CFStringRef = *const std::ffi::c_void;
@@ -144,14 +161,9 @@ pub struct AppleLibraries {
 static LIBRARIES: OnceLock<Arc<AppleLibraries>> = OnceLock::new();
 
 pub fn locate_support_dir() -> Option<PathBuf> {
-    APPLE_SUPPORT_DIRS
-        .iter()
-        .map(PathBuf::from)
-        .find(|dir| {
-            dir.join("CoreFoundation.dll").is_file()
-                && dir.join("MobileDevice.dll").is_file()
-                && dir.join("AirTrafficHost.dll").is_file()
-        })
+    [&COMMON_X64,&COMMON_X86].into_iter().filter_map(common_files)
+        .map(|common|support_in_common(&common))
+        .find(|dir| ["CoreFoundation.dll","MobileDevice.dll","AirTrafficHost.dll"].iter().all(|name|dir.join(name).is_file()))
 }
 
 pub fn get_apple_libraries() -> Result<Arc<AppleLibraries>> {
@@ -459,4 +471,16 @@ pub fn verify_support() -> Result<String> {
     let _libs = get_apple_libraries()?;
     let dir = locate_support_dir().unwrap_or_default();
     Ok(format!("Apple Mobile Device Support ready: {}", dir.display()))
+}
+
+#[cfg(test)] mod portability_tests {
+    #[test] fn common_files_api_returns_machine_wide_absolute_directories() {
+        assert!(super::common_files(&super::COMMON_X64).unwrap().is_absolute());
+        assert!(super::common_files(&super::COMMON_X86).unwrap().is_absolute());
+    }
+    #[test] fn support_directory_keeps_the_windows_selected_drive() {
+        let root=std::path::Path::new(r"D:\Program Files\Common Files");
+        assert_eq!(super::support_in_common(root),root.join("Apple").join("Mobile Device Support"));
+        assert!(super::support_in_common(root).starts_with(root));
+    }
 }

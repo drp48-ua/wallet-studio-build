@@ -49,9 +49,124 @@ struct AssetRecord {
 }
 
 fn intent_root() -> PathBuf {
-    PathBuf::from(std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string()))
-        .join("AirCard").join("bank-change-intents")
+    crate::storage::root().join("bank-change-intents")
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingCloudHistory;
+impl std::fmt::Display for PendingCloudHistory {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("uncertain intent needs local recovery before cloud export")}
+}
+impl std::error::Error for PendingCloudHistory {}
+#[derive(Debug)]
+pub(crate) struct OverlappingCloudHistory;
+impl std::fmt::Display for OverlappingCloudHistory {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("Multiple unresolved bank write intents exist for this device/card; manual review is required")}
+}
+impl std::error::Error for OverlappingCloudHistory {}
+pub(crate) fn cloud_operation_dirs(root:&Path,udid:&str,hash:&str)->Result<Vec<PathBuf>> {
+    let states=matching_states_at(root,udid,hash,false)?;
+    anyhow::ensure!(states.iter().all(|(_,state)| matches!(state.phase.as_str(),"applied"|"restored")),PendingCloudHistory);
+    Ok(states.into_iter().map(|(path,_)|path).collect())
+}
+
+/// Narrow recovery inventory: only interrupted writes, never an intentionally
+/// applied design. Existing identity, history and payload checks stay mandatory.
+pub(crate) fn interrupted_restorations_for_device(udid:&str)->Result<Vec<Intent>> {
+    let root=intent_root();
+    interrupted_restorations_at(&root,udid)
+}
+fn interrupted_restorations_at(root:&Path,udid:&str)->Result<Vec<Intent>> {
+    let mut hashes=std::collections::BTreeSet::new();
+    for path in state_paths(&root,false)? {
+        let state=latest_metadata(&path)?;
+        if state.udid==udid {hashes.insert(state.card_hash);}
+    }
+    let mut result=Vec::new();
+    for hash in hashes {
+        if let Some(intent)=load_latest_at(&root,udid,&hash)? {
+            if matches!(intent.phase.as_str(),"prepared"|"originals_verified") {result.push(intent);}
+        }
+    }
+    Ok(result)
+}
+
+pub(crate) fn validate_cloud_chain(root:&Path,udid:&str,hash:&str)->Result<()> {
+    for path in state_paths(root,false)? { let state=latest_state(&path)?;
+        anyhow::ensure!(state.udid==udid && state.card_hash==hash,"cloud intent identity mixed");
+        for entry in fs::read_dir(&path)? { let file=entry?.path(); let name=file.file_name().unwrap().to_string_lossy();
+            if name.starts_with("state-") && name.ends_with(".json") {
+                let meta=fs::symlink_metadata(&file)?; anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=MAX_STATE_BYTES,"unsafe historical intent");
+                let historical:IntentState=serde_json::from_slice(&fs::read(&file)?)?; validate_state(&path,&historical)?;
+                anyhow::ensure!(historical.udid==udid && historical.card_hash==hash && historical.revision<=state.revision,"historical intent identity mismatch");
+                anyhow::ensure!(name==format!("state-{:04}-{}.json",historical.revision,historical.phase),"historical intent filename mismatch");
+            }
+        }
+    }
+    cloud_operation_dirs(root,udid,hash)?; Ok(())
+}
+
+/// Read a complete isolated remote union, never the live mixed local history.
+/// A restored final operation grants no authority; ambiguous chains fail closed.
+pub(crate) fn active_cloud_intent_at(root:&Path,udid:&str,hash:&str)->Result<Option<Intent>> {
+    validate_cloud_chain(root,udid,hash)?;
+    for path in state_paths(root,false)? {
+        let operation=path.file_name().and_then(|n|n.to_str()).context("invalid proof operation")?;
+        recovery_evidence_at(root,operation,udid,hash)?;
+    }
+    let intent=load_latest_at(root,udid,hash)?;
+    Ok(intent.filter(|intent|intent.phase=="applied"))
+}
+
+pub(crate) fn validate_persistence_store_at(root:&Path)->Result<()> {
+    let mut identities=std::collections::BTreeSet::new();
+    for directory in state_paths(root,false)? { let state=latest_state(&directory)?; identities.insert((state.udid,state.card_hash)); }
+    for (udid,hash) in identities {
+        // Validate every historical revision, including unfinished local intents;
+        // only cloud export additionally requires completed/applicable phases.
+        for (directory,latest) in matching_states_at(root,&udid,&hash,false)? {
+            for entry in fs::read_dir(&directory)? { let file=entry?.path(); let name=file.file_name().unwrap().to_string_lossy();
+                if name.starts_with("state-") && name.ends_with(".json") {
+                    let meta=fs::symlink_metadata(&file)?;
+                    anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=MAX_STATE_BYTES,"historical state unsafe");
+                    let state:IntentState=serde_json::from_slice(&fs::read(&file)?)?; validate_state(&directory,&state)?;
+                    anyhow::ensure!(state.udid==udid && state.card_hash==hash && state.revision<=latest.revision &&
+                        name==format!("state-{:04}-{}.json",state.revision,state.phase),"historical state identity mismatch");
+                }
+            }
+        }
+    } Ok(())
+}
+pub(crate) fn review_persistence_store_at(root:&Path,vault:&Path)->Result<()> {
+    let mut identities=std::collections::BTreeSet::new();
+    for directory in state_paths(root,false)? { identities.insert(operation_identity(&directory)?); }
+    for (udid,hash) in identities {
+        let result=(|| {for (directory,latest) in matching_states_at(root,&udid,&hash,false)? {
+            for entry in fs::read_dir(&directory)? {let file=entry?.path();let name=file.file_name().unwrap().to_string_lossy();
+                if name.starts_with("state-") && name.ends_with(".json") {
+                    crate::storage::safe_chain(&file)?;let meta=fs::symlink_metadata(&file)?;anyhow::ensure!(meta.is_file() && meta.len()<=MAX_STATE_BYTES,"historical state unsafe");
+                    let state:IntentState=serde_json::from_slice(&fs::read(&file)?)?;validate_state(&directory,&state)?;
+                    anyhow::ensure!(state.udid==udid && state.card_hash==hash && state.revision<=latest.revision && name==format!("state-{:04}-{}.json",state.revision,state.phase),"historical identity invalid");
+                }
+            }
+        }Ok::<(),anyhow::Error>(())})();
+        if result.is_err() {crate::storage::block_card_at(vault,&udid,&hash)?;}
+    }Ok(())
+}
+pub(crate) fn operation_identity(directory:&Path)->Result<(String,String)> {
+    let state=latest_metadata(directory)?;Ok((state.udid,state.card_hash))
+}
+#[cfg(test)] pub(crate) fn save_fixture_prepared_at(root:&Path,udid:&str,hash:&str,pairs:&[(String,Vec<u8>)])->Result<PathBuf> {
+    save_intent_at(root,udid,hash,pairs,true)
+}
+#[cfg(test)] pub(crate) fn apply_fixture_at(directory:&Path)->Result<()> {
+    append_phase(directory,"applied")
+}
+#[cfg(test)] pub(crate) fn save_fixture_applied_at(root:&Path,udid:&str,hash:&str,pairs:&[(String,Vec<u8>)])->Result<PathBuf> {
+    let directory=save_intent_at(root,udid,hash,pairs,true)?;append_phase(&directory,"applied")?;Ok(directory)
+}
+#[cfg(test)] pub(crate) fn restore_fixture_at(directory:&Path)->Result<()> {
+    append_phase(directory,"originals_verified")?;append_phase(directory,"restored")
 }
 
 fn identity_key(udid: &str, card_hash: &str) -> Result<String> {
@@ -125,8 +240,9 @@ fn validate_assets(pairs: &[(String, Vec<u8>)]) -> Result<BTreeMap<String, Asset
     Ok(records)
 }
 
-fn latest_state(operation_dir: &Path) -> Result<IntentState> {
-    let mut paths = fs::read_dir(operation_dir)?.filter_map(|item| item.ok())
+fn latest_metadata(operation_dir: &Path) -> Result<IntentState> {
+    crate::storage::safe_chain(operation_dir)?;
+    let mut paths = fs::read_dir(operation_dir)?.collect::<std::io::Result<Vec<_>>>()?.into_iter()
         .map(|item| item.path())
         .filter(|path| path.file_name().and_then(|n| n.to_str())
             .is_some_and(|n| n.starts_with("state-") && n.ends_with(".json")))
@@ -138,9 +254,11 @@ fn latest_state(operation_dir: &Path) -> Result<IntentState> {
         "Write-intent state file is unsafe or too large");
     let state: IntentState = serde_json::from_slice(&fs::read(path)?)
         .context("Write-intent state is corrupt")?;
-    validate_state(operation_dir, &state)?;
+    identity_key(&state.udid,&state.card_hash)?;
+    anyhow::ensure!(valid_operation_id(&state.operation_id) && operation_dir.file_name().and_then(|n|n.to_str())==Some(&state.operation_id),"intent metadata identity invalid");
     Ok(state)
 }
+fn latest_state(operation_dir:&Path)->Result<IntentState> {let state=latest_metadata(operation_dir)?;validate_state(operation_dir,&state)?;Ok(state)}
 
 fn validate_state(operation_dir: &Path, state: &IntentState) -> Result<()> {
     anyhow::ensure!(matches!(state.version, 1 | INTENT_VERSION) && valid_operation_id(&state.operation_id),
@@ -177,6 +295,7 @@ fn read_payload(operation_dir: &Path, leaf: &str, expected_size: usize) -> Resul
 }
 
 fn state_paths(root: &Path, own_creation_lock: bool) -> Result<Vec<PathBuf>> {
+    crate::storage::safe_chain(root)?;
     if !root.exists() { return Ok(Vec::new()); }
     let metadata = fs::symlink_metadata(root)?;
     anyhow::ensure!(metadata.is_dir() && !metadata.file_type().is_symlink(),
@@ -184,6 +303,7 @@ fn state_paths(root: &Path, own_creation_lock: bool) -> Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
+        crate::storage::safe_chain(&path)?;
         if path.file_name().and_then(|n| n.to_str()) == Some(".create.lock") {
             if own_creation_lock { continue; }
             bail!("An interrupted or concurrent bank write-intent creation needs review at {}", path.display());
@@ -206,8 +326,20 @@ fn matching_states_at(root: &Path, udid: &str, card_hash: &str,
     let _ = identity_key(udid, card_hash)?;
     let mut found = Vec::new();
     for directory in state_paths(root, own_creation_lock)? {
-        let state = latest_state(&directory)?;
+        let state = latest_metadata(&directory)?;
+        // Unknown identities/JSON remain global failures; known foreign payloads
+        // are checked only when that exact device/card is requested.
+        for entry in fs::read_dir(&directory)? {let file=entry?.path();let name=file.file_name().unwrap().to_string_lossy();
+            if name.starts_with("state-") && name.ends_with(".json") {
+                crate::storage::safe_chain(&file)?;let metadata=fs::symlink_metadata(&file)?;
+                anyhow::ensure!(metadata.is_file() && metadata.len()<=MAX_STATE_BYTES,"historical state unsafe");
+                let historical:IntentState=serde_json::from_slice(&fs::read(&file)?)?;identity_key(&historical.udid,&historical.card_hash)?;
+                anyhow::ensure!(historical.udid==state.udid && historical.card_hash==state.card_hash && historical.operation_id==state.operation_id,"historical identity unknown");
+                if state.udid==udid && state.card_hash==card_hash {validate_state(&directory,&historical)?;}
+            }
+        }
         if state.udid == udid && state.card_hash == card_hash {
+            validate_state(&directory,&state)?;
             found.push((directory, state));
         }
     }
@@ -218,6 +350,12 @@ fn matching_states_at(root: &Path, udid: &str, card_hash: &str,
         // Historical clients restarted sequence at one. Accept only a strictly
         // dated chain whose preceding operation is already durably restored.
         // Preserve every immutable state and payload; ambiguous evidence blocks.
+        if older.sequence==1 && newer.sequence==1 && older.phase!="restored"
+            && older.created_unix_ms>0 && older.created_unix_ms<newer.created_unix_ms {
+            // A validated newer snapshot may carry the missing restored revision.
+            // This remains an error; only cloud import can defer its exact union.
+            bail!(OverlappingCloudHistory);
+        }
         anyhow::ensure!(older.sequence < newer.sequence
             || (older.sequence == 1 && newer.sequence == 1
                 && older.phase == "restored" && older.created_unix_ms > 0
@@ -225,11 +363,9 @@ fn matching_states_at(root: &Path, udid: &str, card_hash: &str,
             "Ambiguous duplicate bank write-intent sequence for this device/card");
     }
     let unresolved = found.iter().filter(|(_, state)| state.phase != "restored").count();
-    anyhow::ensure!(unresolved <= 1,
-        "Multiple unresolved bank write intents exist for this device/card; manual review is required");
+    anyhow::ensure!(unresolved <= 1,OverlappingCloudHistory);
     anyhow::ensure!(found.iter().take(found.len().saturating_sub(1))
-        .all(|(_, state)| state.phase == "restored"),
-        "An older unresolved bank write intent exists; manual review is required");
+        .all(|(_, state)| state.phase == "restored"),OverlappingCloudHistory);
     Ok(found)
 }
 
@@ -242,6 +378,61 @@ fn load_latest_at_with_lock(root: &Path, udid: &str, card_hash: &str,
     }).collect::<Result<BTreeMap<_, _>>>()?;
     Ok(Some(Intent { operation_dir, udid: state.udid, card_hash: state.card_hash,
         assets, absent_assets: state.absent_assets, phase: state.phase }))
+}
+
+// Recovery uses exact recorded operation IDs even while a crash-safe backfill
+// temporarily leaves two unresolved histories. Never select an arbitrary latest.
+pub(crate) fn recovery_evidence_at(root:&Path,operation:&str,udid:&str,hash:&str)->Result<BTreeMap<String,Vec<u8>>> {
+    anyhow::ensure!(valid_operation_id(operation),"invalid recovery operation ID");
+    let directory=root.join(operation);crate::storage::safe_chain(&directory)?;
+    let latest=latest_state(&directory)?;
+    anyhow::ensure!(latest.udid==udid && latest.card_hash==hash,"recovery operation identity mismatch");
+    let mut files=BTreeMap::new();let mut states=Vec::new();
+    for entry in fs::read_dir(&directory)? {
+        let path=entry?.path();crate::storage::safe_chain(&path)?;
+        let name=path.file_name().and_then(|n|n.to_str()).context("invalid operation evidence name")?.to_string();
+        let meta=fs::symlink_metadata(&path)?;
+        anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=MAX_ASSET_BYTES as u64,"unsafe operation recovery evidence");
+        let bytes=fs::read(&path)?;
+        if name.starts_with("state-") && name.ends_with(".json") {
+            anyhow::ensure!(bytes.len()<=MAX_STATE_BYTES as usize,"oversized recovery revision");
+            let state:IntentState=serde_json::from_slice(&bytes)?;validate_state(&directory,&state)?;
+            anyhow::ensure!(state.udid==udid && state.card_hash==hash && name==format!("state-{:04}-{}.json",state.revision,state.phase),"historical recovery identity mismatch");
+            states.push(state);
+        }else {anyhow::ensure!(latest.assets.contains_key(&name),"undeclared recovery operation file");}
+        files.insert(name,bytes);
+    }
+    states.sort_by_key(|state|state.revision);
+    anyhow::ensure!(states.first().is_some_and(|s|s.revision==1 && s.phase=="prepared"),"recovery history has no prepared start");
+    for pair in states.windows(2) {
+        let (old,new)=(&pair[0],&pair[1]);
+        let transition=matches!((old.phase.as_str(),new.phase.as_str()),("prepared","applied")|("prepared","originals_verified")|("applied","originals_verified")|("originals_verified","restored"));
+        let mut comparable=old.clone();comparable.revision=new.revision;comparable.phase=new.phase.clone();
+        anyhow::ensure!(new.revision==old.revision+1 && transition && serde_json::to_vec(&comparable)?==serde_json::to_vec(new)?,"recovery operation revisions are not an immutable valid chain");
+    }
+    Ok(files)
+}
+pub(crate) fn validate_recovery_backfill_at(root:&Path,operation:&str,udid:&str,hash:&str,incoming:&BTreeMap<String,Vec<u8>>)->Result<()> {
+    let directory=root.join(operation);
+    if !directory.exists() {return Ok(());}
+    let current=recovery_evidence_at(root,operation,udid,hash)?;
+    for (name,bytes) in incoming {
+        if let Some(existing)=current.get(name) {anyhow::ensure!(existing==bytes,"immutable recovery backfill conflict");continue;}
+        anyhow::ensure!(name.starts_with("state-"),"recovery backfill cannot replace missing managed assets");
+        let next:IntentState=serde_json::from_slice(bytes)?;
+        for (existing,bytes) in &current {if existing.starts_with("state-") {
+            let old:IntentState=serde_json::from_slice(bytes)?;
+            anyhow::ensure!(old.revision!=next.revision,"different recovery phases share one revision");
+        }}
+    }Ok(())
+}
+pub(crate) fn complete_exact_recovery_operation(operation:&str,udid:&str,hash:&str,physical:&crate::flasher::VerifiedOriginalRestoration,plan:&crate::bank_recovery::RecoveryPlan)->Result<()> {
+    anyhow::ensure!(physical.matches(plan),"physical original proof is required to complete recovery");
+    let root=plan.root().join("bank-change-intents");recovery_evidence_at(&root,operation,udid,hash)?;
+    let path=root.join(operation);let phase=latest_state(&path)?.phase;
+    if matches!(phase.as_str(),"prepared"|"applied") {append_phase(&path,"originals_verified")?;}
+    if latest_state(&path)?.phase=="originals_verified" {append_phase(&path,"restored")?;}
+    anyhow::ensure!(latest_state(&path)?.phase=="restored","recovery phase completion failed");Ok(())
 }
 
 fn append_phase(operation_dir: &Path, requested_phase: &str) -> Result<()> {
@@ -361,6 +552,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn interrupted_recovery_inventory_excludes_applied_restored_and_foreign_cards() {
+        let root=std::env::temp_dir().join(format!("bank-interrupted-{}",crate::flasher::generate_token()));
+        let hash="OM6NYhwXMZrAw0sRUjR62wmF4ZQ=";
+        let operation=save_intent_at(&root,"device-A",hash,&pairs(),true).unwrap();
+        assert!(interrupted_restorations_at(&root,"device-B").unwrap().is_empty());
+        assert_eq!(interrupted_restorations_at(&root,"device-A").unwrap().len(),1);
+        append_phase(&operation,"applied").unwrap();
+        assert!(interrupted_restorations_at(&root,"device-A").unwrap().is_empty());
+        append_phase(&operation,"originals_verified").unwrap();
+        assert_eq!(interrupted_restorations_at(&root,"device-A").unwrap().len(),1);
+        append_phase(&operation,"restored").unwrap();
+        assert!(interrupted_restorations_at(&root,"device-A").unwrap().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn two_png_intent_records_explicit_pdf_absence_and_restores_without_missing_payload_reads() {
         let root = std::env::temp_dir().join(format!("bank-intent-apng-{}-{}", std::process::id(), crate::flasher::generate_token()));
         let hash = "OM6NYhwXMZrAw0sRUjR62wmF4ZQ=";
@@ -419,10 +626,39 @@ mod tests {
         bytes
     }
 
+    #[test] fn remote_recovery_proof_rejects_revision_aliases_and_changed_operation_metadata() {
+        let hash="OM6NYhwXMZrAw0sRUjR62wmF4ZQ=";
+        for alias in [false,true] {
+            let root=std::env::temp_dir().join(format!("ws-proof-history-{}",crate::flasher::generate_token()));
+            let operation=save_fixture_applied_at(&root,"synthetic-proof-device",hash,&pairs()).unwrap();
+            assert!(active_cloud_intent_at(&root,"synthetic-proof-device",hash).unwrap().is_some());
+            if alias {
+                restore_fixture_at(&operation).unwrap();
+                let old=operation.join("state-0004-restored.json");let mut state:IntentState=serde_json::from_slice(&fs::read(&old).unwrap()).unwrap();state.revision=3;
+                fs::remove_file(old).unwrap();fs::write(operation.join("state-0003-restored.json"),serde_json::to_vec(&state).unwrap()).unwrap();
+            }else {
+                let path=operation.join("state-0002-applied.json");let mut state:IntentState=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();state.sequence+=1;
+                fs::write(path,serde_json::to_vec(&state).unwrap()).unwrap();
+            }
+            assert!(active_cloud_intent_at(&root,"synthetic-proof-device",hash).is_err());fs::remove_dir_all(root).unwrap();
+        }
+    }
     fn pairs() -> Vec<(String, Vec<u8>)> {
         CARD_ARTWORK_ASSETS.iter().map(|leaf| (leaf.to_string(), if leaf.ends_with(".pdf") {
             b"%PDF-1.7\n%%EOF".to_vec()
         } else { png() })).collect()
+    }
+    #[test] fn customer_foreign_payload_corruption_is_scoped_but_unknown_json_blocks() {
+        let root=std::env::temp_dir().join(format!("ws-history-fixture-{}",crate::flasher::generate_token()));
+        let hash="OM6NYhwXMZrAw0sRUjR62wmF4ZQ=";
+        let a=save_intent_at(&root,"synthetic-A",hash,&pairs(),true).unwrap();
+        let b=save_intent_at(&root,"synthetic-B",hash,&pairs(),true).unwrap();
+        fs::write(a.join("cardBackgroundCombined@3x.png"),b"corrupted fixture").unwrap();
+        assert!(load_latest_at(&root,"synthetic-A",hash).is_err());assert!(load_latest_at(&root,"synthetic-B",hash).unwrap().is_some());
+        let vault=std::env::temp_dir().join(format!("ws-review-fixture-{}",crate::flasher::generate_token())); review_persistence_store_at(&root,&vault).unwrap();
+        assert!(crate::storage::ensure_card_ready_at(&vault,"synthetic-A",hash).is_err());assert!(crate::storage::ensure_card_ready_at(&vault,"synthetic-B",hash).is_ok());
+        assert!(b.is_dir());fs::write(a.join("state-0001-prepared.json"),b"not JSON").unwrap();
+        assert!(load_latest_at(&root,"synthetic-B",hash).is_err());fs::remove_dir_all(root).unwrap();fs::remove_dir_all(vault).unwrap();
     }
 
     #[test]

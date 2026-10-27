@@ -1,0 +1,11 @@
+{
+  "sections": {
+    "main": {
+      "type": "wallet-studio-product",
+      "settings": {
+        "enable_sales": true
+      }
+    }
+  },
+  "order": ["main"]
+}

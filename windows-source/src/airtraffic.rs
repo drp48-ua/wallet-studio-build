@@ -135,8 +135,19 @@ where
     supervise_child(child, sync_timeout(transport, assets.len()), &mut log)
 }
 
-fn supervise_child<L>(mut child: std::process::Child, timeout: Duration, log: &mut L) -> Result<()>
+struct ReapedChild(std::process::Child);
+impl std::ops::Deref for ReapedChild {type Target=std::process::Child;fn deref(&self)->&Self::Target{&self.0}}
+impl std::ops::DerefMut for ReapedChild {fn deref_mut(&mut self)->&mut Self::Target{&mut self.0}}
+impl Drop for ReapedChild {
+    fn drop(&mut self) {
+        // This also runs during unwinding. An exited UI worker must never leave
+        // a native transport process writing while recovery controls re-enable.
+        let _=self.0.kill();let _=self.0.wait();
+    }
+}
+fn supervise_child<L>(child: std::process::Child, timeout: Duration, log: &mut L) -> Result<()>
 where L: FnMut(&str) {
+    let mut child=ReapedChild(child);
     let stdout = child.stdout.take().context("Falta el canal del proceso de sincronización")?;
     let (tx, rx) = std::sync::mpsc::channel();
     let reader = std::thread::spawn(move || {
@@ -505,5 +516,27 @@ mod tests {
         let error = supervise_child(child, Duration::from_millis(100), &mut |_| {}).unwrap_err();
         assert!(error.to_string().contains("timed out"));
         assert!(start.elapsed() < Duration::from_secs(5));
+    }
+    #[test]
+    fn callback_panic_reaps_transport_before_ui_worker_can_disconnect() {
+        #[link(name="kernel32")]
+        unsafe extern "system" {
+            fn OpenProcess(access:u32,inherit:i32,id:u32)->*mut std::ffi::c_void;
+            fn WaitForSingleObject(handle:*mut std::ffi::c_void,milliseconds:u32)->u32;
+            fn CloseHandle(handle:*mut std::ffi::c_void)->i32;
+        }
+        let mut command=Command::new("powershell.exe");
+        command.args(["-NoProfile","-NonInteractive","-Command",r#"[Console]::Out.WriteLine('{"Log":"synthetic phase"}'); [Console]::Out.Flush(); Start-Sleep -Seconds 30"#])
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+        use std::os::windows::process::CommandExt;command.creation_flags(0x08000000);
+        let child=command.spawn().unwrap();
+        let handle=unsafe{OpenProcess(0x00100000,0,child.id())};assert!(!handle.is_null());
+        let start=std::time::Instant::now();
+        let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
+            let _=supervise_child(child,Duration::from_secs(10),&mut |_|panic!("synthetic UI callback panic"));
+        }));
+        let exited=unsafe{WaitForSingleObject(handle,0)};unsafe{CloseHandle(handle);}
+        assert!(result.is_err());assert_eq!(exited,0,"transport survived callback panic");
+        assert!(start.elapsed()<Duration::from_secs(10));
     }
 }

@@ -1,0 +1,70 @@
+{{ 'wallet-studio.css' | asset_url | stylesheet_tag }}
+{{ 'ws-library.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'ws-library.js' | asset_url }}" defer></script>
+<div class="ws-site ws-catalog-page" data-ws-library>
+<header class="ws-navigation"><div class="ws-wrap ws-nav-inner"><a class="ws-wordmark" href="{{ routes.root_url }}"><img class="ws-brand-logo" src="{{ 'wallet-studio-official-logo.png' | file_url }}" width="36" height="36" alt="Wallet Studio"><span>WALLETSTUDIO<span class="ws-wordmark-dot">.</span>SITE</span></a><a class="ws-nav-cta" href="{{ routes.root_url }}">{{ 'wallet_studio.catalog.home' | t }} ↗</a></div></header>
+<main class="ws-wrap ws-library-full"><div class="ws-library-heading"><div><p class="ws-eyebrow">{{ 'wallet_studio.catalog.eyebrow' | t }}</p><h1>{{ 'wallet_studio.catalog.full_heading' | t }}</h1><p>{{ 'wallet_studio.catalog.full_description' | t: count: 56 }}</p></div><span class="ws-library-resolution">56 · 2K</span></div>
+<div class="ws-library-grid">
+{% render 'ws-library-card', design_id: 'ws-001', title: 'Mosaico imperial', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-001-fullbleed-20261022.png?v=1792657410', eager: true %}
+{% render 'ws-library-card', design_id: 'ws-002', title: 'Ébano y oro', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-002-fullbleed-20261022.png?v=1792657427' %}
+{% render 'ws-library-card', design_id: 'ws-003', title: 'Reactor carmesí', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-003-2k.png?v=1792618136' %}
+{% render 'ws-library-card', design_id: 'ws-004', title: 'Escorpión de cromo', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-004-2k.png?v=1792618151' %}
+{% render 'ws-library-card', design_id: 'ws-005', title: 'Dragón mecánico', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-005-2k.png?v=1792618143' %}
+{% render 'ws-library-card', design_id: 'ws-006', title: 'Guerrero del dragón', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-006-2k.png?v=1792618160' %}
+{% render 'ws-library-card', design_id: 'ws-007', title: 'León de malaquita', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-007-2k.png?v=1792618168' %}
+{% render 'ws-library-card', design_id: 'ws-008', title: 'Samurái neón', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-008-2k.png?v=1792618176' %}
+{% render 'ws-library-card', design_id: 'ws-009', title: 'Araña de plata', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-009-2k.png?v=1792618185' %}
+{% render 'ws-library-card', design_id: 'ws-010', title: 'Dragón oceánico', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-010-2k.png?v=1792618193' %}
+{% render 'ws-library-card', design_id: 'ws-011', title: 'Caballero oscuro', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-011-2k.png?v=1792618201' %}
+{% render 'ws-library-card', design_id: 'ws-012', title: 'Mármol imperial', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-012-fullbleed-20261022.png?v=1792657441' %}
+{% render 'ws-library-card', design_id: 'ws-013', title: 'Telaraña carmesí', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-013-2k.png?v=1792618217' %}
+{% render 'ws-library-card', design_id: 'ws-014', title: 'León de plata', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-014-2k.png?v=1792618224' %}
+{% render 'ws-library-card', design_id: 'ws-015', title: 'Calavera alada', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-015-fullbleed-20261022.png?v=1792657469' %}
+{% render 'ws-library-card', design_id: 'ws-016', title: 'Lobo de cromo', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-016-2k.png?v=1792618240' %}
+{% render 'ws-library-card', design_id: 'ws-017', title: 'Clásica negra', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-017-fullbleed-20261022.png?v=1792657482' %}
+{% render 'ws-library-card', design_id: 'ws-018', title: 'BMW · Medianoche', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-018-2k.png?v=1792618311' %}
+{% render 'ws-library-card', design_id: 'ws-019', title: 'Lamborghini · Lluvia', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-019-2k.png?v=1792618319' %}
+{% render 'ws-library-card', design_id: 'ws-020', title: 'Audi · Noche', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-020-2k.png?v=1792618326' %}
+{% render 'ws-library-card', design_id: 'ws-021', title: 'Nissan GT-R · Asfalto', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-021-2k.png?v=1792618334' %}
+{% render 'ws-library-card', design_id: 'ws-022', title: 'Porsche · Ciudad', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-022-2k.png?v=1792618341' %}
+{% render 'ws-library-card', design_id: 'ws-023', title: 'Lamborghini · Villa', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-023-2k.png?v=1792618349' %}
+{% render 'ws-library-card', design_id: 'ws-024', title: 'Ferrari · Avenida', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-024-2k.png?v=1792618355' %}
+{% render 'ws-library-card', design_id: 'ws-025', title: 'BMW · Horizonte', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-025-2k.png?v=1792618362' %}
+{% render 'ws-library-card', design_id: 'ws-026', title: 'Porsche · Atardecer', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-026-2k.png?v=1792618369' %}
+{% render 'ws-library-card', design_id: 'ws-027', title: 'Perro Sánchez Express', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-027-2k.png?v=1792618376' %}
+{% render 'ws-library-card', design_id: 'ws-028', title: 'Abascal Express', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-028-2k.png?v=1792618384' %}
+{% render 'ws-library-card', design_id: 'ws-029', title: 'El Cocas Express', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-029-2k.png?v=1792618391' %}
+{% render 'ws-library-card', design_id: 'ws-030', title: 'Pantera de obsidiana', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-030-2k.png?v=1792618400' %}
+{% render 'ws-library-card', design_id: 'ws-031', title: 'Fénix imperial', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-031-2k.png?v=1792618407' %}
+{% render 'ws-library-card', design_id: 'ws-032', title: 'Koi de plata', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-032-2k.png?v=1792618416' %}
+{% render 'ws-library-card', design_id: 'ws-033', title: 'Dragón de jade', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-033-2k.png?v=1792618424' %}
+{% render 'ws-library-card', design_id: 'ws-034', title: 'Lobo lunar', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-034-2k.png?v=1792618432' %}
+{% render 'ws-library-card', design_id: 'ws-035', title: 'Máscara imperial', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-035-2k.png?v=1792618441' %}
+{% render 'ws-library-card', design_id: 'ws-036', title: 'Halcón zafiro', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-036-2k.png?v=1792618450' %}
+{% render 'ws-library-card', design_id: 'ws-037', title: 'Escarabajo amatista', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-037-2k.png?v=1792618460' %}
+{% render 'ws-library-card', design_id: 'ws-038', title: 'León rubí', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-038-2k.png?v=1792618583' %}
+{% render 'ws-library-card', design_id: 'ws-039', title: 'Tigre de platino', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-039-2k.png?v=1792618592' %}
+{% render 'ws-library-card', design_id: 'ws-040', title: 'Serpiente dorada', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-040-2k.png?v=1792618600' %}
+{% render 'ws-library-card', design_id: 'ws-041', title: 'Pulpo de mercurio', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-041-2k.png?v=1792618608' %}
+{% render 'ws-library-card', design_id: 'ws-042', title: 'Águila ártica', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-042-2k.png?v=1792618616' %}
+{% render 'ws-library-card', design_id: 'ws-043', title: 'Superdeportivo · Lluvia', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-043-2k.png?v=1792618624' %}
+{% render 'ws-library-card', design_id: 'ws-044', title: 'Coupé · Puesta de sol', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-044-2k.png?v=1792618633' %}
+{% render 'ws-library-card', design_id: 'ws-045', title: 'GT · Montaña', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-045-2k.png?v=1792618641' %}
+{% render 'ws-library-card', design_id: 'ws-046', title: 'Cyber · Neón', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-046-2k.png?v=1792618651' %}
+{% render 'ws-library-card', design_id: 'ws-047', title: 'Hypercar · Villa', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-047-2k.png?v=1792618658' %}
+{% render 'ws-library-card', design_id: 'ws-048', title: 'Roadster · Costa', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-048-2k.png?v=1792618666' %}
+{% render 'ws-library-card', design_id: 'ws-049', title: 'Sport · Túnel', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-049-2k.png?v=1792618674' %}
+{% render 'ws-library-card', design_id: 'ws-050', title: 'Órbita imperial', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-library-ws-050-2k.png?v=1792618684' %}
+{% render 'ws-library-card', design_id: 'ws-051', title: 'Sakura Fuji plata', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-051-fullbleed-20261022.png?v=1792657500' %}
+{% render 'ws-library-card', design_id: 'ws-052', title: 'Telaraña roja y oro', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-052-fullbleed-20261022.png?v=1792657527' %}
+{% render 'ws-library-card', design_id: 'ws-053', title: 'Mármol blanco y oro', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-053-fullbleed-20261022.png?v=1792657545' %}
+{% render 'ws-library-card', design_id: 'ws-054', title: 'Topografía esmeralda', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-054-fullbleed-20261022.png?v=1792657560' %}
+{% render 'ws-library-card', design_id: 'ws-055', title: 'La gran ola japonesa', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-055-fullbleed-20261022.png?v=1792657580' %}
+{% render 'ws-library-card', design_id: 'ws-056', title: 'Clásica negra y oro', src: 'https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-056-fullbleed-20261022.png?v=1792657594' %}
+</div><p class="ws-library-note">{{ 'wallet_studio.catalog.note' | t }}</p><a class="ws-button ws-button-primary" href="{{ routes.root_url }}">{{ 'wallet_studio.catalog.home' | t }} ↗</a></main>
+<footer class="ws-footer"><div class="ws-wrap ws-footer-bottom"><p>© {{ 'now' | date: '%Y' }} Wallet Studio</p><nav aria-label="{{ 'wallet_studio.catalog.legal' | t | escape }}"><a href="/policies/legal-notice">{{ 'wallet_studio.catalog.notice' | t }}</a> · <a href="{{ shop.privacy_policy.url }}">{{ shop.privacy_policy.title }}</a> · <a href="{{ shop.terms_of_service.url }}">{{ shop.terms_of_service.title }}</a></nav></div></footer>
+<dialog class="ws-library-dialog" data-ws-library-dialog aria-label="{{ 'wallet_studio.catalog.enlarged' | t | escape }}"><button type="button" class="ws-library-close" data-ws-library-close aria-label="{{ 'wallet_studio.catalog.close' | t | escape }}">×</button><img data-ws-library-image alt="" width="1536" height="969"><p data-ws-library-caption></p></dialog>
+</div>
+{% schema %}
+{"name":"Wallet Studio catalogue","settings":[],"presets":[{"name":"Wallet Studio catalogue"}]}
+{% endschema %}

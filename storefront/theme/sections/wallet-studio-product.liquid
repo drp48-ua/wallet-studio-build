@@ -1,0 +1,113 @@
+{{ 'wallet-studio.css' | asset_url | stylesheet_tag }}
+{{ 'wallet-studio-product.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'wallet-studio-commerce.js' | asset_url }}" defer></script>
+<div class="ws-site ws-product-page" id="wallet-studio-product">
+  <header class="ws-navigation">
+    <div class="ws-wrap ws-nav-inner">
+      <a class="ws-wordmark" href="{{ routes.root_url }}" aria-label="Wallet Studio, inicio"><span class="ws-symbol" aria-hidden="true"><span></span><span></span><span></span></span><span>WALLETSTUDIO<span class="ws-wordmark-dot">.</span>SITE</span></a>
+      <nav class="ws-desktop-nav" aria-label="Navegación del producto"><a href="{{ routes.root_url }}#ws-designs">Diseños</a><a href="{{ routes.root_url }}#ws-process">Cómo funciona</a><a href="{{ routes.root_url }}#ws-faq">Preguntas frecuentes</a></nav>
+      <a class="ws-nav-cta" href="{{ routes.cart_url }}">Ver carrito <span aria-hidden="true">↗</span></a>
+      <details class="ws-mobile-menu"><summary aria-label="Abrir menú"><span class="ws-mobile-menu-icon" aria-hidden="true"><i></i><i></i><i></i></span><span class="ws-mobile-menu-text">Menú</span></summary><nav class="ws-mobile-menu-panel" aria-label="Navegación móvil"><a href="{{ routes.root_url }}#ws-designs">Explorar diseños ↗</a><a href="{{ routes.root_url }}#ws-process">Cómo funciona ↗</a><a href="{{ routes.root_url }}#ws-faq">Preguntas frecuentes ↗</a><a href="{{ routes.cart_url }}">Ver carrito ↗</a></nav></details>
+    </div>
+  </header>
+  <div class="ws-product-cover">
+    <div class="ws-wrap ws-product-grid">
+      <div class="ws-product-visual" aria-label="Ilustración original de la aplicación Wallet Studio">
+        <div class="ws-product-orbit" aria-hidden="true"></div>
+        <button type="button" class="ws-product-card ws-product-card-back ws-zoom-trigger" data-ws-zoom-title="Marble & Gold" data-ws-zoom-src="{% if product.images.size > 1 %}{{ product.images[1] | image_url: width: 1536 }}{% else %}https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-053-fullbleed-20261022.png?v=1792657545{% endif %}" aria-label="Ampliar imagen del producto Marble & Gold">
+          {% if product.images.size > 1 %}
+            {{ product.images[1] | image_url: width: 1536 | image_tag: loading: 'eager', alt: 'Marble & Gold — diseño de tarjeta blanca y dorada' }}
+          {% else %}
+            <img src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-053-fullbleed-20261022.png?v=1792657545" alt="Marble & Gold — diseño de tarjeta blanca y dorada" width="1536" height="969" loading="eager">
+          {% endif %}
+        </button>
+        <button type="button" class="ws-product-card ws-product-card-front ws-zoom-trigger" data-ws-zoom-title="Black & Gold" data-ws-zoom-src="{% if product.images.size > 0 %}{{ product.images[0] | image_url: width: 1536 }}{% else %}https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-056-fullbleed-20261022.png?v=1792657594{% endif %}" aria-label="Ampliar imagen del producto Black & Gold">
+          {% if product.images.size > 0 %}
+            {{ product.images[0] | image_url: width: 1536 | image_tag: loading: 'eager', alt: 'Black & Gold — diseño de tarjeta negra y dorada', fetchpriority: 'high' }}
+          {% else %}
+            <img src="https://cdn.shopify.com/s/files/1/1034/6607/4441/files/wallet-studio-ws-056-fullbleed-20261022.png?v=1792657594" alt="Black & Gold — diseño de tarjeta negra y dorada" width="1536" height="969" loading="eager">
+          {% endif %}
+        </button>
+        <div class="ws-product-visual-caption">PULSA UNA TARJETA PARA AMPLIARLA · IMÁGENES ILUSTRATIVAS</div>
+      </div>
+      <dialog class="ws-image-lightbox" data-ws-image-lightbox aria-label="Vista ampliada de imagen del producto">
+        <button type="button" class="ws-image-lightbox-close" data-ws-lightbox-close aria-label="Cerrar imagen ampliada">×</button>
+        <img data-ws-lightbox-image alt="" decoding="async" width="1536" height="969">
+        <p data-ws-lightbox-caption></p>
+      </dialog>
+      <div class="ws-product-copy">
+        <div class="ws-eyebrow"><span class="ws-signal"></span> SOFTWARE PARA WINDOWS</div>
+        <div class="ws-section-index ws-product-preheading">COMPRA ÚNICA · DESCARGA DIGITAL</div>
+        <h1>Tu tarjeta.<br><em>Tu estilo.</em></h1>
+        <p class="ws-product-lead">Un nuevo aspecto para las tarjetas compatibles de tu cartera digital. Explora la biblioteca de diseños o importa tu propia imagen, directamente desde Windows.</p>
+        <div class="ws-product-price-panel">
+          <span class="ws-product-price-label">{% if section.settings.enable_sales %}PRECIO POR COMPRA{% else %}PRECIO PROPUESTO DE LANZAMIENTO{% endif %}</span>
+          <div class="ws-product-price-line"><strong>{{ product.price | money }}</strong><span>PAGO ÚNICO<br>SIN SUSCRIPCIÓN</span></div>
+          <div class="ws-product-divider"></div>
+          <ul class="ws-product-features">
+            <li>La aplicación de Windows y los diseños publicados incluidos.</li>
+            <li>Importa tus propias imágenes PNG, JPG o WebP.</li>
+            <li>Sin pagos separados por diseños ni planes de suscripción.</li>
+            <li>Una compra permite usar Wallet Studio en hasta tres ordenadores Windows.</li>
+            <li>Actualizaciones incluidas de forma indefinida, sin costes adicionales, y soporte por correo.</li>
+          </ul>
+          {% if section.settings.enable_sales and product.available %}
+            {% form 'product', product, id: 'WalletStudioProductForm', class: 'ws-product-purchase-form ws-shopify-cart-form' %}
+              <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+              <input type="hidden" name="quantity" value="1">
+              <button type="submit" name="add" class="ws-button ws-button-primary ws-product-purchase-button" data-ws-cart-submit>Añadir al carrito <span>{{ product.price | money }}</span></button>
+              <p class="ws-cart-error" data-ws-cart-error role="alert" hidden></p>
+              {% if form.errors %}<div role="alert">{{ form.errors | default_errors }}</div>{% endif %}
+            {% endform %}
+            <a class="ws-product-notify" href="{{ routes.cart_url }}">Ver carrito y finalizar compra ↗</a>
+          {% else %}
+            <button type="button" class="ws-button ws-button-primary ws-product-purchase-button" disabled aria-disabled="true">Próximamente <span aria-hidden="true">↗</span></button>
+            <a class="ws-product-notify" href="{{ routes.root_url }}#ws-access">Avisarme cuando esté disponible <span aria-hidden="true">↗</span></a>
+          {% endif %}
+          {% if section.settings.enable_sales and product.available %}
+            <p class="ws-product-fineprint">{{ product.price | money }} por compra única. Recibirás la descarga del ZIP para Windows tras confirmarse el pago. Revisa los requisitos y la compatibilidad antes de comprar. Asistencia: <a href="mailto:walletstudiosupport@gmail.com">walletstudiosupport@gmail.com</a>.</p>
+          {% else %}
+            <p class="ws-product-fineprint">Precio previsto de 6,99 € por compra única. Entrega prevista: instalador .exe tras confirmarse el pago. Software todavía no disponible para compra ni descarga; compatibilidad y requisitos finales pendientes de verificar. Asistencia: <a href="mailto:walletstudiosupport@gmail.com">walletstudiosupport@gmail.com</a>.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <section class="ws-product-details" aria-labelledby="ws-product-details-heading">
+    <div class="ws-wrap">
+      <div class="ws-section-index">ANTES DE EMPEZAR</div>
+      <h2 id="ws-product-details-heading">Diseñado para ser<br><em>más tuyo.</em></h2>
+      <div class="ws-product-info-grid">
+        <article class="ws-product-info"><span class="ws-product-info-number">01 / INSTALA</span><h3>Windows y USB.</h3><p>Se prevé el uso en hasta tres ordenadores Windows por compra, con un iPhone compatible conectado mediante cable de datos y los componentes de conexión de Apple.</p></article>
+        <article class="ws-product-info"><span class="ws-product-info-number">02 / PERSONALIZA</span><h3>Sin límites por diseño.</h3><p>Elige entre los estilos autorizados que publiquemos o importa una imagen propia sin tener que comprar packs adicionales.</p></article>
+        <article class="ws-product-info"><span class="ws-product-info-number">03 / COMPRUEBA</span><h3>Compatibilidad real.</h3><p>La aplicación y sus procedimientos de restauración están sujetos a pruebas. Se publicarán los modelos, versiones de iOS y tarjetas verificadas antes del lanzamiento.</p></article>
+      </div>
+      <div class="ws-product-notes">
+        <details><summary>¿Es compatible con cualquier tarjeta o iPhone? <span aria-hidden="true">+</span></summary><p>No. La compatibilidad depende del dispositivo, iOS y el emisor de la tarjeta, y podría cambiar con futuras actualizaciones. Antes de comprar podrás consultar la lista comprobada.</p></details>
+        <details><summary>¿Puedo utilizar una imagen propia? <span aria-hidden="true">+</span></summary><p>La aplicación está diseñada para importar imágenes PNG, JPG y WebP. Debes tener derechos de uso sobre el contenido que elijas.</p></details>
+        <details><summary>¿Se alteran los datos bancarios? <span aria-hidden="true">+</span></summary><p>Wallet Studio se orienta a modificar solamente la apariencia gráfica de tarjetas ya existentes. No crea cuentas o tarjetas nuevas ni modifica los permisos de pago.</p></details>
+        <details><summary>¿Qué pasa con las devoluciones de una descarga digital? <span aria-hidden="true">+</span></summary><p>Las condiciones definitivas de desistimiento, entrega y garantías se mostrarán antes del pago. Consulta el <a href="{{ routes.root_url }}#ws-legal-returns">apartado legal de Wallet Studio</a>.</p></details>
+      </div>
+    </div>
+  </section>
+  <footer class="ws-footer">
+    <div class="ws-wrap ws-footer-top"><a class="ws-wordmark" href="{{ routes.root_url }}"><span class="ws-symbol" aria-hidden="true"><span></span><span></span><span></span></span><span>WALLETSTUDIO<span class="ws-wordmark-dot">.</span>SITE</span></a><a href="{{ routes.root_url }}">Volver a la web ↑</a></div>
+    <nav class="ws-wrap ws-footer-legal" aria-label="Información legal"><a href="{{ routes.root_url }}#ws-legal-notice">Aviso legal</a><a href="{{ routes.root_url }}#ws-legal-privacy">Privacidad</a><a href="{{ routes.root_url }}#ws-legal-cookies">Cookies</a><a href="{{ routes.root_url }}#ws-legal-terms">Condiciones</a><a href="{{ routes.root_url }}#ws-legal-returns">Desistimiento</a></nav>
+    <div class="ws-wrap ws-footer-bottom"><p>© {{ 'now' | date: '%Y' }} Wallet Studio. Software independiente, no afiliado a Apple Inc. La disponibilidad depende de la compatibilidad verificada.</p><span>ONE ACCESS · ALL DESIGNS</span></div>
+  </footer>
+</div>
+{% schema %}
+{
+  "name": "Wallet Studio · Producto",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enable_sales",
+      "label": "Habilitar botón de compra después de verificar software y entregas",
+      "default": false,
+      "info": "Mantenlo desactivado hasta que el producto esté preparado para venderse."
+    }
+  ],
+  "presets": [{"name": "Wallet Studio · Producto"}]
+}
+{% endschema %}
