@@ -158,18 +158,18 @@ enum AppTab {
     Help,
     Account,
 }
-fn cloud_sync_status(session:&crate::cloud_sync::Session,previously_authenticated:bool,tx:&std::sync::mpsc::Sender<CloudEvent>,ctx:&egui::Context)->(bool,bool,bool,bool,String) {
+fn cloud_sync_status(session:&crate::cloud_sync::Session,previously_authenticated:bool,tx:&std::sync::mpsc::Sender<CloudEvent>,ctx:&egui::Context)->(bool,bool,bool,bool,String,Option<crate::cloud_sync::CaptureInventory>) {
     match crate::cloud_sync::account_app_license(session) {
-        Ok(false)=>return (false,true,false,false,"Tu cuenta conserva derechos históricos de diseños. Necesitas una licencia vigente de Wallet Studio para utilizar el iPhone y sus copias.".into()),
-        Err(error)=>{let retained=crate::cloud_sync::retained_session_after_failure(&error);return (false,retained,false,retained,crate::cloud_sync::session_connection_failure_message(&error));},
+        Ok(false)=>return (false,true,false,false,"Tu cuenta conserva derechos históricos de diseños. Necesitas una licencia vigente de Wallet Studio para utilizar el iPhone y sus copias.".into(),None),
+        Err(error)=>{let retained=crate::cloud_sync::retained_session_after_failure(&error);return (false,retained,false,retained,crate::cloud_sync::session_connection_failure_message(&error),None);},
         Ok(true)=>{},
     }
     match crate::cloud_sync::synchronize_report_progress(session,|status| {let _=tx.send(CloudEvent::Progress(status));ctx.request_repaint();}) {
-        Ok(report)=>(true,true,report.complete(),false,report.message()),
-        Err(error)=>{let authenticated=crate::cloud_sync::authenticated_after_sync_failure(&error,previously_authenticated);let retained=crate::cloud_sync::retained_session_after_failure(&error);(authenticated,retained,false,!authenticated && retained,crate::cloud_sync::sync_failure_message(&error))},
+        Ok(report)=>(true,true,report.complete(),false,report.message(),report.capture_inventory),
+        Err(error)=>{let authenticated=crate::cloud_sync::authenticated_after_sync_failure(&error,previously_authenticated);let retained=crate::cloud_sync::retained_session_after_failure(&error);(authenticated,retained,false,!authenticated && retained,crate::cloud_sync::sync_failure_message(&error),None)},
     }
 }
-struct CloudMessage { authenticated:bool,library_authenticated:bool,session_pending:bool,storage_ready:bool,configured:bool,synced:bool,server:String,status:String,session:Option<crate::cloud_sync::Session> }
+struct CloudMessage { authenticated:bool,library_authenticated:bool,session_pending:bool,storage_ready:bool,configured:bool,synced:bool,capture_inventory:Option<crate::cloud_sync::CaptureInventory>,server:String,status:String,session:Option<crate::cloud_sync::Session> }
 enum CloudEvent {Progress(&'static str),Restored(crate::cloud_sync::Session),Complete(CloudMessage)}
 
 /// Decoding and PNG preparation run before switching away from the library.
@@ -272,7 +272,7 @@ pub struct AirCardApp {
     auth_preview:bool,
     activation_requested:Option<Instant>,password_visible:bool,
     cloud_session:Option<crate::cloud_sync::Session>,cloud_sync_queued:bool,last_cloud_sync:Instant,
-    storage_ready:bool,cloud_configured:bool,cloud_synced:bool,
+    storage_ready:bool,cloud_configured:bool,cloud_synced:bool,cloud_capture_inventory:Option<crate::cloud_sync::CaptureInventory>,
     cloud_status:String,account_server:String,account_email:String,account_password:String,account_link_consent:bool,
     update_rx:Option<Receiver<String>>,update_status:String,
     brand:crate::brand::BrandLogo,
@@ -401,7 +401,7 @@ impl AirCardApp {
         let endpoint=self.account_server.clone();
         thread::spawn(move || {
             let _=tx.send(CloudEvent::Progress("Comprobando y preparando las copias locales…"));ctx.request_repaint();
-            let mut message=CloudMessage { authenticated:false,library_authenticated:false,session_pending:false,storage_ready:false,configured:true,synced:false,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación.".into(),session:None };
+            let mut message=CloudMessage { authenticated:false,library_authenticated:false,session_pending:false,storage_ready:false,configured:true,synced:false,capture_inventory:None,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación.".into(),session:None };
             match crate::storage::migrate_legacy().and_then(|_|crate::storage::ensure_ready()) {
               Ok(()) => {
                 message.storage_ready=true;
@@ -409,7 +409,7 @@ impl AirCardApp {
                 match crate::cloud_sync::load_session() {
                     Ok(Some(session))=> { message.configured=true; message.server=session.server.clone();
                         let _=tx.send(CloudEvent::Restored(session.clone()));ctx.request_repaint();
-                        (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status)=cloud_sync_status(&session,false,&tx,&ctx);
+                        (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status,message.capture_inventory)=cloud_sync_status(&session,false,&tx,&ctx);
                         message.session=Some(session);
                     }
                     Ok(None)=>message.status=if message.configured {"Inicia sesión y comprueba tus copias en la nube antes de capturar un original ausente. Los originales locales verificados siguen disponibles."} else {"Almacenamiento local listo · vincula tu cuenta para sincronizar"}.into(),
@@ -438,7 +438,7 @@ impl AirCardApp {
             let event=match self.cloud_rx.as_ref().map(|rx|rx.try_recv()) {
                 Some(Ok(event))=>event,
                 Some(Err(std::sync::mpsc::TryRecvError::Disconnected))=>{
-                    self.cloud_rx=None;self.cloud_synced=false;self.last_cloud_sync=Instant::now();self.cloud_sync_queued=false;
+                    self.cloud_rx=None;self.cloud_synced=false;self.cloud_capture_inventory=None;self.last_cloud_sync=Instant::now();self.cloud_sync_queued=false;
                     if self.cloud_session.is_some() {self.account_authenticated=false;self.library_authenticated=true;self.session_pending=true;}
                     self.cloud_status="La comprobación se interrumpió. La sesión guardada se conserva; reintenta la conexión desde Cuenta.".into();break;
                 },
@@ -448,14 +448,14 @@ impl AirCardApp {
                 CloudEvent::Progress(status)=>{self.cloud_status=status.into();continue;},
                 CloudEvent::Restored(session)=>{
                     self.account_authenticated=false;self.library_authenticated=true;self.session_pending=true;
-                    self.cloud_configured=true;self.cloud_synced=false;self.storage_ready=crate::storage::ensure_ready().is_ok();
+                    self.cloud_configured=true;self.cloud_synced=false;self.cloud_capture_inventory=None;self.storage_ready=crate::storage::ensure_ready().is_ok();
                     self.account_server=session.server.clone();self.cloud_session=Some(session);
                     self.cloud_status="Sesión guardada en este equipo. Comprobando la conexión; puedes preparar tus diseños mientras esperas.".into();continue;
                 },
                 CloudEvent::Complete(message)=>message,
             };
             self.cloud_rx=None; self.storage_ready=message.storage_ready; self.cloud_configured=message.configured;
-            self.cloud_synced=message.synced; self.cloud_status=message.status.into();
+            self.cloud_synced=message.synced; self.cloud_capture_inventory=message.capture_inventory; self.cloud_status=message.status.into();
             let newly_authenticated=!self.account_authenticated && message.authenticated;
             self.account_authenticated=message.authenticated;self.library_authenticated=message.library_authenticated;
             self.session_pending=message.session_pending;
@@ -483,12 +483,12 @@ impl AirCardApp {
         if crate::storage::is_demo() || self.is_busy || self.scanning_syslog || self.cloud_rx.is_some() { return; }
         let Some(session)=self.cloud_session.clone() else { return; };
         self.cloud_sync_queued=false; self.last_cloud_sync=Instant::now();
-        self.cloud_synced=false;
+        self.cloud_synced=false;self.cloud_capture_inventory=None;
         let previously_authenticated=self.account_authenticated;
         let (tx,rx)=channel(); self.cloud_rx=Some(rx);
         thread::spawn(move|| {
-            let (authenticated,library_authenticated,synced,session_pending,status)=cloud_sync_status(&session,previously_authenticated,&tx,&ctx);
-            let message=CloudMessage { authenticated,library_authenticated,session_pending,storage_ready:crate::storage::ensure_ready().is_ok(),configured:true,synced,
+            let (authenticated,library_authenticated,synced,session_pending,status,capture_inventory)=cloud_sync_status(&session,previously_authenticated,&tx,&ctx);
+            let message=CloudMessage { authenticated,library_authenticated,session_pending,storage_ready:crate::storage::ensure_ready().is_ok(),configured:true,synced,capture_inventory,
                 server:session.server.clone(),session:Some(session),status };
             let _=tx.send(CloudEvent::Complete(message));ctx.request_repaint();
         });
@@ -524,7 +524,7 @@ impl AirCardApp {
                     }
                 }
                 if studio_button(ui,"Cerrar sesión en este PC",idle,false) {
-                    if crate::cloud_sync::forget_session().is_ok() {self.cloud_session=None;self.account_authenticated=false;self.library_authenticated=false;self.session_pending=false;self.cloud_synced=false;self.account_devices.clear();self.account_stage=1;self.cloud_status="Sesión cerrada. Tus originales y su propietario se conservan.".into();}
+                    if crate::cloud_sync::forget_session().is_ok() {self.cloud_session=None;self.account_authenticated=false;self.library_authenticated=false;self.session_pending=false;self.cloud_synced=false;self.cloud_capture_inventory=None;self.account_devices.clear();self.account_stage=1;self.cloud_status="Sesión cerrada. Tus originales y su propietario se conservan.".into();}
                 }
                 return;
             }
@@ -610,15 +610,15 @@ impl AirCardApp {
                 let confirmation=std::mem::take(&mut self.account_confirmation);let code=std::mem::take(&mut self.account_code);
                 let recovery=self.account_recovery;let reset_devices=self.account_reset_devices;
                 let consent=self.account_link_consent;
-                let old_configured=self.cloud_configured; let (tx,rx)=channel(); self.cloud_rx=Some(rx); self.cloud_synced=false; self.storage_ready=false;
+                let old_configured=self.cloud_configured; let (tx,rx)=channel(); self.cloud_rx=Some(rx); self.cloud_synced=false;self.cloud_capture_inventory=None; self.storage_ready=false;
                 self.cloud_status="Verificando cuenta y originales…".into(); let ctx=ctx.clone();
                 thread::spawn(move || {
-                    let mut message=CloudMessage { authenticated:false,library_authenticated:false,session_pending:false,storage_ready:true,configured:old_configured,synced:false,server:server.clone(),status:"Acceso rechazado: revisa compra, código, contraseña y límite de 3 equipos.".into(),session:None };
+                    let mut message=CloudMessage { authenticated:false,library_authenticated:false,session_pending:false,storage_ready:true,configured:old_configured,synced:false,capture_inventory:None,server:server.clone(),status:"Acceso rechazado: revisa compra, código, contraseña y límite de 3 equipos.".into(),session:None };
                     let result=if register && recovery {crate::cloud_sync::recover_account(&server,&email,&code,&password,&confirmation,reset_devices,consent)} else if register {crate::cloud_sync::activate(&server,&email,&code,&password,&confirmation,consent)} else {crate::cloud_sync::login(&server,&email,&password,false,consent)};
                     match result {
                       Ok(session)=> {
                         message.configured=true;
-                        (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status)=cloud_sync_status(&session,true,&tx,&ctx);
+                        (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status,message.capture_inventory)=cloud_sync_status(&session,true,&tx,&ctx);
                         message.session=Some(session);
                       }
                       Err(error)=>message.status=crate::cloud_sync::account_failure_message(&error).into(),
@@ -715,7 +715,7 @@ impl AirCardApp {
             account_devices:Vec::new(),account_devices_rx:None,
             account_recovery:false,account_reset_devices:false,
             auth_preview:crate::storage::is_demo() && (std::env::args().any(|arg|arg=="--wallet-studio-auth-demo") || std::env::current_exe().ok().and_then(|path|path.file_stem().map(|stem|matches!(stem.to_string_lossy().to_ascii_uppercase().as_str(),"WSDEMOAU"|"WSDEMOA9"|"WSDEMOAF"))).unwrap_or(false)),
-            cloud_rx:None,cloud_session:None,cloud_sync_queued:false,last_cloud_sync:Instant::now(),storage_ready:false,cloud_configured:true,cloud_synced:false,
+            cloud_rx:None,cloud_session:None,cloud_sync_queued:false,last_cloud_sync:Instant::now(),storage_ready:false,cloud_configured:true,cloud_synced:false,cloud_capture_inventory:None,
             cloud_status:"Preparando almacenamiento seguro…".into(),account_server:option_env!("WALLET_STUDIO_CLOUD_URL").unwrap_or("https://wallet-studio-accounts.onrender.com").into(),account_email:String::new(),account_password:String::new(),account_link_consent:false,
             update_rx:None,update_status:"Actualizaciones automáticas".into(),
             brand,
@@ -1578,9 +1578,19 @@ impl AirCardApp {
         });
     }
 
+    fn cloud_capture_ready(&self)->bool {
+        !self.cloud_configured || self.cloud_session.as_ref().zip(self.cloud_capture_inventory.as_ref())
+            .zip(self.selected_udid.as_deref()).is_some_and(|((session,inventory),udid)|inventory.allows(session,udid,self.card_hash.trim()))
+    }
+
+    fn cloud_device_review_pending(&self)->bool {
+        self.cloud_session.as_ref().zip(self.cloud_capture_inventory.as_ref()).zip(self.selected_udid.as_deref())
+            .is_some_and(|((session,inventory),udid)|inventory.review_pending_for(session,udid))
+    }
+
     fn capture_authorized(&self)->bool {
         original_capture_authorized(self.account_authenticated,self.session_pending,
-            self.cloud_configured,self.cloud_synced,self.cloud_rx.is_some())
+            self.cloud_configured,self.cloud_capture_ready(),self.cloud_rx.is_some())
     }
 
     fn capture_original_backup(&mut self) {
@@ -2652,7 +2662,7 @@ impl AirCardApp {
             phase, worker_busy:self.is_busy, elapsed:self.capture_started.map(|start|start.elapsed().as_secs()),
             verified:self.original_verified(hash), storage_ready:self.storage_ready,
             account_ready:self.account_authenticated && !self.session_pending,
-            cloud_ready:!self.cloud_configured || self.cloud_synced, cloud_running:self.cloud_rx.is_some(),
+            cloud_ready:self.cloud_capture_ready(), cloud_running:self.cloud_rx.is_some(),cloud_device_review:self.cloud_device_review_pending(),
             apple_ready:self.apple_ready && self.apple_prerequisites.ready(), usb_ready:self.selected_usb_ready(),
             recovery_pending:self.pending_recovery_blocks_selected(), recovery_unknown:self.recovery_status_error.is_some(),
             original_blocked:snapshot.is_some_and(|state|state.original == OriginalState::Blocked || state.phase.is_err()),

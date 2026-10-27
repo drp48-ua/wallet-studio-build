@@ -10,7 +10,7 @@ pub struct Presentation { pub kind: Kind, pub title: String, pub detail: String,
 pub struct Inputs {
     pub phase: Option<CapturePhase>, pub worker_busy: bool, pub elapsed: Option<u64>,
     pub verified: bool, pub storage_ready: bool, pub account_ready: bool,
-    pub cloud_ready: bool, pub cloud_running: bool, pub apple_ready: bool,
+    pub cloud_ready: bool, pub cloud_running: bool, pub cloud_device_review:bool, pub apple_ready: bool,
     pub usb_ready: bool, pub recovery_pending: bool, pub recovery_unknown: bool,
     pub original_blocked: bool, pub foreign_original: bool, pub cache_pending: bool,
 }
@@ -39,7 +39,10 @@ pub fn present(input: Inputs, phase_label: &str) -> Presentation {
     }
     if input.verified { return state(Kind::Verified, "Original guardado", "Copia original verificada para esta tarjeta e iPhone.", Action::None); }
     if !input.account_ready { return state(Kind::Waiting, "Esperando verificación de acceso", "Abre Cuenta para verificar tu sesión y la licencia de la aplicación.", Action::Account); }
-    if !input.cloud_ready || input.cloud_running { return state(Kind::Waiting, "Esperando comprobación de la nube", "No se está guardando un original. Abre Cuenta y revisa el resultado de Sincronizar ahora.", Action::Account); }
+    if input.cloud_running { return state(Kind::Waiting, "Esperando comprobación de la nube", "No se está guardando un original. La comprobación de tu cuenta sigue en curso.", Action::Account); }
+    if !input.cloud_ready { return if input.cloud_device_review {
+        state(Kind::Attention, "Copias de este iPhone en revisión", "La comprobación de la nube terminó. Hay copias o recuperaciones pendientes de este iPhone; no se iniciará otra captura. Revisa Cuenta y recuperaciones.", Action::Account)
+    } else { state(Kind::Attention, "La comprobación necesita revisión", "No se está guardando un original. Falta verificar con seguridad la identidad de todas las copias o la conexión de la cuenta. Revisa el resultado en Cuenta.", Action::Account) }; }
     if !input.apple_ready { return state(Kind::Waiting, "Faltan componentes de conexión Apple", "Comprueba los componentes y el servicio de Apple antes de conectar la tarjeta.", Action::Apple); }
     if !input.usb_ready { return state(Kind::Waiting, "Esperando al iPhone por USB", "Conecta el iPhone correcto, desbloquéalo y acepta Confiar. La captura no ha empezado.", Action::Usb); }
     if input.cache_pending { return state(Kind::Waiting, "Comprobando el original", "Verificando las copias locales y el estado de recuperación. Todavía no se ha iniciado una captura.", Action::None); }
@@ -60,9 +63,11 @@ pub fn capture_phase(line: &str) -> Option<&'static str> {
 }
 /// The caller must enforce isolated demo mode before consulting this preview.
 pub fn preview(name: &str, elapsed: u64) -> Option<Presentation> {
-    let mut input = Inputs { phase:Some(CapturePhase::Waiting),worker_busy:false,elapsed:None,verified:false,storage_ready:true,account_ready:true,cloud_ready:true,cloud_running:false,apple_ready:true,usb_ready:true,recovery_pending:false,recovery_unknown:false,original_blocked:false,foreign_original:false,cache_pending:false };
+    let mut input = Inputs { phase:Some(CapturePhase::Waiting),worker_busy:false,elapsed:None,verified:false,storage_ready:true,account_ready:true,cloud_ready:true,cloud_running:false,cloud_device_review:false,apple_ready:true,usb_ready:true,recovery_pending:false,recovery_unknown:false,original_blocked:false,foreign_original:false,cache_pending:false };
     match name {
-        "waiting_cloud" => input.cloud_ready=false,
+        "waiting_cloud" => {input.cloud_ready=false;input.cloud_running=true;},
+        "cloud_review" => input.cloud_ready=false,
+        "cloud_device_review" => {input.cloud_ready=false;input.cloud_device_review=true;},
         "waiting_usb" => input.usb_ready=false,
         "apple_missing" => input.apple_ready=false,
         "running" | "attention" => {input.phase=Some(CapturePhase::Running);input.worker_busy=true;input.elapsed=Some(if name=="attention" {elapsed.max(CAPTURE_ATTENTION_SECONDS)} else {elapsed});},
@@ -76,9 +81,18 @@ pub fn preview(name: &str, elapsed: u64) -> Option<Presentation> {
 
 #[cfg(test)] mod tests {
     use super::*;
-    fn ready() -> Inputs { Inputs { phase:Some(CapturePhase::Waiting),worker_busy:false,elapsed:None,verified:false,storage_ready:true,account_ready:true,cloud_ready:true,cloud_running:false,apple_ready:true,usb_ready:true,recovery_pending:false,recovery_unknown:false,original_blocked:false,foreign_original:false,cache_pending:false } }
+    fn ready() -> Inputs { Inputs { phase:Some(CapturePhase::Waiting),worker_busy:false,elapsed:None,verified:false,storage_ready:true,account_ready:true,cloud_ready:true,cloud_running:false,cloud_device_review:false,apple_ready:true,usb_ready:true,recovery_pending:false,recovery_unknown:false,original_blocked:false,foreign_original:false,cache_pending:false } }
     #[test] fn prerequisites_never_look_like_an_active_capture() {
         for reason in 0..7 { let mut input=ready(); match reason {0=>input.account_ready=false,1=>input.cloud_ready=false,2=>input.apple_ready=false,3=>input.usb_ready=false,4=>input.cache_pending=true,5=>input.recovery_pending=true,_=>input.storage_ready=false}; let view=present(input,"phase"); assert_ne!(view.kind,Kind::Running);assert_ne!(view.title,"Original guardado");assert!(!view.detail.is_empty()); }
+    }
+    #[test] fn completed_partial_cloud_review_is_not_presented_as_a_running_download() {
+        let mut input=ready();input.cloud_ready=false;
+        let view=present(input,"phase");assert_eq!(view.kind,Kind::Attention);
+        assert_eq!(view.title,"La comprobación necesita revisión");assert_eq!(view.action,Action::Account);
+        let mut input=ready();input.cloud_ready=false;input.cloud_device_review=true;
+        assert_eq!(present(input,"phase").title,"Copias de este iPhone en revisión");
+        let mut input=ready();input.cloud_ready=false;input.cloud_running=true;
+        let view=present(input,"phase");assert_eq!(view.kind,Kind::Waiting);assert!(view.detail.contains("sigue en curso"));
     }
     #[test] fn elapsed_attention_does_not_invent_success_or_finish_the_worker() {
         let mut input=ready();input.phase=Some(CapturePhase::Running);input.worker_busy=true;input.elapsed=Some(179);assert_eq!(present(input,"Comprobando").kind,Kind::Running);
