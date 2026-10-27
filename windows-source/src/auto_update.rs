@@ -221,8 +221,10 @@ pub fn redirect_if_ready()->Result<bool>{
 struct UpdateLock(PathBuf);
 impl Drop for UpdateLock { fn drop(&mut self){let _=std::fs::remove_file(&self.0);} }
 fn require_monotonic(previous:&Manifest,next:&Manifest)->Result<()> {
-    anyhow::ensure!(version(&next.version)? >= version(&previous.version)? && next.build_id >= previous.build_id,"El canal intentó retroceder una actualización");
-    if next.build_id==previous.build_id { anyhow::ensure!(next.commit==previous.commit&&next.sha256==previous.sha256&&next.exe_sha256==previous.exe_sha256&&next.version==previous.version,"Una publicación inmutable cambió de contenido"); }
+    let previous_version=version(&previous.version)?;
+    let next_version=version(&next.version)?;
+    anyhow::ensure!(next_version>previous_version || (next_version==previous_version && next.build_id>=previous.build_id),"El canal intentó retroceder una actualización");
+    if next_version==previous_version && next.build_id==previous.build_id { anyhow::ensure!(next.commit==previous.commit&&next.sha256==previous.sha256&&next.exe_sha256==previous.exe_sha256&&next.version==previous.version,"Una publicación inmutable cambió de contenido"); }
     Ok(())
 }
 fn stage_at(root:&Path,signed:&SignedManifest,bytes:&[u8])->Result<()>{
@@ -406,6 +408,13 @@ pub fn poll_status(rx:&Receiver<String>,status:&mut String)->bool {
  #[test]fn manifest_rejects_non_main_source_branch_and_foreign_repo(){let base=fixture().read().unwrap();let mut bad=base.clone();bad.source_branch="feature-branch".into();assert!(validate_manifest(&bad).is_err());bad=base;bad.repository="other/repo".into();assert!(validate_manifest(&bad).is_err());}
  #[test]fn transport_rejects_plain_remote_credentials_controls_and_invalid_ports(){for u in["http://example.com/a","https://u:p@example.com/a","https://x:0/a","https://x/a\r\nX:y","file:///x"]{assert!(parse_url(u).is_err());}assert!(parse_url("http://127.0.0.1:8766/v1/auth/login").is_ok());}
  #[test]fn versions_are_numeric_and_do_not_accept_extra_segments(){assert!(version("0.10.0").unwrap()>version("0.6.0").unwrap());assert!(version("0.6.0.1").is_err());assert!(version("x.6.0").is_err());}
+ #[test]fn newer_versions_accept_release_build_ids_after_local_date_ids(){
+    let mut previous=fixture().read().unwrap();previous.version="0.6.23".into();previous.build_id=2026102701;
+    let mut next=previous.clone();next.version="0.6.24".into();next.build_id=42;next.commit="1".repeat(40);
+    assert!(require_monotonic(&previous,&next).is_ok());
+    assert!(require_monotonic(&next,&previous).is_err());
+    let mut same=previous.clone();same.build_id=42;assert!(require_monotonic(&previous,&same).is_err());
+ }
  #[test]fn updates_cannot_roll_back_or_redefine_a_build(){let first=fixture().read().unwrap();let mut next=first.clone();next.version="0.0.0".into();assert!(require_monotonic(&first,&next).is_err());next=first.clone();next.build_id=0;assert!(require_monotonic(&first,&next).is_err());next=first.clone();next.commit="1".repeat(40);assert!(require_monotonic(&first,&next).is_err());next.build_id=2;assert!(require_monotonic(&first,&next).is_ok());}
  #[test]fn hash_matches_standard_vector(){assert_eq!(sha256(b"abc").unwrap(),"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");}
  fn fixture()->SignedManifest{SignedManifest{manifest_bytes:include_bytes!("../../test-assets/release-manifest.json").to_vec(),signature:include_bytes!("../../test-assets/release-manifest.sig").to_vec()}}

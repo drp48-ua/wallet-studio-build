@@ -2587,6 +2587,7 @@ impl AirCardApp {
             use crate::apple_setup::SetupEvent;
             match event {
                 SetupEvent::Downloading => self.apple_setup_status = "Descargando el instalador oficial de iTunes…".into(),
+                SetupEvent::RejectedCache => self.apple_setup_status = "El instalador anterior no supera la verificación. Se conserva y se descargará otra copia oficial.".into(),
                 SetupEvent::Verifying => self.apple_setup_status = "Verificando la firma de Apple antes de ofrecer la instalación…".into(),
                 SetupEvent::Ready(path) => {
                     self.apple_installer = Some(path); self.apple_setup_rx = None;
@@ -2613,20 +2614,12 @@ impl AirCardApp {
         if self.apple_setup_rx.is_some() || self.apple_install_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(100)); }
     }
     fn show_apple_setup(&mut self, ui: &mut egui::Ui) {
-        use crate::apple_setup::ServiceState;
         ui.label(egui::RichText::new("Conexión con el iPhone · componentes Apple").strong());
-        let explanation = if !self.apple_prerequisites.runtime {
-            "Esta versión necesita los componentes de Apple para Windows que reconoce Wallet Studio. Descarga el instalador oficial de iTunes antes de buscar tarjetas."
-        } else { match self.apple_prerequisites.service {
-            ServiceState::Missing => "Los archivos de Apple están presentes, pero falta Apple Mobile Device Service. Repara la instalación de iTunes.",
-            ServiceState::Stopped => "Apple Mobile Device Service está detenido. Abre iTunes o reinicia Windows y vuelve a comprobar.",
-            ServiceState::Unavailable => "No se pudo consultar el servicio de Apple. No significa que falte la instalación; vuelve a comprobar antes de reinstalar.",
-            ServiceState::Running => "Componentes y servicio de Apple disponibles. Desbloquea el iPhone, conecta USB y acepta Confiar.",
-        } };
+        let explanation = self.apple_prerequisites.guidance();
         ui.label(egui::RichText::new(explanation).size(11.5).color(md3::ON_SURFACE_VARIANT));
         if !self.apple_setup_status.is_empty() { ui.label(&self.apple_setup_status); }
         let idle = !crate::storage::is_demo() && !self.is_busy && !self.scanning_syslog && self.apple_setup_rx.is_none() && self.apple_install_rx.is_none();
-        let installation_needed = !self.apple_prerequisites.runtime || self.apple_prerequisites.service == ServiceState::Missing;
+        let installation_needed = self.apple_prerequisites.installation_needed();
         ui.horizontal_wrapped(|ui| {
             if installation_needed && self.apple_installer.is_none()
                 && ui.add_enabled(idle, egui::Button::new("Descargar iTunes para Windows")).clicked() {
@@ -3305,14 +3298,12 @@ impl AirCardApp {
             ui.label(egui::RichText::new(&self.update_status).color(md3::PRIMARY));
             let is_checking=self.update_rx.is_some();
             ui.horizontal_wrapped(|ui| {
-                if ui.add_enabled(!is_checking && !self.is_busy,
+                if ui.add_enabled(!crate::storage::is_demo() && !is_checking && !self.is_busy,
                     egui::Button::new(if is_checking { "Comprobando…" } else { "Buscar actualizaciones" })).clicked() {
                     self.update_status="Buscando actualizaciones en el canal oficial…".into();
                     self.update_rx=Some(crate::auto_update::start_background_check());
                 }
-                if ui.add_enabled(!self.is_busy,egui::Button::new("Descargas en GitHub ↗")).clicked() {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(crate::update_info::PUBLIC_DOWNLOAD_URL));
-                }
+
             });
             ui.label(egui::RichText::new("Las actualizaciones descargadas deben superar la verificación de firma y SHA-256. Si se prepara una actualización, termina las operaciones del iPhone, cierra normalmente Wallet Studio y vuelve a abrirlo para aplicarla. Conserva designs y las copias originales locales; no borres los datos de Wallet Studio.").size(11.0).color(md3::ON_SURFACE_VARIANT));
         });

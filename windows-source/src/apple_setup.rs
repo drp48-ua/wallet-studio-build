@@ -5,7 +5,20 @@ use std::{path::{Path,PathBuf},sync::mpsc::{channel,Receiver}};
 pub(crate) enum ServiceState {Missing,Stopped,Running,Unavailable}
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct Prerequisites {pub runtime:bool,pub service:ServiceState}
-impl Prerequisites {pub fn ready(self)->bool {self.runtime && self.service==ServiceState::Running}}
+impl Prerequisites {
+    pub fn ready(self)->bool {self.runtime && self.service==ServiceState::Running}
+    pub fn installation_needed(self)->bool { !self.runtime || self.service==ServiceState::Missing }
+    pub fn guidance(self)->&'static str {
+        if !self.runtime {
+            "Faltan componentes de Apple compatibles con Wallet Studio. En Windows de 64 bits, pulsa Descargar iTunes para Windows; después instala, conecta el iPhone por USB, desbloquéalo y acepta Confiar."
+        } else { match self.service {
+            ServiceState::Missing => "Los archivos de Apple están presentes, pero falta Apple Mobile Device Service. Repara la instalación de iTunes.",
+            ServiceState::Stopped => "Apple Mobile Device Service está detenido. Abre iTunes o reinicia Windows y vuelve a comprobar.",
+            ServiceState::Unavailable => "No se pudo consultar el servicio de Apple. No significa que falte la instalación; vuelve a comprobar antes de reinstalar.",
+            ServiceState::Running => "Componentes y servicio de Apple disponibles. Desbloquea el iPhone, conecta USB y acepta Confiar.",
+        }}
+    }
+}
 pub(crate) fn probe()->Prerequisites {
     Prerequisites {runtime:crate::apple::verify_support().is_ok(),service:service_status()}
 }
@@ -33,13 +46,17 @@ fn service_status()->ServiceState {
  }
 }
 #[derive(Debug)]
-pub(crate) enum SetupEvent {Downloading,Verifying,Ready(PathBuf),Failed(&'static str)}
+pub(crate) enum SetupEvent {Downloading,Verifying,RejectedCache,Ready(PathBuf),Failed(&'static str)}
 pub(crate) fn start_download()->Receiver<SetupEvent> {
     let (tx,rx)=channel();std::thread::spawn(move||{
         let result=(||->Result<PathBuf>{
             let root=crate::storage::root().join("apple-setup");crate::storage::safe_chain(&root)?;std::fs::create_dir_all(&root)?;
             let path=root.join("iTunes64Setup.exe");crate::storage::safe_chain(&path)?;
-            if path.exists(){let _=tx.send(SetupEvent::Verifying);verify_installer(&path)?;return Ok(path);}
+            if path.exists(){
+                let _=tx.send(SetupEvent::Verifying);
+                if reuse_or_preserve_rejected(&path, verify_installer)? { return Ok(path); }
+                let _=tx.send(SetupEvent::RejectedCache);
+            }
             let _=tx.send(SetupEvent::Downloading);
             let bytes=crate::auto_update::download_apple_installer()?;
             let staged=root.join(format!("download-{}.exe",crate::flasher::generate_token()));
@@ -53,6 +70,33 @@ pub(crate) fn start_download()->Receiver<SetupEvent> {
         let event=match result {Ok(path)=>SetupEvent::Ready(path),Err(_)=>SetupEvent::Failed("No se pudo descargar o verificar el instalador de Apple. Reintenta o usa la descarga oficial.")};
         let _=tx.send(event);
     });rx
+}
+// This runs only after the explicit download click. An invalid cached file is
+// retained byte-for-byte; it is never executed or silently overwritten.
+fn reuse_or_preserve_rejected(path:&Path, verify:impl FnOnce(&Path)->Result<()>)->Result<bool> {
+    use std::io::Read;
+    use std::os::windows::fs::OpenOptionsExt;
+    crate::storage::safe_chain(path)?;
+    let mut source=std::fs::OpenOptions::new().read(true).share_mode(0).open(path)?;
+    let metadata=source.metadata()?;
+    anyhow::ensure!(metadata.is_file() && metadata.len()<=512*1024*1024,"Caché Apple fuera de límites");
+    // Release before Authenticode, which needs its own read handle.
+    drop(source);
+    if verify(path).is_ok(){return Ok(true);}
+    crate::storage::safe_chain(path)?;
+    source=std::fs::OpenOptions::new().read(true).share_mode(1|4).open(path)?;
+    let metadata=source.metadata()?;
+    anyhow::ensure!(metadata.is_file() && metadata.len()<=512*1024*1024,"Caché Apple fuera de límites");
+    let mut bytes=Vec::new();source.by_ref().take(512*1024*1024+1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(bytes.len() as u64==metadata.len(),"La caché Apple cambió durante la lectura");
+    let rejected=path.parent().context("Destino Apple no válido")?.join(format!("rejected-{}.exe",crate::flasher::generate_token()));
+    crate::storage::safe_chain(&rejected)?;
+    crate::storage::write_new(&rejected,&bytes)?;
+    anyhow::ensure!(std::fs::read(&rejected)?==bytes,"No se pudo conservar el instalador rechazado");
+    // Keep the source handle open, denying concurrent writers until removal.
+    std::fs::remove_file(path)?;
+    drop(source);
+    Ok(false)
 }
 fn verify_installer(path:&Path)->Result<()> {
     use base64::Engine;
@@ -94,6 +138,35 @@ pub(crate) fn launch_verified_installer(path:&Path)->Result<()> {
     let candidates=[Path::new("C:/Program Files/iTunes/iTunes.exe"),Path::new("C:/Program Files/Common Files/Apple/Mobile Device Support/AppleMobileDeviceService.exe")];
     let candidate=candidates.into_iter().find(|path|path.is_file()).expect("No installed Apple executable available for the explicit diagnostic");
     assert!(verify_installer(candidate).is_ok(),"Existing Apple signature was not accepted");
+ }
+ #[test]
+ fn invalid_cached_installer_is_preserved_before_retry_and_valid_cache_is_reused(){
+    let root=std::env::temp_dir().join(format!("apple-cache-fixture-{}",crate::flasher::generate_token()));
+    std::fs::create_dir(&root).unwrap();let path=root.join("iTunes64Setup.exe");
+    let bytes=b"MZ synthetic rejected installer";std::fs::write(&path,bytes).unwrap();
+    assert!(!reuse_or_preserve_rejected(&path, |_|anyhow::bail!("synthetic signature rejection")).unwrap());
+    assert!(!path.exists());
+    let retained=std::fs::read_dir(&root).unwrap().map(|entry|entry.unwrap().path()).collect::<Vec<_>>();
+    assert_eq!(retained.len(),1);assert!(retained[0].file_name().unwrap().to_str().unwrap().starts_with("rejected-"));
+    assert_eq!(std::fs::read(&retained[0]).unwrap(),bytes);
+    std::fs::write(&path,b"MZ synthetic verified installer").unwrap();
+    assert!(reuse_or_preserve_rejected(&path, |_|Ok(())).unwrap());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(),2);
+    assert_eq!(std::fs::read(path).unwrap(),b"MZ synthetic verified installer");
+    std::fs::remove_dir_all(root).unwrap();
+ }
+ #[test]
+ fn installation_policy_distinguishes_missing_components_from_service_attention(){
+    for service in [ServiceState::Missing,ServiceState::Stopped,ServiceState::Running,ServiceState::Unavailable] {
+        let missing=Prerequisites{runtime:false,service};
+        assert!(missing.installation_needed());
+        assert!(missing.guidance().contains("64 bits"));
+        assert!(missing.guidance().contains("USB"));
+        assert!(missing.guidance().contains("Confiar"));
+        let installed=Prerequisites{runtime:true,service};
+        assert_eq!(installed.installation_needed(),service==ServiceState::Missing);
+        if service==ServiceState::Unavailable {assert!(installed.guidance().contains("No significa que falte"));}
+    }
  }
  #[test]fn missing_stopped_or_unknown_service_never_reports_ready(){for service in [ServiceState::Missing,ServiceState::Stopped,ServiceState::Unavailable] {assert!(!Prerequisites{runtime:true,service}.ready());}assert!(!Prerequisites{runtime:false,service:ServiceState::Running}.ready());assert!(Prerequisites{runtime:true,service:ServiceState::Running}.ready());}
  #[test]fn arbitrary_unsigned_executable_cannot_be_offered_as_apple_installer(){let directory=std::env::temp_dir().join(format!("apple-signature-fixture-{}",crate::flasher::generate_token()));std::fs::create_dir(&directory).unwrap();let path=directory.join("fake.exe");std::fs::write(&path,b"MZ synthetic unsigned test data").unwrap();assert!(verify_installer(&path).is_err());std::fs::remove_dir_all(directory).unwrap();}
