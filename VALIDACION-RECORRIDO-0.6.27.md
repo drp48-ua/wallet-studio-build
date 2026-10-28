@@ -59,6 +59,10 @@ El diagnóstico real se ejecutó con la app cerrada y bajo un bloqueo exclusivo 
 
 Los primeros intentos del lanzador PowerShell no esperaron a un ejecutable del subsistema gráfico. Se corrigió el lanzador privado para esperar al proceso; el diagnóstico nativo terminó con exit 0. No se atribuye ese fallo del lanzador a la aplicación.
 
-Pendiente: completar la sustitución de la entrega de Shopify; revisar el bloqueo antiguo; identificar tarjeta y dispositivo antes de la prueba física. Windows limpio sin iTunes queda aplazado por instrucción del usuario. El pago real y la recepción externa del correo no se han certificado.
+Actualización posterior: el usuario autorizó sustituir la entrega en Shopify. Se retiró únicamente el recurso 0.6.17 y se guardó Wallet-Studio-0.6.27-Windows.zip (9.098.672 bytes), con precio 6,99 EUR, entrega automática y acceso ilimitado. El conector confirmó esos datos tras guardar. Se eligió no enviar correos de actualización a clientes. La descripción dejó de fijar el nombre de la versión 0.6.17. La copia local del paquete antiguo se conserva.
+
+El usuario solicitó además que las publicaciones válidas de main actualicen la entrega automáticamente. Véase ENTREGA-AUTOMATICA.md: implementación preparada y probada con servicios ficticios, pero todavía sin credenciales ni activación. No afirmar que Shopify se actualiza automáticamente hasta comprobar una sincronización real y configurar el enlace admitido.
+
+Pendiente: activar y probar la entrega automática; revisar el bloqueo antiguo; identificar tarjeta y dispositivo antes de la prueba física. Windows limpio sin iTunes queda aplazado por instrucción del usuario. El pago real y la recepción externa del correo no se han certificado.
 
 Esta auditoría demuestra los escenarios ejecutados. No certifica cualquier iPhone, iOS, banco o tarjeta. Una recuperación parcial incierta exige revisión; conservar evidencia y bloquear es el resultado seguro esperado.
