@@ -227,21 +227,34 @@ fn isolated_import_conflict(error:&anyhow::Error)->bool {
         || error.downcast_ref::<crate::bank_changes::PendingCloudHistory>().is_some()
 }
 
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum ImportPhase { Staging, Staged(usize), Prepared, WriteIntent, Destination(usize), Verified }
+
 pub fn import_bundle(root:&Path,bytes:&[u8])->Result<()> {
+    import_bundle_with_hook(root,bytes,&mut |_|Ok(()))
+}
+// The vault OS handle owns staging. Only destination mutation needs a durable
+// barrier: a killed download/validation must not leave an empty global lock.
+fn import_bundle_with_hook(root:&Path,bytes:&[u8],hook:&mut dyn FnMut(ImportPhase)->Result<()>)->Result<()> {
     let _lease=crate::storage::operation_lease_for_import(root)?;
     let digest=crate::bank_backup::sha256(bytes)?;
     let (manifest,files)=parse_bundle(bytes)?;
     crate::storage::safe_chain(root)?; fs::create_dir_all(root)?;
     let lock=root.join(".cloud-import.lock");
-    let handle=fs::OpenOptions::new().write(true).create_new(true).open(&lock).context("cloud import needs recovery or another process owns it")?;
+    crate::storage::safe_chain(&lock)?;
+    anyhow::ensure!(!lock.exists(),"cloud import needs recovery or another process owns it");
+    // Never interpret or retire legacy/unknown import markers here.
+    let mut committing=false;
     let stage=root.join("cloud-staging").join(&digest); crate::storage::safe_chain(&stage)?; fs::create_dir_all(&stage)?;
     let mut verified_identity=None;
     let result=(|| {
+        hook(ImportPhase::Staging)?;
         let mut bank_key=None;
-        for (name,data) in &files {
+        for (index,(name,data)) in files.iter().enumerate() {
             let parts:Vec<_>=name.split('/').collect(); anyhow::ensure!(parts.len()==3,"cloud path depth invalid");
             if parts[0]=="bank" { if let Some(key)=bank_key.as_ref() { anyhow::ensure!(key==parts[1],"mixed baseline identities"); } else { bank_key=Some(parts[1].to_string()); } }
             let staged=stage.join(name); crate::storage::safe_chain(&staged)?; if staged.exists() { anyhow::ensure!(fs::read(&staged)?==*data,"staging evidence conflict"); } else { crate::storage::write_new(&staged,data)?; }
+            hook(ImportPhase::Staged(index))?;
         }
         let key=bank_key.context("cloud original missing")?;
         let baseline=match crate::bank_backup::validate_bundle_directory(&stage.join("bank").join(&key)) {
@@ -273,23 +286,52 @@ pub fn import_bundle(root:&Path,bytes:&[u8])->Result<()> {
             // from validating either snapshot alone, including IO and parsing.
             if error.downcast_ref::<crate::bank_changes::OverlappingCloudHistory>().is_some() {anyhow::Error::from(ImportConflict)} else {error}
         })?;
+        let mut needs_write=false;
         for (name,data) in &files {
             let (prefix,tail)=name.split_once('/').unwrap();
             let destination=root.join(if prefix=="bank" {"bank-backups"} else {"bank-change-intents"}).join(tail);
             crate::storage::safe_chain(&destination)?;
             if destination.exists() { anyhow::ensure!(fs::read(&destination)?==*data,ImportConflict); }
+            else {needs_write=true;}
         }
-        for (name,data) in &files {
+        hook(ImportPhase::Prepared)?;
+        if needs_write {
+        // Exact immutable replay evidence precedes the durable write intent.
+        // A partial intent/archive is never auto-cleared or promoted on startup.
+        let archive=root.join("cloud-import-evidence").join(format!("{digest}.zip"));
+        persist_exact(&archive,bytes)?;
+        let intent=serde_json::to_vec(&serde_json::json!({"schema":1,"phase":"destination-write",
+            "archive_sha256":digest,"archive_size":bytes.len(),"files":manifest.files}))?;
+        committing=true; // Even a failed/partial intent write stays fail-closed.
+        crate::storage::write_new(&lock,&intent)?;
+        hook(ImportPhase::WriteIntent)?;
+        }
+        for (index,(name,data)) in files.iter().enumerate() {
             let (prefix,tail)=name.split_once('/').unwrap(); let destination=root.join(if prefix=="bank" {"bank-backups"} else {"bank-change-intents"}).join(tail);
             if !destination.exists() { crate::storage::write_new(&destination,data)?; }
+            hook(ImportPhase::Destination(index))?;
         }
+        // Positive exact readback is required even if all files already existed.
+        for (name,data) in &files {
+            let (prefix,tail)=name.split_once('/').unwrap();
+            let destination=root.join(if prefix=="bank" {"bank-backups"} else {"bank-change-intents"}).join(tail);
+            crate::storage::safe_chain(&destination)?;
+            anyhow::ensure!(fs::read(destination)?==*data,"import destination readback mismatch");
+        }
+        let imported=crate::bank_backup::validate_bundle_directory(&root.join("bank-backups").join(&key))?;
+        anyhow::ensure!(imported==baseline,"imported original changed during commit");
+        hook(ImportPhase::Verified)?;
         Ok(())
     })();
-    drop(handle);
-    if result.is_ok() { fs::remove_file(lock)?; }
+    if result.is_ok() { if committing {fs::remove_file(&lock)?;} }
     else { let quarantine=root.join("quarantine").join(format!("{digest}.zip")); if !quarantine.exists() { crate::storage::write_new(&quarantine,bytes)?; }
-        if let Some((udid,hash))=verified_identity {crate::storage::block_card_at(root,&udid,&hash)?;fs::remove_file(lock)?;}
+        if let Some((udid,hash))=verified_identity {crate::storage::block_card_at(root,&udid,&hash)?;}
         else {crate::storage::block(root)?;}
+    }
+    if committing && result.is_err() {
+        // Do not expose an isolated semantic conflict after destination mutation:
+        // the whole store remains behind its retained durable import barrier.
+        return Err(anyhow::anyhow!("cloud import destination write requires recovery"));
     }
     result
 }
@@ -1703,6 +1745,116 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         let c=Session {server:"https://other.example.com".into(),..a.clone()}; assert!(bind_owner_at(&root,&c,true).is_err());
         assert_ne!(seen_directory(&root,&owner_for(&a).unwrap()).unwrap(),seen_directory(&root,&owner_for(&c).unwrap()).unwrap());
         assert_eq!(fs::read(root.join("vault-owner.json")).unwrap(),owner); fs::remove_dir_all(root).unwrap();
+    }
+    fn import_fixture()->(std::path::PathBuf,crate::bank_backup::Baseline,Vec<u8>) {
+        let source=fixture_root();let input=fixture_baseline();
+        let path=crate::bank_backup::save_fixture_at(&source.join("bank-backups"),&input).unwrap();
+        let bytes=export_bundle(&source,&path).unwrap();(source,input,bytes)
+    }
+    #[test] fn cloud_import_staging_interruption_has_no_durable_barrier_and_retries_exactly() {
+        let (source,input,bytes)=import_fixture();
+        for phase in [ImportPhase::Staged(0),ImportPhase::Prepared] {
+            let target=fixture_root();
+            let stopped=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                import_bundle_with_hook(&target,&bytes,&mut |at| {if at==phase {panic!("synthetic interrupted staging");}Ok(())})
+            }));assert!(stopped.is_err());
+            assert!(!target.join(".cloud-import.lock").exists());assert!(!target.join("bank-backups").exists());
+            assert!(!target.join("storage-blocked.json").exists());
+            import_bundle(&target,&bytes).unwrap();
+            let paths=fs::read_dir(target.join("bank-backups")).unwrap().map(|entry|entry.unwrap().path()).collect::<Vec<_>>();
+            assert_eq!(paths.len(),1);assert_eq!(crate::bank_backup::validate_bundle_directory(&paths[0]).unwrap(),input);
+            fs::remove_dir_all(target).unwrap();
+        }fs::remove_dir_all(source).unwrap();
+    }
+    #[test] fn cloud_import_write_interruption_retains_exact_evidence_and_blocks_reentry() {
+        let (source,_,bytes)=import_fixture();let digest=crate::bank_backup::sha256(&bytes).unwrap();
+        for phase in [ImportPhase::WriteIntent,ImportPhase::Destination(0),ImportPhase::Verified] {
+            for panic in [false,true] {
+                let target=fixture_root();
+                let stopped=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    import_bundle_with_hook(&target,&bytes,&mut |at| {
+                        if at==phase {if panic {panic!("synthetic interrupted destination");}anyhow::bail!("synthetic disk failure");}Ok(())
+                    })
+                }));assert!(stopped.is_err() || stopped.unwrap().is_err());
+                let marker=fs::read(target.join(".cloud-import.lock")).unwrap();
+                let intent:serde_json::Value=serde_json::from_slice(&marker).unwrap();
+                assert_eq!(intent["archive_sha256"],digest);assert_eq!(intent["phase"],"destination-write");
+                assert_eq!(fs::read(target.join("cloud-import-evidence").join(format!("{digest}.zip"))).unwrap(),bytes);
+                assert!(import_bundle(&target,&bytes).is_err());
+                assert_eq!(fs::read(target.join(".cloud-import.lock")).unwrap(),marker);
+                if phase==ImportPhase::WriteIntent {assert!(!target.join("bank-backups").exists());}
+                fs::remove_dir_all(target).unwrap();
+            }
+        }fs::remove_dir_all(source).unwrap();
+    }
+    #[test] fn cloud_import_postwrite_readback_and_noop_import_have_distinct_barriers() {
+        let (source,_,bytes)=import_fixture();let (_,files)=parse_bundle(&bytes).unwrap();
+        let (name,original)=files.iter().next().unwrap();let (prefix,tail)=name.split_once('/').unwrap();
+        let target=fixture_root();let destination=target.join(if prefix=="bank" {"bank-backups"} else {"bank-change-intents"}).join(tail);
+        let result=import_bundle_with_hook(&target,&bytes,&mut |at| {
+            if at==ImportPhase::Destination(files.len()-1) {fs::write(&destination,b"synthetic readback corruption")?;}Ok(())
+        });assert!(result.is_err());assert!(target.join(".cloud-import.lock").is_file());
+        assert_eq!(fs::read(&destination).unwrap(),b"synthetic readback corruption");assert_ne!(fs::read(&destination).unwrap(),*original);
+        assert!(import_bundle(&target,&bytes).is_err());fs::remove_dir_all(target).unwrap();
+        let target=fixture_root();import_bundle(&target,&bytes).unwrap();let mut phases=Vec::new();
+        import_bundle_with_hook(&target,&bytes,&mut |at| {phases.push(at);Ok(())}).unwrap();
+        assert!(!phases.contains(&ImportPhase::WriteIntent));assert!(phases.contains(&ImportPhase::Verified));
+        assert!(!target.join(".cloud-import.lock").exists());
+        fs::remove_dir_all(target).unwrap();fs::remove_dir_all(source).unwrap();
+    }
+    #[test] fn cloud_import_does_not_retire_unknown_markers_or_existing_review() {
+        let (source,input,bytes)=import_fixture();
+        for old in [b"".as_slice(),b"unknown legacy intent".as_slice()] {
+            let target=fixture_root();crate::storage::write_new(&target.join(".cloud-import.lock"),old).unwrap();
+            assert!(import_bundle(&target,&bytes).is_err());assert_eq!(fs::read(target.join(".cloud-import.lock")).unwrap(),old);
+            assert!(!target.join("bank-backups").exists());fs::remove_dir_all(target).unwrap();
+        }
+        let target=fixture_root();crate::storage::block(&target).unwrap();
+        let original=fs::read(target.join("storage-blocked.json")).unwrap();
+        crate::storage::block_card_at(&target,&input.udid,&input.card_hash).unwrap();
+        import_bundle(&target,&bytes).unwrap();
+        assert_eq!(fs::read(target.join("storage-blocked.json")).unwrap(),original);
+        assert!(crate::storage::card_is_blocked_at(&target,&input.udid,&input.card_hash));
+        fs::remove_dir_all(target).unwrap();fs::remove_dir_all(source).unwrap();
+    }
+    #[cfg(windows)] #[test] #[ignore="Synthetic subprocess helper used only by cloud_import_process_termination"]
+    fn cloud_import_child_phase_holder() {
+        let root=std::path::PathBuf::from(std::env::var_os("WALLET_STUDIO_IMPORT_CHILD_ROOT").expect("parent fixture required"));
+        assert!(root.is_absolute() && root.starts_with(std::env::temp_dir()));crate::storage::safe_chain(&root).unwrap();
+        let phase=match std::env::var("WALLET_STUDIO_IMPORT_CHILD_PHASE").unwrap().as_str() {
+            "staging"=>ImportPhase::Staged(0),"intent"=>ImportPhase::WriteIntent,"partial"=>ImportPhase::Destination(0),_=>panic!("invalid fixture phase")
+        };
+        let bytes=fs::read(root.join("fixture-input.zip")).unwrap();
+        import_bundle_with_hook(&root,&bytes,&mut |at| {if at==phase {
+            crate::storage::write_new(&root.join("child-ready"),b"synthetic ready")?;
+            loop {std::thread::park();}
+        }Ok(())}).unwrap();
+    }
+    #[cfg(windows)] #[test]
+    fn cloud_import_process_termination_distinguishes_staging_from_partial_destinations() {
+        struct ChildGuard(std::process::Child);
+        impl Drop for ChildGuard {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
+        let (source,_,bytes)=import_fixture();
+        for phase in ["staging","intent","partial"] {
+            let target=fixture_root();crate::storage::write_new(&target.join("fixture-input.zip"),&bytes).unwrap();
+            let child=std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact","cloud_sync::tests::cloud_import_child_phase_holder","--ignored"])
+                .env("WALLET_STUDIO_IMPORT_CHILD_ROOT",&target).env("WALLET_STUDIO_IMPORT_CHILD_PHASE",phase)
+                .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();let mut child=ChildGuard(child);
+            let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
+            while !target.join("child-ready").exists() {
+                assert!(std::time::Instant::now()<deadline,"synthetic import child not ready");
+                assert!(child.0.try_wait().unwrap().is_none(),"synthetic import child exited early");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            assert!(import_bundle(&target,&bytes).is_err(),"active staging owner must exclude a second importer");
+            child.0.kill().unwrap();child.0.wait().unwrap();
+            assert!(!target.join(".vault-operation.lock").exists());
+            if phase=="staging" {assert!(!target.join(".cloud-import.lock").exists());import_bundle(&target,&bytes).unwrap();}
+            else {assert!(target.join(".cloud-import.lock").is_file());assert!(import_bundle(&target,&bytes).is_err());
+                assert_eq!(fs::read(target.join("cloud-import-evidence").join(format!("{}.zip",crate::bank_backup::sha256(&bytes).unwrap()))).unwrap(),bytes);}
+            fs::remove_dir_all(target).unwrap();
+        }fs::remove_dir_all(source).unwrap();
     }
     #[test] fn customer_cloud_roundtrip_is_immutable_and_conflict_preserves_both() {
         let source=fixture_root(); let destination=fixture_root(); let input=fixture_baseline();
