@@ -97,7 +97,11 @@ class Accounts:
             db.execute('INSERT OR REPLACE INTO activation VALUES(?,?,?,?,?)',(email,self.digest(email+'|'+purpose+'|'+code),now+600,0,now))
         try: self.mailer(email,code)
         except Exception:
-            with self.store.connect() as db: db.execute('DELETE FROM activation WHERE email=?',(email,))
+            # Delivery can finish after a newer resend. Only retire the code
+            # belonging to this failed delivery, never its successful successor.
+            with self.store.connect() as db:
+                db.execute('DELETE FROM activation WHERE email=? AND digest=? AND last_sent=?',
+                           (email,self.digest(email+'|'+purpose+'|'+code),now))
             raise AccountError('email_delivery_unavailable') from None
 
     @staticmethod

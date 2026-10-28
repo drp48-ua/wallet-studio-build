@@ -4,8 +4,15 @@ project=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(project/'server'))
 from app import Store,Server
 scratch=project/'server'/'test-runtime';scratch.mkdir(exist_ok=True)
+if os.name=='nt' and not str(scratch).startswith('\\\\?\\'):
+    # Blobs contain both a user directory and a full SHA-256 filename. Keep
+    # creation and cleanup on the same long-path API in deep Windows checkouts.
+    scratch=pathlib.Path('\\\\?\\'+str(scratch.resolve()))
 with tempfile.TemporaryDirectory(dir=scratch,prefix='desktop-fixture-') as temp:
     server=Server(('127.0.0.1',0),Store(temp,True))
+    # Join request handlers before TemporaryDirectory removes the SQLite/blobs.
+    # The production daemon setting otherwise races Windows directory cleanup.
+    server.daemon_threads=False
     threading.Thread(target=server.serve_forever,daemon=True).start()
     env=os.environ.copy()
     env['WALLET_STUDIO_TEST_FIXTURE']='1'
