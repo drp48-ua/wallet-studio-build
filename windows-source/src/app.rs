@@ -55,6 +55,20 @@ fn original_capture_authorized(app_authenticated:bool,session_pending:bool,
         && crate::cloud_sync::missing_original_capture_allowed(cloud_configured,cloud_synced)
 }
 
+// A prepared-transfer cache path must never be promoted into My Designs.
+fn include_saved_personal_design(designs:&mut Vec<crate::design_library::Design>,root:&Path,saved:&Path)->Option<PathBuf> {
+    crate::storage::safe_chain(root).ok()?;crate::storage::safe_chain(saved).ok()?;
+    let root=root.canonicalize().ok()?;let saved=saved.canonicalize().ok()?;
+    let metadata=std::fs::symlink_metadata(&saved).ok()?;
+    if saved.parent()!=Some(root.as_path()) || !metadata.is_file() || metadata.file_type().is_symlink() || !crate::design_library::supported_path(&saved) {return None;}
+    // A reused older entry can be outside the newest MAX_DESIGNS entries.
+    if !designs.iter().any(|design|design.path==saved) {
+        if designs.len()>=crate::design_library::MAX_DESIGNS {designs.pop();}
+        designs.push(crate::design_library::Design {path:saved.clone(),title:"Diseño guardado automáticamente".into()});
+    }
+    Some(saved)
+}
+
 struct CardSnapshot {
     udid: Option<String>, known_device: Option<String>, original: OriginalState,
     reference_device:Option<String>,
@@ -979,7 +993,7 @@ impl AirCardApp {
         match self.purchased_rx.as_ref().map(|rx|rx.try_recv()) {
             Some(Ok((key,result)))=>{
                 self.purchased_rx=None;
-                if key==owner {match result {Ok(items)=> {self.purchased_status=if items.is_empty() {"Tu compra de Wallet Studio incluye diseños. Si no aparecen, actualiza la biblioteca o revisa el estado de tu cuenta.".into()} else {format!("{} diseños incluidos con Wallet Studio. Se verifica tu acceso al usar un diseño.",items.len())};self.purchased_designs=items;},Err(error)=>{self.purchased_status=error;}}}
+                if key==owner {match result {Ok(items)=> {self.purchased_status=if items.is_empty() {"Tu compra de Wallet Studio incluye diseños. Si no aparecen, actualiza la biblioteca o revisa el estado de tu cuenta.".into()} else {format!("{} diseños incluidos con Wallet Studio. Se verifica tu acceso al usar un diseño.",items.len())};self.purchased_designs=items;self.personal_library_needs_filter=true;},Err(error)=>{self.purchased_status=error;}}}
             },
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected))=>{self.purchased_rx=None;self.purchased_status="No se pudo actualizar la biblioteca. Vuelve a intentarlo.".into();},
             _=>{},
@@ -1002,7 +1016,7 @@ impl AirCardApp {
             _=>{},
         }}
         for (path,color) in self.library_previews.poll() {
-            self.personal_library_needs_filter=true;
+            if path.extension().is_some_and(|extension|extension=="detail") {self.personal_library_needs_filter=true;}
             self.library_textures.insert(path,ctx.load_texture("library-preview",color,egui::TextureOptions::LINEAR));
         }
         ui.heading("Biblioteca");ui.label("Tus diseños guardados y los diseños incluidos con Wallet Studio.");ui.add_space(12.0);
@@ -1040,7 +1054,7 @@ impl AirCardApp {
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected))=>{self.personal_library_rx=None;self.personal_library_needs_filter=false;}
             _=>{},
         }
-        if self.personal_library_needs_filter && self.personal_library_rx.is_none() && !self.library_previews.busy() && !self.purchased_designs.is_empty() {
+        if self.personal_library_needs_filter && self.personal_library_rx.is_none() && !self.purchased_designs.is_empty() {
             self.personal_library_needs_filter=false;
             let own=self.library_designs.clone();let included=self.purchased_designs.clone();let owner=self.library_owner.clone();
             let (tx,rx)=channel();self.personal_library_rx=Some(rx);let ctx=ctx.clone();
@@ -1057,7 +1071,7 @@ impl AirCardApp {
     fn request_library_preview(&mut self,ctx:&egui::Context,path:&Path,paid:Option<crate::design_library::PurchasedDesign>,detailed:bool) {
         let key=if detailed {path.with_extension("detail")} else {path.to_owned()};
         if self.library_textures.contains_key(&key) {return;}
-        if paid.is_some() && (self.cloud_rx.is_some() || self.purchased_rx.is_some() || self.purchased_use_rx.is_some()) {return;}
+        if paid.is_some() && (self.purchased_rx.is_some() || self.purchased_use_rx.is_some()) {return;}
         let read_path=path.to_owned();let path=key;let session=self.cloud_session.clone();let demo=crate::storage::is_demo();
         self.library_previews.request(path,ctx,move|| {
             let read_path=if !demo {if let Some(item)=paid {
@@ -1424,6 +1438,7 @@ impl AirCardApp {
         let language = self.language;
         let restore_before_apply = plan == crate::flasher::BankApplyPlan::RestoreThenApply;
         let save_to_personal_library = self.design_from_file;
+        let design_source=self.source_path.clone();
         self.progress_total = if restore_before_apply { 6 } else { 3 };
         if restore_before_apply {
             self.progress_msg = self.language.text("Restaurando el diseño anterior antes de aplicar el nuevo…").to_string();
@@ -1444,8 +1459,8 @@ impl AirCardApp {
                 let log_tx = tx.clone();
                 let library = crate::design_library::library_dir()?;
                 let account=library.parent().context("Carpeta de diseños no válida")?;
-                crate::design_library::save_before_apply_from_source(account, &png_bytes, save_to_personal_library, |saved| {
-                    if save_to_personal_library {
+                crate::design_library::save_before_apply_from_source_path(account, &png_bytes, save_to_personal_library,design_source.as_deref(), |_prepared,personal| {
+                    if let Some(saved)=personal {
                         let _ = tx.send(BackgroundTaskMessage::DesignSaved(saved.to_path_buf()));
                     }
                     replace_wallet_skin(&udid, connection_mode, &hash, &png_bytes, &pdf_bytes,
@@ -1917,13 +1932,12 @@ impl AirCardApp {
                 }
                 BackgroundTaskMessage::DesignSaved(path) => {
                     self.refresh_design_library();
-                    // A reused older design may be outside the 100 most recent entries.
-                    if !self.library_designs.iter().any(|design| design.path == path) {
-                        if self.library_designs.len() >= crate::design_library::MAX_DESIGNS { self.library_designs.pop(); }
-                        self.library_designs.push(crate::design_library::Design { path: path.clone(), title: "Diseño guardado automáticamente".into() });
+                    if let Ok(root)=crate::design_library::library_dir() {
+                        if let Some(saved)=include_saved_personal_design(&mut self.library_designs,&root,&path) {
+                            self.library_selection.select(Some(saved));
+                            self.add_log("Imported file saved or reused and verified in My Designs before transfer.");
+                        }
                     }
-                    self.library_selection.select(Some(path));
-                self.add_log("Imported file saved and verified in My Designs before transfer.");
                 }
                 BackgroundTaskMessage::OriginalBackupDone { udid, hash, result } => {
                     self.is_busy = false;
@@ -2172,6 +2186,16 @@ impl eframe::App for AirCardApp {
         self.poll_apple_setup(ctx);
         self.tick_cloud(ctx);
         if (!crate::storage::is_demo() || self.auth_preview) && !self.account_authenticated && !self.library_authenticated {
+            egui::TopBottomPanel::top("login-apple-prerequisites").frame(crate::glass::frame().inner_margin(12)).show(ctx,|ui| {
+                if self.auth_preview {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("DEMOSTRACIÓN AISLADA · estado Apple simulado");
+                        if ui.button("Simular componentes ausentes").clicked() {self.apple_prerequisites=crate::apple_setup::Prerequisites {runtime:false,service:crate::apple_setup::ServiceState::Missing};}
+                        if ui.button("Simular componentes listos").clicked() {self.apple_prerequisites=crate::apple_setup::Prerequisites {runtime:true,service:crate::apple_setup::ServiceState::Running};}
+                    });
+                }
+                self.show_apple_setup(ui);
+            });
             let logo=self.brand.hero.clone();
             egui::CentralPanel::default().frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT).inner_margin(egui::Margin::symmetric(28,16))).show(ctx,|ui| {
                 crate::auth_ui::page(ui,&logo,|ui| {
@@ -2182,7 +2206,6 @@ impl eframe::App for AirCardApp {
                                 if ui.button("Vista recuperación").clicked() {self.account_stage=2;self.account_recovery=true;}
                             });}
                             self.show_account_tab(ui,ctx);
-                            if !crate::storage::is_demo() && !self.apple_prerequisites.ready() { ui.add_space(16.0); self.show_apple_setup(ui); }
                             ui.add_space(18.0);
                             ui.label(egui::RichText::new("Acceso privado para clientes · hasta 3 equipos por cuenta").size(11.0).color(md3::ON_SURFACE_VARIANT));
                 });
@@ -2624,7 +2647,7 @@ impl AirCardApp {
         if self.apple_setup_rx.is_some() || self.apple_install_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(100)); }
     }
     fn show_apple_setup(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Conexión con el iPhone · componentes Apple").strong());
+        ui.label(egui::RichText::new(if self.apple_prerequisites.ready() {"Componentes Apple listos · conexión con el iPhone"} else {"Conexión con el iPhone · componentes Apple"}).strong());
         let explanation = self.apple_prerequisites.guidance();
         ui.label(egui::RichText::new(explanation).size(11.5).color(md3::ON_SURFACE_VARIANT));
         if !self.apple_setup_status.is_empty() { ui.label(&self.apple_setup_status); }
@@ -3424,6 +3447,20 @@ mod tests {
                 });
             });
         }
+    }
+    #[test]
+    fn repeated_apply_selects_existing_personal_entry_and_never_injects_transfer_cache() {
+        let root=std::env::temp_dir().join(format!("ws-app-dedup-{}",crate::flasher::generate_token()));let own=root.join("own");
+        let png=PreparedSkin::from_image_with_focus(image::DynamicImage::new_rgb8(1536,969),0.5,0.5).unwrap().png;
+        let source=crate::design_library::save_user_import(&own,&png).unwrap();
+        let mut designs=crate::design_library::discover(&own).unwrap();
+        for _ in 0..3 {crate::design_library::save_before_apply_from_source_path(&root,&png,true,Some(&source),|prepared,personal| {
+            assert_eq!(personal,Some(source.as_path()));assert_eq!(crate::design_library::read_image(prepared)?,png);
+            assert!(include_saved_personal_design(&mut designs,&own,prepared).is_none());
+            assert_eq!(include_saved_personal_design(&mut designs,&own,personal.unwrap()),Some(source.clone()));
+            assert_eq!(designs.len(),1);assert_eq!(designs[0].path,source);Ok(())
+        }).unwrap();}
+        assert_eq!(crate::design_library::discover(&own).unwrap().len(),1);std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn capture_authorization_rejects_library_only_pending_unreconciled_and_active_sync_states() {

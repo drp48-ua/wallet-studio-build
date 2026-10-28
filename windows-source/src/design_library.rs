@@ -130,10 +130,19 @@ pub fn save_before_apply<T>(root: &Path, png: &[u8], apply: impl FnOnce(&Path) -
 /// in the user's file-import library. Both paths remain account-scoped.
 pub fn save_before_apply_from_source<T>(account: &Path, png: &[u8], from_file: bool,
     apply: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
+    save_before_apply_from_source_path(account,png,from_file,None,|prepared,_|apply(prepared))
+}
+pub fn save_before_apply_from_source_path<T>(account:&Path,png:&[u8],from_file:bool,source:Option<&Path>,
+    apply:impl FnOnce(&Path,Option<&Path>)->Result<T>)->Result<T> {
+    if let Some(existing)=if from_file {matching_saved_design(&account.join("own"),png,source)?} else {None} {
+        // Keep exact transfer bytes durably, but do not add another personal
+        // image for an existing design with another filename/PNG encoding.
+        return save_before_apply(&account.join("prepared-transfers"),png,|prepared|apply(prepared,Some(&existing)));
+    }
     let root=account.join(if from_file {"own"} else {"prepared-transfers"});
     save_before_apply(&root,png,|path| {
         if from_file { mark_user_import(path)?; }
-        apply(path)
+        apply(path,from_file.then_some(path))
     })
 }
 
@@ -143,22 +152,50 @@ fn mark_user_import(path:&Path)->Result<()> {
     crate::storage::write_new(&marker,b"user-file-v1")
 }
 pub fn save_user_import(root:&Path,png:&[u8])->Result<PathBuf> {
-    let path=save_prepared_png(root,png)?;mark_user_import(&path)?;Ok(path)
+    let path=match matching_saved_design(root,png,None)? {Some(path)=>path,None=>save_prepared_png(root,png)?};
+    mark_user_import(&path)?;Ok(path)
+}
+fn exact_pixel_key(bytes:&[u8])->Result<String> {
+    let image=decode_still(bytes)?;
+    anyhow::ensure!((image.width(),image.height())==NATIVE_DESIGN_SIZE,"El diseño no tiene tamaño de tarjeta");
+    crate::bank_backup::sha256(image.to_rgba8().as_raw())
+}
+fn matching_saved_design(root:&Path,png:&[u8],source:Option<&Path>)->Result<Option<PathBuf>> {
+    if !root.exists() {return Ok(None);}
+    crate::storage::safe_chain(root)?;
+    let root=root.canonicalize()?;let key=exact_pixel_key(png)?;
+    let mut paths=Vec::new();
+    if let Some(source)=source {
+        crate::storage::safe_chain(source)?;
+        if let Ok(source)=source.canonicalize() {if source.parent()==Some(root.as_path()) {paths.push(source);}}
+    }
+    paths.extend(discover(&root)?.into_iter().map(|design|design.path));
+    for path in paths {
+        crate::storage::safe_chain(&path)?;
+        if read_image(&path).and_then(|bytes|exact_pixel_key(&bytes)).is_ok_and(|existing|existing==key) {return Ok(Some(path));}
+    }
+    Ok(None)
 }
 fn prepared_pixel_key(path:&Path)->Result<String> {
-    let prepared=crate::image_skin::PreparedSkin::from_image_with_focus(decode_still(&read_image(path)?)?,0.5,0.5)?;
-    crate::bank_backup::sha256(decode_still(&prepared.png)?.to_rgba8().as_raw())
+    let image=decode_still(&read_image(path)?)?;
+    let (x,y,width,height)=crate::image_skin::CardCrop::default().bounds(image.width(),image.height());
+    let prepared=image.crop_imm(x,y,width,height).resize_exact(NATIVE_DESIGN_SIZE.0,NATIVE_DESIGN_SIZE.1,image::imageops::FilterType::Lanczos3);
+    crate::bank_backup::sha256(prepared.to_rgba8().as_raw())
 }
 /// Presentation-only cleanup of old automatic catalog saves. Never delete files,
 /// and never hide an explicitly marked import, even if it matches the catalog.
 pub fn personal_designs_only(own:Vec<Design>,included:&[(PurchasedDesign,PathBuf)])->Vec<Design> {
+    let explicit=|design:&Design| {
+        let marker=design.path.with_extension("user-import");
+        crate::storage::safe_chain(&marker).is_ok() && std::fs::read(&marker).is_ok_and(|bytes|bytes==b"user-file-v1")
+    };
+    if own.iter().all(explicit) {return own;}
     let keys:std::collections::HashSet<_>=included.iter().filter_map(|(item,path)| {
         let bytes=read_image(path).ok()?;verify_purchased(item,&bytes).ok()?;
         prepared_pixel_key(path).ok()
     }).collect();
     own.into_iter().filter(|design| {
-        let marker=design.path.with_extension("user-import");
-        if crate::storage::safe_chain(&marker).is_ok() && std::fs::read(&marker).is_ok_and(|bytes|bytes==b"user-file-v1") {return true;}
+        if explicit(design) {return true;}
         prepared_pixel_key(&design.path).map_or(true,|key|!keys.contains(&key))
     }).collect()
 }
@@ -233,6 +270,31 @@ mod tests {
             assert_eq!(std::fs::read(path.with_extension("user-import"))?,b"user-file-v1");Ok(())
         }).unwrap();
         assert!(!root.join("prepared-transfers").exists());std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn repeated_library_apply_reuses_source_pixels_but_retains_exact_transfer_encoding() {
+        use image::ImageEncoder;
+        let root=std::env::temp_dir().join(format!("ws-existing-library-{}",crate::flasher::generate_token()));
+        let own=root.join("own");let first=prepared_png();let source=own.join("mi-diseno-personal.png");
+        crate::storage::write_new(&source,&first).unwrap();let source=source.canonicalize().unwrap();mark_user_import(&source).unwrap();
+        let image=decode_still(&first).unwrap().to_rgba8();let mut alternate=Vec::new();
+        image::codecs::png::PngEncoder::new_with_quality(&mut alternate,image::codecs::png::CompressionType::Best,image::codecs::png::FilterType::NoFilter)
+            .write_image(image.as_raw(),image.width(),image.height(),image::ExtendedColorType::Rgba8).unwrap();
+        assert_ne!(first,alternate);assert_eq!(exact_pixel_key(&first).unwrap(),exact_pixel_key(&alternate).unwrap());
+        assert_eq!(save_user_import(&own,&alternate).unwrap(),source);
+        for _ in 0..3 {
+            let result:Result<()>=save_before_apply_from_source_path(&root,&alternate,true,Some(&source),|prepared,personal| {
+                assert_eq!(personal,Some(source.as_path()));assert_eq!(read_image(prepared)?,alternate);assert_eq!(prepared.parent().unwrap().canonicalize()?,root.join("prepared-transfers").canonicalize()?);
+                anyhow::bail!("synthetic transfer failure")
+            });assert!(result.is_err());
+            assert_eq!(discover(&own).unwrap().len(),1);assert_eq!(read_image(&source).unwrap(),first);
+        }
+        assert_eq!(discover(&root.join("prepared-transfers")).unwrap().len(),1);
+        let mut changed=image.clone();changed.put_pixel(0,0,image::Rgba([255,0,0,255]));let mut changed_png=Vec::new();
+        image::DynamicImage::ImageRgba8(changed).write_to(&mut Cursor::new(&mut changed_png),image::ImageFormat::Png).unwrap();
+        save_before_apply_from_source_path(&root,&changed_png,true,Some(&source),|_,_|Ok(())).unwrap();
+        assert_eq!(discover(&own).unwrap().len(),2,"a real custom edit remains a separate design");
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn automatically_saved_design_is_exact_reusable_and_survives_a_failed_transfer() {
@@ -387,9 +449,21 @@ fn download_purchased_at(session:&crate::cloud_sync::Session,item:&PurchasedDesi
     store_purchased_cache(path,item,&bytes)?;
     Ok(path.to_path_buf())
 }
-static DESIGN_NETWORK:std::sync::Mutex<()>=std::sync::Mutex::new(());
+const PARALLEL_DESIGN_REQUESTS:usize=4;
+struct DesignNetwork {active:std::sync::Mutex<usize>,available:std::sync::Condvar}
+impl DesignNetwork {
+    const fn new()->Self {Self {active:std::sync::Mutex::new(0),available:std::sync::Condvar::new()}}
+    fn acquire(&self)->Result<DesignPermit<'_>> {
+        let mut active=self.active.lock().map_err(|_|anyhow::anyhow!("La conexión de diseños necesita reiniciarse"))?;
+        while *active>=PARALLEL_DESIGN_REQUESTS {active=self.available.wait(active).map_err(|_|anyhow::anyhow!("La conexión de diseños necesita reiniciarse"))?;}
+        *active+=1;Ok(DesignPermit(self))
+    }
+}
+struct DesignPermit<'a>(&'a DesignNetwork);
+impl Drop for DesignPermit<'_> {fn drop(&mut self) {if let Ok(mut active)=self.0.active.lock() {*active-=1;self.0.available.notify_one();}}}
+static DESIGN_NETWORK:DesignNetwork=DesignNetwork::new();
 fn design_request(session:&crate::cloud_sync::Session,path:&str,maximum:usize)->Result<Vec<u8>> {
-    let _network=DESIGN_NETWORK.lock().map_err(|_|anyhow::anyhow!("La conexión de diseños necesita reiniciarse"))?;
+    let _network=DESIGN_NETWORK.acquire()?;
     for attempt in 0..3 {
         let result=crate::auto_update::http_request("GET",&format!("{}{}",session.server,path),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("X-Wallet-Studio-Catalog".into(),NATIVE_CATALOG_CAPABILITY.into())],&[],maximum);
         let retry=result.as_ref().err().is_some_and(|error|error.downcast_ref::<crate::auto_update::HttpStatus>().map_or(true,|status|matches!(status.0,429|503)));
@@ -472,6 +546,18 @@ pub fn diagnose_account_designs(all:bool)->serde_json::Value {
 #[cfg(test)]
 mod paid_tests {
     use super::*;
+    #[test]
+    fn design_network_runs_four_independent_requests_and_releases_capacity_on_failure() {
+        let network=std::sync::Arc::new(DesignNetwork::new());let mut owners=Vec::new();
+        for _ in 0..PARALLEL_DESIGN_REQUESTS {owners.push(network.acquire().unwrap());}
+        let (started_tx,started_rx)=std::sync::mpsc::channel();let other=network.clone();
+        let worker=std::thread::spawn(move|| {let _permit=other.acquire().unwrap();started_tx.send(()).unwrap();});
+        assert!(started_rx.recv_timeout(std::time::Duration::from_millis(50)).is_err(),"fifth request must wait");
+        drop(owners.pop());started_rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();worker.join().unwrap();
+        assert_eq!(*network.active.lock().unwrap(),3);drop(owners);
+        assert_eq!(*network.active.lock().unwrap(),0);
+    }
+
     /// Fixed reviewed set: one authenticated native GET per selected design,
     /// no thumbnail/cache/profile writes, device code, or sensitive output.
     #[test]

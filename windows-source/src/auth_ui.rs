@@ -23,7 +23,8 @@ pub fn hero(ui:&mut egui::Ui,logo:&egui::TextureHandle,compact:bool) {
     ui.add_space(12.0);
     ui.add(egui::Label::new(egui::RichText::new("Diseños que van contigo. Tus originales, siempre protegidos.").size(if compact {14.0} else {17.0}).color(md3::ON_SURFACE_VARIANT)).wrap());
     ui.add_space(if compact {16.0} else {24.0});
-    let width=ui.available_width().min(if compact {280.0} else {500.0});
+    if ui.available_height()<90.0 {return;}
+    let width=ui.available_width().min(if compact {280.0} else {500.0}).min(((ui.available_height()-18.0)/0.61).max(1.0));
     let (rect,_)=ui.allocate_exact_size(egui::vec2(width,width*0.61+18.0),egui::Sense::hover());
     let card=egui::Rect::from_min_size(rect.min+egui::vec2(0.0,12.0),egui::vec2(width-18.0,width*0.61));
     ui.painter().add(crate::glass::gradient(card.translate(egui::vec2(14.0,-12.0)),20.0,egui::Color32::from_rgb(74,47,126),egui::Color32::from_rgb(26,31,61)));
@@ -53,7 +54,9 @@ pub fn benefits(ui:&mut egui::Ui) {
 
 pub fn page(ui:&mut egui::Ui,logo:&egui::TextureHandle,form:impl FnOnce(&mut egui::Ui)) {
     let width=ui.available_width();
-    let body_height=(ui.available_height()-90.0).max(380.0);
+    // Leave room for the always-visible Apple prerequisite banner, including
+    // on the minimum window size. The form scrolls; the banner never does.
+    let body_height=(ui.available_height()-90.0).max(160.0);
     let gap=if width>1300.0 {64.0} else {28.0};
     let form_width=(width*0.44).clamp(420.0,680.0).min(width);
     let hero_width=(width-form_width-gap).max(1.0);
@@ -128,4 +131,19 @@ pub fn notice(ui:&mut egui::Ui,text:&str,busy:bool) {
         assert_eq!(remaining(Some(sent),sent+std::time::Duration::from_secs(601),CODE_LIFETIME),0);
         assert_eq!(remaining(None,sent,RESEND_COOLDOWN),0);
     }
+    #[test] fn login_form_and_hero_fit_below_the_fixed_apple_banner() {
+        for size in [egui::vec2(960.0,640.0),egui::vec2(1920.0,1080.0)] {
+            let ctx=egui::Context::default();let logo=ctx.load_texture("banner-layout-logo",egui::ColorImage::filled([1,1],egui::Color32::WHITE),egui::TextureOptions::LINEAR);
+            let input=egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size)),..Default::default()};
+            for _ in 0..2 {let _=ctx.run(input.clone(),|ctx| {
+                egui::TopBottomPanel::top("apple-fixed-test").exact_height(160.0).show(ctx,|ui| {ui.label("Componentes Apple");let _=ui.button("Descargar iTunes para Windows");});
+                egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(28,16))).show(ctx,|ui| {
+                    let bounds=ui.max_rect();page(ui,&logo,|ui| {ui.allocate_space(egui::vec2(ui.available_width(),600.0));});
+                    assert!(ui.min_rect().bottom()<=bounds.bottom()+1.0,"Apple banner must not push the page below viewport at {size:?}");
+                    assert!(ui.min_rect().right()<=bounds.right()+1.0);
+                });
+            });}
+        }
+    }
+
 }
