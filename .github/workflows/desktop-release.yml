@@ -28,6 +28,11 @@ jobs:
           if (-not [Uri]::TryCreate($env:WALLET_STUDIO_CLOUD_URL, [UriKind]::Absolute, [ref]$service) -or $service.Scheme -ne 'https' -or -not $service.IsDefaultPort -or $service.UserInfo -or $service.Query -or $service.Fragment -or $service.Host -in @('localhost', '127.0.0.1')) {
             throw 'Set the real HTTPS WALLET_STUDIO_CLOUD_URL before publishing a mandatory-account build.'
           }
+      - name: Validate stable download alias with synthetic signatures
+        shell: pwsh
+        run: |
+          ./scripts/test-release-alias.ps1
+          ./scripts/test-drive-release.ps1
       - name: Validate private cloud service with synthetic data
         shell: pwsh
         run: python -m unittest discover -s server/tests -v
@@ -61,6 +66,9 @@ jobs:
         env:
           WALLET_STUDIO_UPDATE_SIGNING_KEY: ${{ secrets.WALLET_STUDIO_UPDATE_SIGNING_KEY }}
         run: ./scripts/sign-update.ps1
+      - name: Prepare byte-identical stable download from signed manifest
+        shell: pwsh
+        run: ./scripts/prepare-release-alias.ps1 -ManifestPath dist/release-manifest.json
       - name: Publish immutable release and update channel
         shell: pwsh
         env:
@@ -68,4 +76,35 @@ jobs:
         run: |
           $tag = "desktop-build-$env:GITHUB_RUN_NUMBER"
           $version = (Get-Item 'windows/Wallet Studio.exe').VersionInfo.FileVersion
-          gh release create $tag dist/Wallet-Studio-*-Windows.zip dist/release-manifest.json dist/release-manifest.sig dist/SHA256SUMS.txt --target $env:GITHUB_SHA --title "Wallet Studio $version · build $env:GITHUB_RUN_NUMBER" --notes "Compiled and tested Windows package from main. Publisher update signature verified by the client. Private copies are not included." --latest
+          $manifest = Get-Content dist/release-manifest.json -Raw | ConvertFrom-Json
+          if ($manifest.commit -cne $env:GITHUB_SHA -or $manifest.repository -cne $env:GITHUB_REPOSITORY -or $manifest.build_id -ne [long]$env:GITHUB_RUN_NUMBER -or $manifest.source_branch -cne 'main') { throw 'Release source binding mismatch' }
+          $mainSha = gh api "repos/$env:GITHUB_REPOSITORY/commits/main" --jq .sha
+          if ($LASTEXITCODE -ne 0 -or $mainSha -cne $env:GITHUB_SHA) { throw 'Only the current validated main commit may advance the stable download' }
+          $latestRaw = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify the existing stable release; keep its download unchanged' }
+          $latest = $latestRaw | ConvertFrom-Json
+          if ($latest.draft -or $latest.prerelease -or $latest.tag_name -cnotmatch '^desktop-build-(\d+)$') { throw 'Unknown stable release; require publisher review' }
+          if ([long]$Matches[1] -ge [long]$env:GITHUB_RUN_NUMBER) { throw 'An equal or newer build is already stable; refuse rollback' }
+          gh release create $tag (Join-Path dist $manifest.asset) dist/Wallet-Studio-Windows.zip dist/release-manifest.json dist/release-manifest.sig dist/SHA256SUMS.txt --target $env:GITHUB_SHA --title "Wallet Studio $version · build $env:GITHUB_RUN_NUMBER" --notes "Compiled and tested Windows package from main. Publisher update signature verified by the client. Private copies are not included." --draft --latest=false
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release upload failed; stable download unchanged' }
+          # Verify the actual uploaded alias before exposing this release as latest.
+          $check = Join-Path $env:RUNNER_TEMP ('release-alias-' + [Guid]::NewGuid().ToString('N'))
+          gh release download $tag --pattern Wallet-Studio-Windows.zip --dir $check
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify uploaded alias; release remains a draft' }
+          $alias = Get-Item -LiteralPath (Join-Path $check 'Wallet-Studio-Windows.zip')
+          if ($alias.Length -ne $manifest.size -or (Get-FileHash -LiteralPath $alias.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $manifest.sha256) { throw 'Uploaded alias integrity mismatch; release remains a draft' }
+          $currentLatest = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq .tag_name
+          if ($LASTEXITCODE -ne 0 -or $currentLatest -cne $latest.tag_name) { throw 'Stable release changed during upload; require publisher review' }
+          $mainSha = gh api "repos/$env:GITHUB_REPOSITORY/commits/main" --jq .sha
+          if ($LASTEXITCODE -ne 0 -or $mainSha -cne $env:GITHUB_SHA) { throw 'Main changed during upload; release remains a draft' }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+      - name: Synchronize approved existing Drive delivery file
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WALLET_STUDIO_DRIVE_SYNC_ENABLED: ${{ vars.WALLET_STUDIO_DRIVE_SYNC_ENABLED }}
+          WALLET_STUDIO_DRIVE_FILE_ID: ${{ vars.WALLET_STUDIO_DRIVE_FILE_ID }}
+          WALLET_STUDIO_DRIVE_INITIAL_SHA256: ${{ vars.WALLET_STUDIO_DRIVE_INITIAL_SHA256 }}
+          WALLET_STUDIO_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.WALLET_STUDIO_DRIVE_SERVICE_ACCOUNT_JSON }}
+        run: ./scripts/sync-drive-release.ps1 -ManifestPath dist/release-manifest.json

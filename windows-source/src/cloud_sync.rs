@@ -1114,6 +1114,162 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         assert!(message.contains("Restaurar original"));assert!(message.contains("Sincronizar ahora"));
         assert!(!message.contains("synthetic private"));assert!(retained_session_after_failure(&error));
     }
+    // Diagnostic support only. No storage lease, materialization, receipt,
+    // migration or reconciliation calls: even those helpers can create files.
+    #[derive(Default)]
+    struct RetainedStageAudit { counts:BTreeMap<&'static str,usize>, indeterminate:bool }
+    impl RetainedStageAudit {
+        fn count(&mut self,key:&'static str) {*self.counts.entry(key).or_default()+=1;}
+        fn uncertain(&mut self,key:&'static str) {self.count(key);self.indeterminate=true;}
+    }
+    struct AuditReadBudget(usize);
+    impl AuditReadBudget {
+        fn charge(&mut self,bytes:usize)->Result<()> {
+            anyhow::ensure!(bytes<=self.0,"diagnostic read budget exhausted");self.0-=bytes;Ok(())
+        }
+        fn read(&mut self,path:&Path,max:usize)->Result<Vec<u8>> {
+            crate::storage::safe_chain(path)?;let meta=fs::symlink_metadata(path)?;
+            anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=max as u64,"unsafe diagnostic file");
+            self.charge(usize::try_from(meta.len())?.checked_add(1).context("diagnostic size overflow")?)?;
+            let mut bytes=Vec::new();fs::File::open(path)?.take(meta.len()+1).read_to_end(&mut bytes)?;
+            anyhow::ensure!(bytes.len() as u64==meta.len(),"diagnostic file changed");Ok(bytes)
+        }
+    }
+    fn audit_children(path:&Path,max:usize)->Result<Vec<std::path::PathBuf>> {
+        crate::storage::safe_chain(path)?;let meta=fs::symlink_metadata(path)?;
+        anyhow::ensure!(meta.is_dir() && !meta.file_type().is_symlink(),"unsafe diagnostic directory");
+        let mut children=Vec::new();
+        for entry in fs::read_dir(path)?.take(max+1) {anyhow::ensure!(children.len()<max,"diagnostic entry count exceeded");children.push(entry?.path());}
+        Ok(children)
+    }
+    fn audit_stage_files(path:&Path,budget:&mut AuditReadBudget)->Result<BTreeMap<String,Vec<u8>>> {
+        let mut files=BTreeMap::new();let mut total=0usize;
+        for prefix in audit_children(path,2)? {
+            let name=prefix.file_name().and_then(|n|n.to_str()).context("invalid stage prefix")?;
+            anyhow::ensure!(matches!(name,"bank"|"intents"),"unknown staging prefix");
+            for directory in audit_children(&prefix,MAX_FILES)? {
+                for file in audit_children(&directory,MAX_FILES)? {
+                    let relative=format!("{name}/{}/{}",directory.file_name().context("missing key")?.to_string_lossy(),file.file_name().context("missing leaf")?.to_string_lossy());
+                    anyhow::ensure!(files.len()<MAX_FILES && safe_name(&relative) && evidence_name(&relative),"unknown staging evidence");
+                    let bytes=budget.read(&file,32*1024*1024)?;total=total.checked_add(bytes.len()).context("stage size overflow")?;
+                    anyhow::ensure!(total<=LIMIT,"stage size exceeded");files.insert(relative,bytes);
+                }
+            }
+        }Ok(files)
+    }
+    fn audit_retained_stages_at(root:&Path,max_stages:usize)->RetainedStageAudit {
+        let mut report=RetainedStageAudit::default();let mut budget=AuditReadBudget(1024*1024*1024);
+        if crate::storage::safe_chain(root).is_err() {report.uncertain("root_unsafe");return report;}
+        for area in ["cloud-staging","cloud-validated"] {
+            let parent=root.join(area);
+            match fs::symlink_metadata(&parent) {
+                Err(error) if error.kind()==std::io::ErrorKind::NotFound=>continue,
+                Err(_)=>{report.uncertain("stage_root_unreadable");continue;},Ok(_)=>{},
+            }
+            let stages=match audit_children(&parent,max_stages) {Ok(paths)=>paths,Err(_)=>{report.uncertain("stage_inventory_unsafe_or_limited");continue;}};
+            for stage in stages {
+                report.count(if area=="cloud-staging" {"staging_directories"}else{"validated_directories"});
+                let Some(digest)=stage.file_name().and_then(|n|n.to_str()).filter(|n|n.len()==64 && n.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b))) else {report.uncertain("stage_digest_invalid");continue;};
+                let files=match audit_stage_files(&stage,&mut budget) {Ok(files)=>files,Err(_)=>{report.uncertain("stage_unsafe_incomplete_or_limited");continue;}};
+                let keys=files.keys().filter_map(|name|name.strip_prefix("bank/").and_then(|tail|tail.split('/').next())).collect::<std::collections::BTreeSet<_>>();
+                if keys.len()!=1 {report.uncertain("stage_baseline_count_invalid");continue;}
+                // These validators are read-only, but can re-read historical
+                // payloads. Reserve a conservative bounded allowance first.
+                let bytes=files.values().map(Vec::len).sum::<usize>();
+                let revisions=files.keys().filter(|name|name.starts_with("intents/") && name.contains("/state-")).count();
+                let charge=bytes.checked_mul(revisions.saturating_mul(4).saturating_add(4));
+                if charge.is_none_or(|charge|budget.charge(charge).is_err()) {report.uncertain("stage_validation_budget_exceeded");continue;}
+                let baseline=match crate::bank_backup::validate_bundle_directory(&stage.join("bank").join(keys.first().unwrap())) {
+                    Ok(base)=>{report.count("stage_baseline_valid");base},Err(_)=>{report.uncertain("stage_baseline_unproven");continue;}
+                };
+                if crate::bank_changes::validate_cloud_chain(&stage.join("intents"),&baseline.udid,&baseline.card_hash).is_err() {report.uncertain("stage_history_invalid");}
+                else {report.count("stage_history_valid");}
+                let mut archive_found=false;let mut archive_bound=false;
+                for directory in ["quarantine","rejected-originals","cloud-import-evidence"] {
+                    let archive=root.join(directory).join(format!("{digest}.zip"));
+                    match fs::symlink_metadata(&archive) {
+                        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>continue,
+                        Err(_)=>{report.uncertain("archive_unreadable");continue;},Ok(_)=>archive_found=true,
+                    }
+                    let bytes=match budget.read(&archive,LIMIT) {Ok(bytes)=>bytes,Err(_)=>{report.uncertain("archive_unsafe_or_limited");continue;}};
+                    if !crate::bank_backup::sha256(&bytes).is_ok_and(|actual|actual==digest) {report.uncertain("archive_digest_mismatch");continue;}
+                    let (manifest,expected)=match parse_bundle(&bytes) {Ok(parsed)=>parsed,Err(_)=>{report.uncertain("archive_parse_invalid");continue;}};
+                    if manifest.udid!=baseline.udid || manifest.card_hash!=baseline.card_hash {report.uncertain("archive_identity_mismatch");continue;}
+                    if expected.iter().any(|(name,data)|files.get(name)!=Some(data)) {report.uncertain("archive_stage_missing_or_different");continue;}
+                    report.count("archive_bound_stage");archive_bound=true;
+                    if expected.len()!=files.len() {report.count("stage_additional_history");}
+                }
+                if !archive_found {report.uncertain("stage_without_archive");}
+                else if !archive_bound {report.uncertain("stage_without_valid_archive_binding");}
+                for (name,bytes) in files {
+                    let (prefix,tail)=name.split_once('/').unwrap();
+                    let destination=root.join(if prefix=="bank" {"bank-backups"} else {"bank-change-intents"}).join(tail);
+                    match fs::symlink_metadata(&destination) {
+                        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>{report.uncertain("destination_missing");continue;},
+                        Err(_)=>{report.uncertain("destination_unreadable");continue;},Ok(_)=>{},
+                    }
+                    match budget.read(&destination,32*1024*1024) {
+                        Ok(actual) if actual==bytes=>report.count("destination_exact"),
+                        Ok(_)=>report.uncertain("destination_different"),Err(_)=>report.uncertain("destination_unsafe_or_limited"),
+                    }
+                }
+            }
+        }
+        if !report.counts.contains_key("staging_directories") && !report.counts.contains_key("validated_directories") {report.uncertain("no_retained_stages");}
+        report
+    }
+    #[test] #[ignore="requires explicit authorized exhaustive read-only retained-stage diagnostic"]
+    fn diagnose_all_retained_stages_read_only() {
+        assert_eq!(std::env::var("WALLET_STUDIO_STAGE_DIAGNOSTIC").as_deref(),Ok("1"),"explicit diagnostic opt-in required");
+        assert!(std::env::var_os("WALLET_STUDIO_TEST_STORAGE_ROOT").is_none() && std::env::var_os("WALLET_STUDIO_TEST_FIXTURE").is_none(),"real read-only diagnostic must not use fixture overrides");
+        let report=audit_retained_stages_at(&crate::storage::root(),1000);
+        println!("{}",serde_json::json!({"result":"read_only_retained_stage_categories","scope":"retained_stages_only_no_recovery_authority","indeterminate":report.indeterminate,"counts":report.counts}));
+        // A positive result only describes compared evidence. It never grants
+        // recovery/phone authority, retires a lock or replaces authenticated sync.
+    }
+    fn audit_fixture_snapshot(root:&Path)->BTreeMap<std::path::PathBuf,Option<Vec<u8>>> {
+        fn visit(root:&Path,path:&Path,result:&mut BTreeMap<std::path::PathBuf,Option<Vec<u8>>>) {
+            for entry in fs::read_dir(path).unwrap() {let path=entry.unwrap().path();
+                if path.is_dir() {result.insert(path.strip_prefix(root).unwrap().into(),None);visit(root,&path,result);}
+                else {result.insert(path.strip_prefix(root).unwrap().into(),Some(fs::read(&path).unwrap()));}
+            }
+        }
+        let mut result=BTreeMap::new();visit(root,root,&mut result);result
+    }
+    #[test] fn retained_stage_audit_classifies_binding_missing_destinations_and_unknown_evidence_without_writes() {
+        let (source,_,bytes)=import_fixture();let digest=crate::bank_backup::sha256(&bytes).unwrap();let (manifest,files)=parse_bundle(&bytes).unwrap();
+        let target=fixture_root();let stage=target.join("cloud-staging").join(&digest);
+        materialize_inventory_archive(&stage,&manifest,&files).unwrap();
+        let before=audit_fixture_snapshot(&target);
+        let unbound=audit_retained_stages_at(&target,1000);assert_eq!(audit_fixture_snapshot(&target),before);assert!(unbound.indeterminate);assert_eq!(unbound.counts.get("stage_without_archive"),Some(&1));assert!(unbound.counts.contains_key("destination_missing"));
+        assert!(!target.join(".vault-operation.lock").exists());assert!(!target.join(".cloud-import.lock").exists());assert!(!target.join("card-review").exists());
+        crate::storage::write_new(&target.join("quarantine").join(format!("{digest}.zip")),&bytes).unwrap();
+        let partial=audit_retained_stages_at(&target,1000);assert!(partial.indeterminate);assert_eq!(partial.counts.get("archive_bound_stage"),Some(&1));
+        import_bundle(&target,&bytes).unwrap();
+        let before=audit_fixture_snapshot(&target);
+        let complete=audit_retained_stages_at(&target,1000);assert_eq!(audit_fixture_snapshot(&target),before);assert!(!complete.indeterminate);assert_eq!(complete.counts.get("staging_directories"),Some(&1));assert_eq!(complete.counts.get("validated_directories"),Some(&1));
+        let first=files.keys().next().unwrap().split_once('/').unwrap().1;let dest=target.join("bank-backups").join(first);
+        fs::write(&dest,b"synthetic changed destination").unwrap();
+        let changed=audit_retained_stages_at(&target,1000);assert!(changed.indeterminate);assert!(changed.counts.contains_key("destination_different"));
+        assert_eq!(fs::read(dest).unwrap(),b"synthetic changed destination");fs::remove_dir_all(target).unwrap();fs::remove_dir_all(source).unwrap();
+    }
+    #[test] fn retained_stage_audit_limits_malformed_archives_and_unsafe_stage_roots_are_indeterminate() {
+        let (source,_,bytes)=import_fixture();let digest=crate::bank_backup::sha256(&bytes).unwrap();let (manifest,files)=parse_bundle(&bytes).unwrap();
+        let target=fixture_root();let stage=target.join("cloud-validated").join(&digest);materialize_inventory_archive(&stage,&manifest,&files).unwrap();
+        crate::storage::write_new(&target.join("quarantine").join(format!("{digest}.zip")),b"synthetic invalid ZIP").unwrap();
+        let invalid=audit_retained_stages_at(&target,1000);assert!(invalid.indeterminate);assert_eq!(invalid.counts.get("archive_digest_mismatch"),Some(&1));
+        let limited=audit_retained_stages_at(&target,0);assert!(limited.indeterminate);assert_eq!(limited.counts.get("stage_inventory_unsafe_or_limited"),Some(&1));
+        fs::remove_dir_all(&stage).unwrap();crate::storage::write_new(&stage,b"not a directory").unwrap();
+        let unsafe_stage=audit_retained_stages_at(&target,1000);assert!(unsafe_stage.indeterminate);assert_eq!(unsafe_stage.counts.get("stage_unsafe_incomplete_or_limited"),Some(&1));
+        fs::remove_dir_all(target).unwrap();
+        let target=fixture_root();let malformed=b"synthetic invalid ZIP";let id=crate::bank_backup::sha256(malformed).unwrap();
+        let stage=target.join("cloud-staging").join(&id);materialize_inventory_archive(&stage,&manifest,&files).unwrap();
+        crate::storage::write_new(&target.join("rejected-originals").join(format!("{id}.zip")),malformed).unwrap();
+        let malformed=audit_retained_stages_at(&target,1000);assert!(malformed.indeterminate);assert_eq!(malformed.counts.get("archive_parse_invalid"),Some(&1));
+        let baseline=files.keys().find(|name|name.ends_with("/baseline.json")).unwrap();fs::write(stage.join(baseline),b"unknown identity").unwrap();
+        let unknown=audit_retained_stages_at(&target,1000);assert!(unknown.indeterminate);assert_eq!(unknown.counts.get("stage_baseline_unproven"),Some(&1));
+        fs::remove_dir_all(target).unwrap();fs::remove_dir_all(source).unwrap();
+    }
     #[test]
     #[ignore = "requires explicitly authorized read-only retained-import diagnostic"]
     fn diagnose_retained_imports_read_only() {
