@@ -25,6 +25,9 @@ pub fn hero(ui:&mut egui::Ui,logo:&egui::TextureHandle,compact:bool) {
     ui.add_space(if compact {16.0} else {24.0});
     if ui.available_height()<90.0 {return;}
     let width=ui.available_width().min(if compact {280.0} else {500.0}).min(((ui.available_height()-18.0)/0.61).max(1.0));
+    // Its painted captions use fixed font sizes. Hide optional artwork when
+    // space is tight instead of shrinking its card underneath those captions.
+    if width<280.0 {return;}
     let (rect,_)=ui.allocate_exact_size(egui::vec2(width,width*0.61+18.0),egui::Sense::hover());
     let card=egui::Rect::from_min_size(rect.min+egui::vec2(0.0,12.0),egui::vec2(width-18.0,width*0.61));
     ui.painter().add(crate::glass::gradient(card.translate(egui::vec2(14.0,-12.0)),20.0,egui::Color32::from_rgb(74,47,126),egui::Color32::from_rgb(26,31,61)));
@@ -143,6 +146,17 @@ pub fn notice(ui:&mut egui::Ui,text:&str,busy:bool) {
                     assert!(ui.min_rect().right()<=bounds.right()+1.0);
                 });
             });}
+        }
+    }
+    #[test] fn tight_hero_keeps_the_welcome_text_and_omits_fixed_size_card_captions() {
+        for (size,show_card) in [(egui::vec2(240.0,600.0),false),(egui::vec2(400.0,360.0),false),(egui::vec2(400.0,600.0),true)] {
+            let ctx=egui::Context::default();let logo=ctx.load_texture("hero-caption-logo",egui::ColorImage::filled([1,1],egui::Color32::WHITE),egui::TextureOptions::LINEAR);
+            let input=egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size)),..Default::default()};
+            let output=ctx.run(input,|ctx| {egui::CentralPanel::default().show(ctx,|ui|hero(ui,&logo,true));});
+            let has_text=|needle:&str|output.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(text) if text.galley.job.text.contains(needle)));
+            assert!(has_text("Tu Wallet."));assert!(has_text("Tus originales"));
+            assert_eq!(has_text("Hecha para ti."),show_card,"optional artwork at {size:?}");
+            assert_eq!(has_text("DISEÑA · GUARDA · PERSONALIZA"),show_card);
         }
     }
 
