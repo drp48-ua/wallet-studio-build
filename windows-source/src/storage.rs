@@ -118,6 +118,13 @@ pub fn root()->PathBuf {
     local_folder().join("WalletStudio")
 }
 
+/// Account-only recovery data is kept outside the original evidence vault.
+pub(crate) fn account_recovery_root_at(vault:&Path)->Result<PathBuf> {
+    let path=vault.parent().context("account storage parent missing")?.join(format!("{}-AccountRecovery",vault.file_name().context("vault name missing")?.to_string_lossy()));
+    safe_chain(&path)?;Ok(path)
+}
+pub(crate) fn account_recovery_root()->Result<PathBuf> {account_recovery_root_at(&root())}
+
 pub fn ensure_ready()->Result<()> {
     ensure_ready_at(&root())
 }

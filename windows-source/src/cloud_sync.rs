@@ -36,6 +36,42 @@ fn normalized_server(value:&str)->Result<String> {
     Ok(format!("{scheme}://{host}{}{}",port.map(|p|format!(":{p}")).unwrap_or_default(),path.trim_end_matches('/')))
 }
 pub fn valid_server(url:&str)->bool { normalized_server(url).is_ok() }
+// Provider-only transport migration. The account/vault/cache identity remains
+// canonical; only the final HTTP destination is substituted at compile time.
+fn strict_provider_endpoint(url:&str)->Result<String> {
+    let normalized=normalized_server(url)?;
+    let authority=url.strip_prefix("https://").context("provider transport requires HTTPS")?.split('/').next().unwrap_or_default().to_ascii_lowercase();
+    anyhow::ensure!(!authority.contains(':') && authority!="localhost" && !authority.ends_with(".localhost")
+        && !authority.bytes().all(|byte|byte.is_ascii_digit() || byte==b'.'),"provider transport host invalid");
+    Ok(normalized)
+}
+fn route_account_url(url:&str,canonical:Option<&str>,transport:Option<&str>)->Result<String> {
+    // Even the unchanged path rejects userinfo/query/fragment/traversal.
+    normalized_server(url)?;
+    if transport.is_none() && canonical.is_none() {return Ok(url.into());}
+    let canonical=canonical.context("canonical account service missing")?;
+    let origin=if transport.is_some() {strict_provider_endpoint(canonical)?} else {normalized_server(canonical)?};
+    let normalized=normalized_server(url)?;
+    let tail=normalized.strip_prefix(&origin).context("account request does not match canonical service")?;
+    anyhow::ensure!(tail.starts_with("/v1/") && !tail.starts_with("//"),"account request outside canonical API");
+    if let Some(transport)=transport {Ok(format!("{}{tail}",strict_provider_endpoint(transport)?))} else {Ok(url.into())}
+}
+fn account_request_url(url:&str)->Result<String> {
+    route_account_url(url,option_env!("WALLET_STUDIO_CLOUD_URL"),option_env!("WALLET_STUDIO_CLOUD_TRANSPORT_URL"))
+}
+pub(crate) fn account_http_request(method:&str,url:&str,headers:&[(String,String)],body:&[u8],maximum:usize)->Result<Vec<u8>> {
+    crate::auto_update::http_request(method,&account_request_url(url)?,headers,body,maximum)
+}
+fn account_http_request_with_budget(method:&str,url:&str,headers:&[(String,String)],body:&[u8],maximum:usize,budget:std::time::Duration)->Result<Vec<u8>> {
+    crate::auto_update::http_request_with_budget(method,&account_request_url(url)?,headers,body,maximum,budget)
+}
+fn account_http_download_bundle(url:&str,headers:&[(String,String)],maximum:usize)->Result<Vec<u8>> {
+    crate::auto_update::http_download_bundle(&account_request_url(url)?,headers,maximum)
+}
+fn account_http_download_bundle_with_budget(url:&str,headers:&[(String,String)],maximum:usize,budget:std::time::Duration)->Result<Vec<u8>> {
+    crate::auto_update::http_download_bundle_with_budget(&account_request_url(url)?,headers,maximum,budget)
+}
+
 
 fn owner_for(session:&Session)->Result<VaultOwner> {
     anyhow::ensure!(!session.user_id.is_empty() && session.user_id.len()<=64 && session.user_id.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-'),"cloud owner identity invalid");
@@ -445,7 +481,19 @@ where L: FnMut(&str) {
 
 pub fn load_session()->Result<Option<Session>> {
     if crate::storage::is_demo() { return Ok(None); }
-    load_session_at(&crate::storage::root())
+    let root=crate::storage::root();
+    if crate::storage::ensure_ready().is_err() {return load_recovery_session_at(&root);}
+    load_session_at(&root)
+}
+fn load_recovery_session_at(root:&Path)->Result<Option<Session>> {
+    let session=load_session_at(&crate::storage::account_recovery_root_at(root)?)?;
+    if let Some(session)=&session {require_owner_at(root,session)?;read_computer_id_at(root)?;}
+    Ok(session)
+}
+fn persist_recovery_session_at(root:&Path,session:&Session)->Result<()> {
+    require_owner_at(root,session)?;read_computer_id_at(root)?;
+    let account=crate::storage::account_recovery_root_at(root)?;
+    crate::storage::write_mutable(&account.join("cloud-session.dpapi"),&protect(&serde_json::to_vec(session)?,false)?)
 }
 fn load_session_at(root:&Path)->Result<Option<Session>> {
     let path=root.join("cloud-session.dpapi"); crate::storage::safe_chain(&path)?; if !path.exists() { return Ok(None); }
@@ -467,7 +515,7 @@ pub fn start_activation(server:&str,email:&str)->Result<()> {
 pub fn start_email_code(server:&str,email:&str,recover:bool)->Result<()> {
     require_service(server)?;
     let body=serde_json::to_vec(&serde_json::json!({"email":email,"purpose":if recover {"recover"} else {"activate"}}))?;
-    crate::auto_update::http_request("POST",&format!("{}/v1/auth/start",normalized_server(server)?),&[("Content-Type".into(),"application/json".into())],&body,65536)?;Ok(())
+    account_http_request("POST",&format!("{}/v1/auth/start",normalized_server(server)?),&[("Content-Type".into(),"application/json".into())],&body,65536)?;Ok(())
 }
 pub fn activate(server:&str,email:&str,code:&str,password:&str,confirmation:&str,consent:bool)->Result<Session> {
     anyhow::ensure!(password==confirmation && (12..=128).contains(&password.chars().count()),"Las contraseñas deben coincidir y tener entre 12 y 128 caracteres");
@@ -487,10 +535,10 @@ fn require_service(server:&str)->Result<()> {
 pub fn account_app_license(session:&Session)->Result<bool> {
     require_service(&session.server)?;
     let headers=[("Authorization".into(),format!("Bearer {}",session.access_token))];
-    let result=crate::auto_update::http_request("GET",&format!("{}/v1/auth/account",session.server),&headers,&[],65536);
+    let result=account_http_request("GET",&format!("{}/v1/auth/account",session.server),&headers,&[],65536);
     let bytes=match result {
         Err(error) if error.downcast_ref::<crate::auto_update::HttpStatus>().is_some_and(|status|status.0==404)=>
-            crate::auto_update::http_request("GET",&format!("{}/v1/auth/session",session.server),&headers,&[],65536)?,
+            account_http_request("GET",&format!("{}/v1/auth/session",session.server),&headers,&[],65536)?,
         result=>result?,
     };
     parse_account_license(session,&bytes)
@@ -538,8 +586,8 @@ pub fn require_access()->Result<()> {
 pub fn registered_computers(session:&Session)->Result<Vec<RegisteredComputer>> {
     require_service(&session.server)?;
     let headers=[("Authorization".into(),format!("Bearer {}",session.access_token))];
-    let result=crate::auto_update::http_request("GET",&format!("{}/v1/auth/account",session.server),&headers,&[],65536);
-    let bytes=match result {Err(error) if error.downcast_ref::<crate::auto_update::HttpStatus>().is_some_and(|status|status.0==404)=>crate::auto_update::http_request("GET",&format!("{}/v1/auth/session",session.server),&headers,&[],65536)?,result=>result?};
+    let result=account_http_request("GET",&format!("{}/v1/auth/account",session.server),&headers,&[],65536);
+    let bytes=match result {Err(error) if error.downcast_ref::<crate::auto_update::HttpStatus>().is_some_and(|status|status.0==404)=>account_http_request("GET",&format!("{}/v1/auth/session",session.server),&headers,&[],65536)?,result=>result?};
     #[derive(Deserialize)] struct Reply {devices:Vec<RegisteredComputer>}
     let mut reply:Reply=serde_json::from_slice(&bytes)?;anyhow::ensure!(reply.devices.len()<=3 && reply.devices.iter().all(|d|d.id.len()==64 && d.id.bytes().all(|b|b.is_ascii_hexdigit())),"Inventario de equipos no válido");
     let current=computer_id()?;for device in &mut reply.devices {device.current=device.id==current;}Ok(reply.devices)
@@ -547,15 +595,21 @@ pub fn registered_computers(session:&Session)->Result<Vec<RegisteredComputer>> {
 pub fn revoke_computer(session:&Session,id:&str)->Result<()> {
     require_service(&session.server)?;
     let body=serde_json::to_vec(&serde_json::json!({"device_id":id}))?;
-    crate::auto_update::http_request("POST",&format!("{}/v1/auth/devices/revoke",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("Content-Type".into(),"application/json".into())],&body,65536)?;Ok(())
+    account_http_request("POST",&format!("{}/v1/auth/devices/revoke",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("Content-Type".into(),"application/json".into())],&body,65536)?;Ok(())
 }
 pub fn forget_session()->Result<()> {
+    if crate::storage::ensure_ready().is_err() {
+        let path=crate::storage::account_recovery_root()?.join("cloud-session.dpapi");crate::storage::safe_chain(&path)?;
+        if path.exists() {fs::remove_file(path)?;}return Ok(());
+    }
     let _lease=crate::storage::operation_lease_for_import(&crate::storage::root())?;
     let path=crate::storage::root().join("cloud-session.dpapi");crate::storage::safe_chain(&path)?;
     if path.exists() {fs::remove_file(path)?;}Ok(())
 }
 pub fn forget_rejected_session(rejected:&Session)->Result<()> {
-    forget_rejected_session_at(&crate::storage::root(),rejected)
+    let root=crate::storage::root();
+    if crate::storage::ensure_ready().is_err() {return forget_rejected_session_at(&crate::storage::account_recovery_root_at(&root)?,rejected);}
+    forget_rejected_session_at(&root,rejected)
 }
 fn forget_rejected_session_at(root:&Path,rejected:&Session)->Result<()> {
     let _lease=crate::storage::operation_lease_for_import(root)?;
@@ -565,8 +619,20 @@ fn forget_rejected_session_at(root:&Path,rejected:&Session)->Result<()> {
     }
     Ok(())
 }
+pub(crate) fn recovery_account_available(server:&str)->bool {
+    let root=crate::storage::root();
+    normalized_server(server).ok().is_some_and(|server|load_owner_at(&root).ok().flatten().is_some_and(|owner|owner.server==server)) && read_computer_id_at(&root).is_ok()
+}
+fn read_computer_id_at(root:&Path)->Result<String> {
+    let path=root.join("computer-id.dpapi");crate::storage::safe_chain(&path)?;
+    let meta=fs::symlink_metadata(&path)?;anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=65536,"Identidad del equipo requiere revisión; no se registrará otro equipo");
+    let id=String::from_utf8(protect(&fs::read(path)?,true)?)?;
+    anyhow::ensure!(id.len()==64 && id.bytes().all(|b|b.is_ascii_hexdigit()),"Identidad de equipo no válida");Ok(id)
+}
 fn computer_id()->Result<String> {
-    let root=crate::storage::root();crate::storage::safe_chain(&root)?;fs::create_dir_all(&root)?;
+    let root=crate::storage::root();
+    if crate::storage::ensure_ready().is_err() {return read_computer_id_at(&root);}
+    crate::storage::safe_chain(&root)?;fs::create_dir_all(&root)?;
     let _lease=crate::storage::operation_lease_for_import(&root)?;
     let path=root.join("computer-id.dpapi");crate::storage::safe_chain(&path)?;
     if !path.exists() {
@@ -584,17 +650,24 @@ fn computer_id()->Result<String> {
 fn finish_login(server:&str,body:serde_json::Value,operation:&str,initial_link_consent:bool)->Result<Session> {
     require_service(server)?;
     anyhow::ensure!(!crate::storage::is_demo(),"demo has no account network");
-    let server=normalized_server(server)?; let root=crate::storage::root();
+    let root=crate::storage::root();
+    finish_login_at(&root,crate::storage::ensure_ready().is_ok(),server,body,operation,initial_link_consent,&mut |url,body|account_http_request("POST",url,&[("Content-Type".into(),"application/json".into())],body,65536))
+}
+fn finish_login_at(root:&Path,ready:bool,server:&str,body:serde_json::Value,operation:&str,initial_link_consent:bool,request:&mut dyn FnMut(&str,&[u8])->Result<Vec<u8>>)->Result<Session> {
+    let server=normalized_server(server)?;
     if let Some(owner)=load_owner_at(&root)? { if owner.server!=server { return Err(DifferentVaultOwner.into()); } }
-    else { anyhow::ensure!(initial_link_consent,"Confirma la vinculación de todas las copias locales"); }
+    else { anyhow::ensure!(ready && initial_link_consent,"Las copias requieren revision; no se vinculara una cuenta nueva"); }
+    if !ready {read_computer_id_at(root)?;}
     let body=serde_json::to_vec(&body)?;
-    let bytes=crate::auto_update::http_request("POST",&format!("{server}/v1/auth/{operation}"),&[("Content-Type".into(),"application/json".into())],&body,65536)?;
+    let bytes=request(&format!("{server}/v1/auth/{operation}"),&body)?;
     #[derive(Deserialize)] struct Reply { access_token:String,user_id:String }
     let reply:Reply=serde_json::from_slice(&bytes)?;
     anyhow::ensure!(!reply.access_token.is_empty() && reply.access_token.len()<=8192 && reply.access_token.bytes().all(|b|(0x21..=0x7e).contains(&b)) &&
         !reply.user_id.is_empty() && reply.user_id.len()<=64 && reply.user_id.bytes().all(|b| b.is_ascii_alphanumeric() || b==b'-'),"invalid account response");
     let session=Session { server,access_token:reply.access_token,user_id:reply.user_id };
+    if !ready {persist_recovery_session_at(&root,&session)?;return Ok(session);}
     let _lease=crate::storage::operation_lease_for_import(&root)?;
+    crate::storage::ensure_ready()?;
     bind_owner_at(&root,&session,initial_link_consent)?;
     let encrypted=protect(&serde_json::to_vec(&session)?,false)?;
     let path=root.join("cloud-session.dpapi"); crate::storage::write_mutable(&path,&encrypted)?; Ok(session)
@@ -701,8 +774,8 @@ pub fn synchronize_report_progress(session:&Session,mut progress:impl FnMut(&'st
     let root=crate::storage::root();
     synchronize_owned_report(&root,session,&mut progress,&mut |method,url,headers,body,max| {
         if method=="GET" && max==LIMIT {
-            crate::auto_update::http_download_bundle(url,headers,max)
-        } else {crate::auto_update::http_request(method,url,headers,body,max)}
+            account_http_download_bundle(url,headers,max)
+        } else {account_http_request(method,url,headers,body,max)}
     })
 }
 // A fresh authenticated inventory still controls eligibility. This cache is
@@ -1079,10 +1152,10 @@ pub(crate) fn prepare_remote_recovery(session:&Session,udid:&str,hash:&str,mut p
     let remaining=||deadline.checked_duration_since(std::time::Instant::now()).filter(|d|!d.is_zero()).ok_or_else(||anyhow::Error::new(crate::auto_update::RequestTimeout));
     require_service(&session.server)?;progress("Verificando cuenta para recuperar el original…");
     let headers=vec![("Authorization".into(),format!("Bearer {}",session.access_token))];
-    let result=crate::auto_update::http_request_with_budget("GET",&format!("{}/v1/auth/account",session.server),&headers,&[],65536,remaining()?);
+    let result=account_http_request_with_budget("GET",&format!("{}/v1/auth/account",session.server),&headers,&[],65536,remaining()?);
     let auth=match result {
         Err(error) if error.downcast_ref::<crate::auto_update::HttpStatus>().is_some_and(|status|status.0==404)=>
-            crate::auto_update::http_request_with_budget("GET",&format!("{}/v1/auth/session",session.server),&headers,&[],65536,remaining()?)?,
+            account_http_request_with_budget("GET",&format!("{}/v1/auth/session",session.server),&headers,&[],65536,remaining()?)?,
         result=>result?,
     };
     anyhow::ensure!(parse_account_license(session,&auth)?,SessionRejected);crate::storage::ensure_ready()?;
@@ -1091,8 +1164,8 @@ pub(crate) fn prepare_remote_recovery(session:&Session,udid:&str,hash:&str,mut p
     progress("Revisando inventario y evidencia inmutable de la cuenta…");
     let proof=prepare_remote_recovery_at(&root,session,&baseline,&mut |method,url,headers,body,max| {
         let budget=remaining()?;
-        if method=="GET" && max==LIMIT {progress("Descargando y verificando evidencia de recuperación…");crate::auto_update::http_download_bundle_with_budget(url,headers,max,budget)}
-        else {crate::auto_update::http_request_with_budget(method,url,headers,body,max,budget)}
+        if method=="GET" && max==LIMIT {progress("Descargando y verificando evidencia de recuperación…");account_http_download_bundle_with_budget(url,headers,max,budget)}
+        else {account_http_request_with_budget(method,url,headers,body,max,budget)}
     })?;
     remaining()?;progress("Evidencia de cuenta verificada; todavía no se ha restaurado el iPhone.");Ok(proof)
 }
@@ -1396,7 +1469,7 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         }
         let headers = [("Authorization".to_owned(), format!("Bearer {}", session.access_token))];
         let started = std::time::Instant::now();
-        let inventory = match crate::auto_update::http_request(
+        let inventory = match account_http_request(
             "GET", &format!("{}/v1/bundles", session.server), &headers, &[], 1024 * 1024,
         ) {
             Ok(bytes) => bytes,
@@ -1424,7 +1497,7 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         if let Some(index) = largest {
             let entry = &listing.bundles[index];
             let started = std::time::Instant::now();
-            let result = match crate::auto_update::http_download_bundle(
+            let result = match account_http_download_bundle(
                 &format!("{}/v1/bundles/{}", session.server, entry.id), &headers, LIMIT,
             ) {
                 Ok(bundle) => {
@@ -1495,6 +1568,62 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         crate::storage::write_new(&root.join("vault-owner.json"),b"damaged owner evidence").unwrap();
         assert!(!missing_original_capture_allowed(account_expected_at(&root,""),false));
         assert!(missing_original_capture_allowed(account_expected_at(&root,""),true));fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn provider_transport_routes_only_exact_canonical_api_without_changing_identity() {
+        let canonical="https://wallet-studio-accounts.onrender.com";
+        let transport="https://synthetic-new.example.test/proxy";
+        for path in ["/v1/auth/login","/v1/auth/start","/v1/auth/account","/v1/auth/devices/revoke","/v1/bundles/abc123","/v1/designs/ws-001/thumbnail"] {
+            assert_eq!(route_account_url(&format!("{canonical}{path}"),Some(canonical),Some(transport)).unwrap(),format!("{transport}{path}"));
+            assert_eq!(route_account_url(&format!("{canonical}{path}"),Some(canonical),None).unwrap(),format!("{canonical}{path}"));
+        }
+        let session=Session {server:canonical.into(),user_id:"fixture-owner".into(),access_token:"synthetic-token".into()};
+        let before=owner_for(&session).unwrap();route_account_url(&format!("{canonical}/v1/auth/account"),Some(canonical),Some(transport)).unwrap();
+        assert_eq!(owner_for(&session).unwrap(),before);assert_eq!(session.server,canonical);
+        assert_eq!(route_account_url("https://canonical.example.test/base/v1/bundles/id",Some("https://canonical.example.test/base"),Some(transport)).unwrap(),format!("{transport}/v1/bundles/id"));
+    }
+    #[test] fn provider_transport_rejects_wrong_origin_runtime_hosts_and_unsafe_configuration() {
+        let canonical="https://canonical.example.test";let transport="https://synthetic-new.example.test";
+        for url in ["https://canonical.example.test.evil/v1/auth/login","https://another.example.test/v1/auth/login","https://canonical.example.test/v1/auth/login?token=secret","https://user@canonical.example.test/v1/auth/login","https://canonical.example.test/v1/../login","https://canonical.example.test/v1/auth/login#fragment","https://canonical.example.test/health","https://canonical.example.test//v1/auth/login"] {
+            assert!(route_account_url(url,Some(canonical),Some(transport)).is_err());
+        }
+        for bad in ["","http://new.example.test","https://localhost","https://127.0.0.1","https://0.0.0.0","https://test.localhost","https://LOCALHOST","https://TEST.LocalHost","https://new.example.test:443","https://user@new.example.test","https://new.example.test?x=y","https://new.example.test#x","https://new.example.test/../x"] {
+            assert!(route_account_url(&format!("{canonical}/v1/auth/login"),Some(canonical),Some(bad)).is_err());
+        }
+        assert!(route_account_url(&format!("{canonical}/v1/auth/login"),None,Some(transport)).is_err());
+        assert!(route_account_url("https://another.example.test/v1/auth/login",Some(canonical),None).is_err());
+        assert_eq!(route_account_url("http://127.0.0.1:1234/v1/auth/login",None,None).unwrap(),"http://127.0.0.1:1234/v1/auth/login");
+    }
+    #[test] fn recovery_login_reuses_exact_identity_and_never_changes_blocked_vault_or_owner() {
+        let root=fixture_root();fs::create_dir_all(&root).unwrap();
+        let session=Session {server:"https://synthetic.example.test".into(),user_id:"fixture-owner".into(),access_token:"old-token".into()};
+        bind_owner_at(&root,&session,true).unwrap();let id="a".repeat(64);
+        crate::storage::write_new(&root.join("computer-id.dpapi"),&protect(id.as_bytes(),false).unwrap()).unwrap();
+        crate::storage::write_new(&root.join("cloud-session.dpapi"),&protect(&serde_json::to_vec(&session).unwrap(),false).unwrap()).unwrap();
+        crate::storage::write_new(&root.join(".cloud-import.lock"),b"").unwrap();
+        let before=audit_fixture_snapshot(&root);assert_eq!(read_computer_id_at(&root).unwrap(),id);
+        assert!(load_recovery_session_at(&root).unwrap().is_none(),"no fallback to the original session");
+        let response=br#"{"access_token":"synthetic-new-token","user_id":"fixture-owner"}"#.to_vec();
+        for operation in ["login","activate","recover"] {
+            let result=finish_login_at(&root,false,&session.server,serde_json::json!({"device_id":id}),operation,true,&mut |_,body| {
+                assert_eq!(serde_json::from_slice::<serde_json::Value>(body).unwrap()["device_id"],id);Ok(response.clone())
+            }).unwrap();
+            assert_eq!(load_recovery_session_at(&root).unwrap().unwrap().access_token,result.access_token);
+            assert_eq!(audit_fixture_snapshot(&root),before);
+        }
+        assert!(finish_login_at(&root,false,&session.server,serde_json::json!({}),"login",true,&mut |_,_|Ok(br#"{"access_token":"foreign-token","user_id":"another-owner"}"#.to_vec())).is_err());
+        assert_eq!(audit_fixture_snapshot(&root),before);
+        let rejected=anyhow::Error::from(SessionRejected);assert!(!authenticated_after_sync_failure(&rejected,true));assert!(!retained_session_after_failure(&rejected));
+        let different=Session {user_id:"another-owner".into(),..session.clone()};assert!(persist_recovery_session_at(&root,&different).is_err());
+        fs::remove_dir_all(crate::storage::account_recovery_root_at(&root).unwrap()).unwrap();fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn recovery_login_unknown_owner_or_computer_never_sends_or_adopts_even_with_consent() {
+        for missing_owner in [false,true] {
+            let root=fixture_root();fs::create_dir_all(&root).unwrap();
+            if !missing_owner {bind_owner_at(&root,&Session {server:"https://synthetic.example.test".into(),user_id:"fixture-owner".into(),access_token:"fixture-token".into()},true).unwrap();}
+            crate::storage::write_new(&root.join(".cloud-import.lock"),b"").unwrap();let before=audit_fixture_snapshot(&root);let mut sent=false;
+            assert!(finish_login_at(&root,false,"https://synthetic.example.test",serde_json::json!({}),"login",true,&mut |_,_|{sent=true;Ok(Vec::new())}).is_err());
+            assert!(!sent);assert_eq!(audit_fixture_snapshot(&root),before);assert!(!crate::storage::account_recovery_root_at(&root).unwrap().exists());fs::remove_dir_all(root).unwrap();
+        }
     }
     fn fixture_root()->std::path::PathBuf { std::env::temp_dir().join(format!("ws-cloud-fixture-{}",crate::flasher::generate_token())) }
     pub(crate) fn fixture_baseline()->crate::bank_backup::Baseline {
@@ -2158,7 +2287,7 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         assert_eq!(std::env::var("WALLET_STUDIO_TEST_FIXTURE").as_deref(),Ok("1"));
         let server=std::env::var("WALLET_STUDIO_INTEGRATION_URL").expect("fixture server required");
         assert!(server.starts_with("http://127.0.0.1:") && valid_server(&server));
-        assert!(crate::auto_update::http_request("GET",&format!("{server}/__fixture_redirect"),&[("Authorization".into(),"Bearer synthetic-redirect-probe".into())],&[],65536).is_err(),"redirects must not forward account headers to the health endpoint");
+        assert!(account_http_request("GET",&format!("{server}/__fixture_redirect"),&[("Authorization".into(),"Bearer synthetic-redirect-probe".into())],&[],65536).is_err(),"redirects must not forward account headers to the health endpoint");
         let base=fixture_root(); let a=base.join("a");let b=base.join("b");let c=base.join("c");
         fn set_root(path:&Path) { unsafe {std::env::set_var("WALLET_STUDIO_TEST_STORAGE_ROOT",path);} }
         set_root(&a);let computer_a=computer_id().unwrap();assert_eq!(computer_a.len(),64);assert_eq!(computer_id().unwrap(),computer_a);assert_ne!(computer_a,"0".repeat(64));

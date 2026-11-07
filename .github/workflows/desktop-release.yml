@@ -45,6 +45,7 @@ jobs:
           WALLET_STUDIO_BUILD_ID: ${{ github.run_number }}
           WALLET_STUDIO_RELEASE_CHANNEL: 'enabled'
           WALLET_STUDIO_CLOUD_URL: ${{ vars.WALLET_STUDIO_CLOUD_URL }}
+          WALLET_STUDIO_CLOUD_TRANSPORT_URL: 'https://wallet-studio-accounts-v2.onrender.com'
         run: ./scripts/build-windows.ps1
       - name: Validate real cloud client with temporary synthetic accounts
         shell: pwsh

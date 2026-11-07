@@ -3,8 +3,8 @@ use crate::app::md3;
 
 pub const CODE_LIFETIME:u64=600;
 pub const RESEND_COOLDOWN:u64=60;
-pub fn actions_available(configured:bool,storage_ready:bool,busy:bool,demo:bool)->bool {
-    configured && storage_ready && !busy && !demo
+pub fn actions_available(configured:bool,_storage_ready:bool,busy:bool,demo:bool)->bool {
+    configured && !busy && !demo
 }
 pub fn remaining(started:Option<std::time::Instant>,now:std::time::Instant,limit:u64)->u64 {
     started.map(|instant|limit.saturating_sub(now.saturating_duration_since(instant).as_secs())).unwrap_or(0)
@@ -99,9 +99,9 @@ pub fn notice(ui:&mut egui::Ui,text:&str,busy:bool) {
 }
 
 #[cfg(test)] mod tests {
-    #[test] fn startup_actions_enable_only_after_successful_preparation_and_remain_gated_while_busy() {
+    #[test] fn account_actions_remain_available_during_storage_review_and_gated_while_busy() {
         assert!(!super::actions_available(true,false,true,false));
-        assert!(!super::actions_available(true,false,false,false));
+        assert!(super::actions_available(true,false,false,false));
         assert!(super::actions_available(true,true,false,false));
         assert!(!super::actions_available(true,true,true,false));
         assert!(!super::actions_available(false,true,false,false));
