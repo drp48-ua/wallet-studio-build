@@ -385,6 +385,156 @@ fn import_bundle_with_hook(root:&Path,bytes:&[u8],hook:&mut dyn FnMut(ImportPhas
     result
 }
 
+// Inactive proof builder. No UI or marker-retirement API consumes this plan.
+// A later transaction must revalidate its exact inventory under exclusive lease.
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+struct LegacyFileProof {size:u64,sha256:String,directory:bool}
+#[derive(Debug)]
+pub(crate) struct LegacyImportRecoveryPlan {
+    root:std::path::PathBuf,
+    inventory:BTreeMap<String,LegacyFileProof>,
+    complete:std::collections::BTreeSet<(String,String)>,
+    review:std::collections::BTreeSet<(String,String)>,
+}
+impl LegacyImportRecoveryPlan {
+    pub(crate) fn counts(&self)->(usize,usize) {(self.complete.len(),self.review.len())}
+    fn revalidate(&self)->Result<()> {
+        crate::storage::ensure_operation_idle_at(&self.root)?;
+        anyhow::ensure!(legacy_inventory(&self.root)?==self.inventory,"El inventario cambió; conserva el bloqueo de importación");Ok(())
+    }
+}
+fn legacy_children(path:&Path)->Result<Vec<std::path::PathBuf>> {
+    crate::storage::safe_chain(path)?;
+    if !path.exists() {return Ok(Vec::new());}
+    anyhow::ensure!(fs::symlink_metadata(path)?.is_dir(),"Directorio de evidencia inválido");
+    let mut out=Vec::new();for entry in fs::read_dir(path)?.take(1001) {anyhow::ensure!(out.len()<1000,"Inventario de evidencia demasiado grande");let path=entry?.path();crate::storage::safe_chain(&path)?;out.push(path);}Ok(out)
+}
+fn legacy_inventory(root:&Path)->Result<BTreeMap<String,LegacyFileProof>> {
+    fn visit(root:&Path,path:&Path,out:&mut BTreeMap<String,LegacyFileProof>,remaining:&mut u64)->Result<()> {
+        crate::storage::safe_chain(path)?;let before=fs::symlink_metadata(path)?;
+        anyhow::ensure!(out.len()<10000,"Límite del inventario original excedido");
+        let name=path.strip_prefix(root)?.to_str().context("Nombre de evidencia inválido")?.replace('\\',"/");
+        if before.is_dir() {out.insert(name,LegacyFileProof{size:0,sha256:String::new(),directory:true});for child in legacy_children(path)? {visit(root,&child,out,remaining)?;}}
+        else {
+            anyhow::ensure!(before.is_file() && before.len()<=LIMIT as u64 && before.len()<=*remaining,"Archivo original fuera de límites");*remaining-=before.len();
+            let mut bytes=Vec::new();fs::File::open(path)?.take(before.len()+1).read_to_end(&mut bytes)?;
+            let after=fs::symlink_metadata(path)?;
+            anyhow::ensure!(bytes.len() as u64==before.len() && after.len()==before.len() && after.modified()?==before.modified()?,"La evidencia cambió durante la lectura");
+            out.insert(name,LegacyFileProof{size:before.len(),sha256:crate::bank_backup::sha256(&bytes)?,directory:false});
+        }Ok(())
+    }
+    let mut out=BTreeMap::new();let mut remaining=2u64*1024*1024*1024;
+    for entry in legacy_children(root)? {
+        let name=entry.file_name().and_then(|n|n.to_str()).context("Nombre de almacén inválido")?;
+        if matches!(name,"design-library"|"updates"|"apple-setup"|"cloud-seen"|"settings.json") {continue;}
+        anyhow::ensure!(matches!(name,"bank-backups"|"bank-change-intents"|"cloud-staging"|"cloud-validated"|"original-review-evidence"|"quarantine"|"rejected-originals"|"cloud-import-evidence"|"wallet-export-recovery"|"wallet-backups"|"transport-probe-recovery"|"card-review"|"lock-recovery"|".cloud-import.lock"|".vault-operation.lock"|"vault-owner.json"|"cloud-session.dpapi"|"computer-id.dpapi"|"cards.json"),"Hay evidencia no clasificada; no se retirará el bloqueo global");
+        if name!=".vault-operation.lock" {visit(root,&entry,&mut out,&mut remaining)?;}
+    }Ok(out)
+}
+fn legacy_evidence_files(directory:&Path,prefix:&str)->Result<BTreeMap<String,Vec<u8>>> {
+    let mut files=BTreeMap::new();
+    for child in legacy_children(directory)? {
+        let key=child.file_name().and_then(|n|n.to_str()).context("Clave de evidencia inválida")?;
+        files_in(&child,&format!("{prefix}/{key}"),&mut files)?;
+    }
+    anyhow::ensure!(files.values().map(Vec::len).sum::<usize>()<=LIMIT,"Evidencia expandida fuera de límites");Ok(files)
+}
+fn legacy_baseline(path:&Path)->Result<(crate::bank_backup::Baseline,bool)> {
+    match crate::bank_backup::validate_bundle_directory(path) {
+        Ok(base)=>Ok((base,false)),Err(error)=>match error.downcast_ref::<crate::bank_backup::UnprovenOriginal>() {
+            Some(unproven)=>Ok((unproven.evidence().clone(),true)),None=>Err(error),
+        }
+    }
+}
+fn legacy_history_review(path:&Path,id:&(String,String))->Result<bool> {
+    for operation in legacy_children(path)? {
+        let operation_id=operation.file_name().and_then(|n|n.to_str()).context("Operación inválida")?;
+        anyhow::ensure!(crate::bank_changes::operation_identity(&operation)?==*id,"Identidad de historial desconocida");
+        // This independently checks every payload, revision, immutable field,
+        // contiguous revision number and permitted transition, without writes.
+        crate::bank_changes::recovery_evidence_at(path,operation_id,&id.0,&id.1)?;
+    }
+    match crate::bank_changes::cloud_operation_dirs(path,&id.0,&id.1) {
+        Ok(_)=>Ok(false),Err(error) if error.downcast_ref::<crate::bank_changes::PendingCloudHistory>().is_some()
+            || error.downcast_ref::<crate::bank_changes::OverlappingCloudHistory>().is_some()=>Ok(true),Err(error)=>Err(error),
+    }
+}
+pub(crate) fn build_legacy_import_recovery_plan(root:&Path)->Result<LegacyImportRecoveryPlan> {
+    crate::storage::ensure_operation_idle_at(root)?;
+    let marker=root.join(".cloud-import.lock");crate::storage::safe_chain(&marker)?;
+    let marker_meta=fs::symlink_metadata(&marker)?;anyhow::ensure!(marker_meta.is_file() && marker_meta.len()==0,"Solo se admite el marcador antiguo vacío");
+    let inventory=legacy_inventory(root)?;
+    // Legacy payloads without exact device/card provenance are not silently
+    // excluded from the authority audit. A separate reviewed adapter is needed.
+    for area in ["wallet-backups","transport-probe-recovery"] {anyhow::ensure!(legacy_children(&root.join(area))?.is_empty(),"Las copias antiguas requieren una revisión independiente");}
+    let mut complete=std::collections::BTreeSet::new();let mut review=std::collections::BTreeSet::new();
+    let mut stage_records:BTreeMap<String,Vec<((String,String),BTreeMap<String,Record>,bool)>>=BTreeMap::new();
+    for bank in legacy_children(&root.join("bank-backups"))? {
+        let prefix=format!("bank/{}",bank.file_name().unwrap().to_string_lossy());let mut files=BTreeMap::new();files_in(&bank,&prefix,&mut files)?;
+        let (base,unproven)=legacy_baseline(&bank)?;let id=(base.udid,base.card_hash);
+        complete.insert(id.clone());if unproven {review.insert(id);}
+    }
+    for area in ["cloud-staging","cloud-validated","original-review-evidence"] {
+        for stage in legacy_children(&root.join(area))? {
+            let digest=stage.file_name().and_then(|n|n.to_str()).context("Preparación inválida")?;
+            anyhow::ensure!(digest.len()==64 && digest.bytes().all(|b|b.is_ascii_hexdigit()),"Preparación sin identidad de archivo");
+            for prefix in legacy_children(&stage)? {anyhow::ensure!(matches!(prefix.file_name().and_then(|n|n.to_str()),Some("bank"|"intents")),"Contenido de preparación desconocido");}
+            let banks=legacy_children(&stage.join("bank"))?;anyhow::ensure!(banks.len()==1,"Identidad de preparación ambigua");
+            let (base,unproven)=legacy_baseline(&banks[0])?;let id=(base.udid.clone(),base.card_hash.clone());complete.insert(id.clone());
+            let mut files=legacy_evidence_files(&stage.join("bank"),"bank")?;files.extend(legacy_evidence_files(&stage.join("intents"),"intents")?);
+            anyhow::ensure!(files.len()<=MAX_FILES && files.values().map(Vec::len).sum::<usize>()<=LIMIT,"Preparación fuera de límites");
+            if unproven || legacy_history_review(&stage.join("intents"),&id)? {review.insert(id.clone());}
+            for (name,bytes) in &files {
+                let (prefix,tail)=name.split_once('/').context("Ruta inválida")?;
+                let destination=format!("{}/{}",if prefix=="bank" {"bank-backups"}else{"bank-change-intents"},tail);
+                if !inventory.get(&destination).is_some_and(|entry|!entry.directory && entry.size==bytes.len() as u64 && crate::bank_backup::sha256(bytes).is_ok_and(|hash|hash==entry.sha256)) {review.insert(id.clone());}
+            }
+            let reconstructed=[zip::CompressionMethod::Stored,zip::CompressionMethod::Deflated].into_iter().any(|compression|encode_bundle(&base,&files,compression).is_ok_and(|bytes|crate::bank_backup::sha256(&bytes).is_ok_and(|hash|hash==digest)));
+            let records=files.iter().map(|(name,bytes)|Ok((name.clone(),Record{size:bytes.len(),sha256:crate::bank_backup::sha256(bytes)?}))).collect::<Result<_>>()?;
+            stage_records.entry(digest.into()).or_default().push((id,records,reconstructed));
+        }
+    }
+    for operation in legacy_children(&root.join("bank-change-intents"))? {
+        let id=crate::bank_changes::operation_identity(&operation)?;anyhow::ensure!(complete.contains(&id),"Historial sin original ni preparación acreditados");
+    }
+    for id in &complete {
+        // Validate the whole mixed live store's exact identity, not only a
+        // prefix from an incoming snapshot. Never join incompatible revisions.
+        let matching=crate::bank_changes::cloud_operation_dirs(&root.join("bank-change-intents"),&id.0,&id.1);
+        match matching {
+            Ok(operations)=>for operation in operations {crate::bank_changes::recovery_evidence_at(&root.join("bank-change-intents"),operation.file_name().and_then(|n|n.to_str()).context("Operación inválida")?,&id.0,&id.1)?;},
+            Err(error) if error.downcast_ref::<crate::bank_changes::PendingCloudHistory>().is_some() || error.downcast_ref::<crate::bank_changes::OverlappingCloudHistory>().is_some()=>{review.insert(id.clone());
+                for operation in legacy_children(&root.join("bank-change-intents"))? {if crate::bank_changes::operation_identity(&operation)?==*id {crate::bank_changes::recovery_evidence_at(&root.join("bank-change-intents"),operation.file_name().and_then(|n|n.to_str()).context("Operación inválida")?,&id.0,&id.1)?;}}
+            },Err(error)=>return Err(error),
+        }
+    }
+    for area in ["quarantine","rejected-originals","cloud-import-evidence"] {
+        for path in legacy_children(&root.join(area))? {
+            if is_retained_alias_artifact(&path)? {continue;}
+            let (manifest,bytes)=read_quarantine_archive(&path)?;let (_,files)=parse_bundle(&bytes)?;
+            let digest=crate::bank_backup::sha256(&bytes)?;let id=(manifest.udid,manifest.card_hash);
+            let candidates=stage_records.get_mut(&digest).context("Archivo sin preparación validada independiente")?;
+            let mut bound=false;
+            for (stage_id,records,reconstructed) in candidates {
+                if stage_id==&id && files.iter().all(|(name,bytes)|records.get(name).is_some_and(|record|record.size==bytes.len() && crate::bank_backup::sha256(bytes).is_ok_and(|hash|hash==record.sha256))) {*reconstructed=true;bound=true;}
+            }
+            anyhow::ensure!(bound,"Archivo incompatible con su preparación; identidad no acreditada");
+        }
+    }
+    for candidates in stage_records.into_values() {for (id,_,bound) in candidates {if !bound {review.insert(id);}}}
+    let pending=crate::wallet_export::pending_recovery_operations_at(&root.join("wallet-export-recovery"))?;
+    for item in pending {let id=(item.udid,item.card_hash);anyhow::ensure!(complete.contains(&id),"Diario de teléfono sin identidad original acreditada");review.insert(id);}
+    let keys=complete.iter().map(|id|Ok((crate::bank_backup::sha256(&[id.0.as_bytes(),b"\0",id.1.as_bytes()].concat())?,id.clone()))).collect::<Result<BTreeMap<_,_>>>()?;
+    for marker in legacy_children(&root.join("card-review"))? {
+        crate::storage::safe_chain(&marker)?;let key=marker.file_name().and_then(|n|n.to_str()).context("Revisión inválida")?;
+        anyhow::ensure!(fs::metadata(&marker)?.len()==15 && fs::read(&marker)?==b"requires_review","Formato de revisión desconocido");
+        review.insert(keys.get(key).context("Revisión sin identidad acreditada")?.clone());
+    }
+    for marker in legacy_children(&root.join("lock-recovery"))? {let bytes=fs::read(&marker)?;anyhow::ensure!(bytes.is_empty() || bytes.len()==20 && bytes.iter().all(u8::is_ascii_hexdigit),"Evidencia antigua no clasificada");}
+    complete.retain(|id|!review.contains(id));
+    let plan=LegacyImportRecoveryPlan{root:root.into(),inventory,complete,review};plan.revalidate()?;Ok(plan)
+}
+
 // Read only bounded, regular, integrity-bound quarantine evidence. Errors must
 // propagate: an unreadable archive could belong to the requested identity.
 fn read_quarantine_archive(path:&Path)->Result<(Manifest,Vec<u8>)> {
@@ -1468,6 +1618,42 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         assert!(std::env::var_os("WALLET_STUDIO_TEST_FIXTURE").is_none() && std::env::var_os("WALLET_STUDIO_TEST_STORAGE_ROOT").is_none() && !crate::storage::is_demo());
         let census=import_identity_census_at(&crate::storage::root());
         println!("{}",serde_json::json!({"result":"read_only_import_identity_census","scope":"identity_consistency_only_not_original_authority","known_distinct_identities":census.known.len(),"unknown_identity_entries":census.unknown,"counts":census.counts}));
+    }
+    #[test] fn legacy_proof_builder_classifies_complete_and_missing_identity_without_mutation() {
+        for missing in [false,true] {
+            let (source,_,bytes)=import_fixture();let target=fixture_root();import_bundle(&target,&bytes).unwrap();
+            if missing {fs::remove_dir_all(target.join("bank-backups")).unwrap();}
+            crate::storage::write_new(&target.join(".cloud-import.lock"),b"").unwrap();let before=audit_fixture_snapshot(&target);
+            let plan=build_legacy_import_recovery_plan(&target).unwrap();assert_eq!(plan.counts(),if missing {(0,1)} else {(1,0)});
+            assert_eq!(audit_fixture_snapshot(&target),before);plan.revalidate().unwrap();
+            fs::write(target.join(".cloud-import.lock"),b"changed evidence").unwrap();assert!(plan.revalidate().is_err());
+            fs::remove_dir_all(target).unwrap();fs::remove_dir_all(source).unwrap();
+        }
+    }
+    #[test] fn legacy_proof_builder_rejects_unknown_reviews_payloads_legacy_areas_and_active_owner() {
+        for unknown in ["root","review","payload","legacy","owner"] {
+            let (source,_,bytes)=import_fixture();let target=fixture_root();import_bundle(&target,&bytes).unwrap();crate::storage::write_new(&target.join(".cloud-import.lock"),b"").unwrap();
+            match unknown {
+                "root"=>crate::storage::write_new(&target.join("unknown-original"),b"retained").unwrap(),
+                "review"=>crate::storage::write_new(&target.join("card-review").join("0".repeat(64)),b"requires_review").unwrap(),
+                "payload"=>{let bank=fs::read_dir(target.join("bank-backups")).unwrap().next().unwrap().unwrap().path();crate::storage::write_new(&bank.join("unknown.bin"),b"retained").unwrap();},
+                "legacy"=>crate::storage::write_new(&target.join("wallet-backups").join("unknown"),b"retained").unwrap(),_=>{},
+            }
+            let before=audit_fixture_snapshot(&target);
+            if unknown=="owner" {
+                let lease=crate::storage::operation_lease_for_import(&target).unwrap();let other=target.clone();assert!(std::thread::spawn(move||build_legacy_import_recovery_plan(&other).is_err()).join().unwrap());drop(lease);
+            } else {assert!(build_legacy_import_recovery_plan(&target).is_err());}
+            assert_eq!(audit_fixture_snapshot(&target),before);fs::remove_dir_all(target).unwrap();fs::remove_dir_all(source).unwrap();
+        }
+    }
+    #[test] #[ignore="explicit read-only inactive proof builder; never retires an import marker"]
+    fn diagnose_legacy_import_proof_read_only() {
+        assert_eq!(std::env::var("WALLET_STUDIO_STAGE_DIAGNOSTIC").as_deref(),Ok("1"));
+        assert!(std::env::var_os("WALLET_STUDIO_TEST_FIXTURE").is_none() && std::env::var_os("WALLET_STUDIO_TEST_STORAGE_ROOT").is_none() && !crate::storage::is_demo());
+        match build_legacy_import_recovery_plan(&crate::storage::root()) {
+            Ok(plan)=>{let (complete,review)=plan.counts();println!("{}",serde_json::json!({"result":"inactive_legacy_import_proof","complete_verified":complete,"known_review":review,"unknown_identity_entries":0,"marker_action":"preserved","writes":0}));},
+            Err(_)=>println!("{}",serde_json::json!({"result":"inactive_legacy_import_proof","classification":"indeterminate_evidence_or_unsupported_legacy_shape","marker_action":"preserved","writes":0})),
+        }
     }
     #[test] fn import_identity_census_keeps_malformed_identity_unknown_and_never_changes_evidence() {
         let (source,_,bytes)=import_fixture();let target=fixture_root();import_bundle(&target,&bytes).unwrap();

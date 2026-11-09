@@ -128,6 +128,12 @@ pub(crate) fn account_recovery_root()->Result<PathBuf> {account_recovery_root_at
 pub fn ensure_ready()->Result<()> {
     ensure_ready_at(&root())
 }
+pub(crate) fn ensure_operation_idle_at(root:&Path)->Result<()> {
+    safe_chain(root)?;
+    let owns=LEASE.with(|state|state.borrow().as_ref().is_some_and(|(owner,_,_)|owner.as_path()==root));
+    if !owns && root.join(".vault-operation.lock").exists() {let _probe=open_operation_lock(root,false)?;}
+    Ok(())
+}
 pub(crate) fn ensure_ready_at(root:&Path)->Result<()> {
     safe_chain(root)?;
     anyhow::ensure!(!root.join("storage-blocked.json").exists(),"Hay evidencia de almacenamiento en conflicto; conserva las copias y revisa la recuperación");
