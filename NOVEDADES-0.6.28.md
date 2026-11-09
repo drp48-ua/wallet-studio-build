@@ -3,6 +3,9 @@
 El acceso a la cuenta y la biblioteca ya no queda bloqueado por una revisión pendiente de las copias locales cuando este PC y el propietario del perfil pueden verificarse.
 
 - La sesión de biblioteca y su caché se guardan aparte de las copias pendientes.
+- Si falta esa sesión separada, «Recuperar mi sesión guardada» verifica la cuenta anterior sin cambiar el propietario ni los originales.
+- Recuperar una sesión no sobrescribe un acceso más reciente ni anula un cierre de sesión realizado durante la comprobación.
+- Los mensajes distinguen una sesión ausente de una sesión que no se pudo leer.
 - Se conserva la identidad del mismo PC; no se ocupa otra plaza de equipo para utilizar este acceso.
 - Las opciones de solicitar activación o recuperar acceso permanecen visibles y disponibles durante la revisión local.
 - La biblioteca explica el acceso limitado y permite volver a comprobar el almacenamiento.

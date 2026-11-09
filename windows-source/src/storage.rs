@@ -128,7 +128,7 @@ pub(crate) fn account_recovery_root()->Result<PathBuf> {account_recovery_root_at
 pub fn ensure_ready()->Result<()> {
     ensure_ready_at(&root())
 }
-fn ensure_ready_at(root:&Path)->Result<()> {
+pub(crate) fn ensure_ready_at(root:&Path)->Result<()> {
     safe_chain(root)?;
     anyhow::ensure!(!root.join("storage-blocked.json").exists(),"Hay evidencia de almacenamiento en conflicto; conserva las copias y revisa la recuperación");
     anyhow::ensure!(!root.join(".migration.lock").exists() && !root.join(".cloud-import.lock").exists(),"El almacenamiento está siendo migrado o importado; espera o revisa la recuperación");

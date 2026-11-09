@@ -57,7 +57,20 @@ fn route_account_url(url:&str,canonical:Option<&str>,transport:Option<&str>)->Re
     if let Some(transport)=transport {Ok(format!("{}{tail}",strict_provider_endpoint(transport)?))} else {Ok(url.into())}
 }
 fn account_request_url(url:&str)->Result<String> {
+    #[cfg(test)]
+    if std::env::var("WALLET_STUDIO_TEST_FIXTURE").as_deref()==Ok("1") {
+        if let Ok(server)=std::env::var("WALLET_STUDIO_INTEGRATION_URL") {
+            if explicit_fixture_url(url,&server) {return Ok(url.into());}
+        }
+    }
     route_account_url(url,option_env!("WALLET_STUDIO_CLOUD_URL"),option_env!("WALLET_STUDIO_CLOUD_TRANSPORT_URL"))
+}
+#[cfg(test)]
+fn explicit_fixture_url(url:&str,server:&str)->bool {
+    if !server.starts_with("http://127.0.0.1:") || normalized_server(server).ok().as_deref()!=Some(server) {return false;}
+    let Some(port)=server.strip_prefix("http://127.0.0.1:").and_then(|text|text.parse::<u16>().ok()).filter(|port|*port>0) else {return false;};
+    let _=port;
+    normalized_server(url).is_ok() && url.strip_prefix(server).is_some_and(|tail|tail.starts_with('/') && !tail.starts_with("//"))
 }
 pub(crate) fn account_http_request(method:&str,url:&str,headers:&[(String,String)],body:&[u8],maximum:usize)->Result<Vec<u8>> {
     crate::auto_update::http_request(method,&account_request_url(url)?,headers,body,maximum)
@@ -490,9 +503,53 @@ fn load_recovery_session_at(root:&Path)->Result<Option<Session>> {
     if let Some(session)=&session {require_owner_at(root,session)?;read_computer_id_at(root)?;}
     Ok(session)
 }
+/// Explicit user action only: never resurrect a logged-out/rejected session at startup.
+pub fn recover_existing_account_session(expected_server:&str)->Result<Session> {
+    require_service(expected_server)?;
+    recover_existing_account_session_at(&crate::storage::root(),expected_server,&mut |session|account_app_license(session))
+}
+fn read_optional_account_evidence(path:&Path)->Result<Option<Vec<u8>>> {
+    crate::storage::safe_chain(path)?;
+    let meta=match fs::symlink_metadata(path) {Err(error) if error.kind()==std::io::ErrorKind::NotFound=>return Ok(None),result=>result?};
+    anyhow::ensure!(meta.is_file() && !meta.file_type().is_symlink() && meta.len()<=65536,"La sesión separada requiere revisión");
+    let mut bytes=Vec::new();fs::File::open(path)?.take(65537).read_to_end(&mut bytes)?;
+    anyhow::ensure!(bytes.len()<=65536 && bytes.len() as u64==meta.len(),"La sesión separada cambió durante la lectura");Ok(Some(bytes))
+}
+fn recover_existing_account_session_at(root:&Path,expected_server:&str,verify:&mut dyn FnMut(&Session)->Result<bool>)->Result<Session> {
+    let expected=normalized_server(expected_server)?;
+    let session=load_session_at(root)?.context("No hay una sesión anterior válida para recuperar")?;
+    anyhow::ensure!(session.server==expected,"La sesión anterior pertenece a otro servicio");
+    let owner=require_owner_at(root,&session)?;let computer=read_computer_id_at(root)?;
+    let protected=fs::read(root.join("cloud-session.dpapi"))?;
+    let protected_computer=fs::read(root.join("computer-id.dpapi"))?;
+    let account=crate::storage::account_recovery_root_at(root)?;
+    let prior_session=read_optional_account_evidence(&account.join("cloud-session.dpapi"))?;
+    let prior_logout=read_optional_account_evidence(&account.join("session-disabled.json"))?;
+    if prior_session.is_some() {
+        let current=load_session_at(&account)?.context("La sesión separada requiere revisión")?;
+        anyhow::ensure!(current.server==session.server && current.user_id==session.user_id && current.access_token==session.access_token,"Ya hay otra sesión guardada; utiliza la cuenta actual");
+    }
+    anyhow::ensure!(verify(&session)?,"La cuenta requiere una licencia vigente");
+    let _lease=crate::storage::operation_lease_for_import(&account)?;
+    // A newer login or an explicit logout wins over a verification in flight.
+    anyhow::ensure!(read_optional_account_evidence(&account.join("cloud-session.dpapi"))?==prior_session
+        && read_optional_account_evidence(&account.join("session-disabled.json"))?==prior_logout,
+        "La sesión cambió o se cerró durante la verificación; no se sustituirá");
+    // Network validation is not permission to overwrite a changed local identity.
+    anyhow::ensure!(require_owner_at(root,&session)?==owner && read_computer_id_at(root)?==computer
+        && load_session_at(root)?.is_some_and(|current|current.server==session.server && current.user_id==session.user_id && current.access_token==session.access_token)
+        && fs::read(root.join("cloud-session.dpapi"))?==protected && fs::read(root.join("computer-id.dpapi"))?==protected_computer,
+        "La identidad local cambió durante la comprobación; vuelve a revisarla");
+    persist_recovery_session_at(root,&session)?;
+    let saved=load_recovery_session_at(root)?.context("No se pudo verificar la sesión recuperada")?;
+    anyhow::ensure!(saved.server==session.server && saved.user_id==session.user_id && saved.access_token==session.access_token,"La sesión recuperada no coincide");
+    Ok(saved)
+}
 fn persist_recovery_session_at(root:&Path,session:&Session)->Result<()> {
     require_owner_at(root,session)?;read_computer_id_at(root)?;
     let account=crate::storage::account_recovery_root_at(root)?;
+    let _lease=crate::storage::operation_lease_for_import(&account)?;
+    require_owner_at(root,session)?;read_computer_id_at(root)?;
     crate::storage::write_mutable(&account.join("cloud-session.dpapi"),&protect(&serde_json::to_vec(session)?,false)?)
 }
 fn load_session_at(root:&Path)->Result<Option<Session>> {
@@ -597,20 +654,49 @@ pub fn revoke_computer(session:&Session,id:&str)->Result<()> {
     let body=serde_json::to_vec(&serde_json::json!({"device_id":id}))?;
     account_http_request("POST",&format!("{}/v1/auth/devices/revoke",session.server),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("Content-Type".into(),"application/json".into())],&body,65536)?;Ok(())
 }
-pub fn forget_session()->Result<()> {
-    if crate::storage::ensure_ready().is_err() {
-        let path=crate::storage::account_recovery_root()?.join("cloud-session.dpapi");crate::storage::safe_chain(&path)?;
-        if path.exists() {fs::remove_file(path)?;}return Ok(());
-    }
-    let _lease=crate::storage::operation_lease_for_import(&crate::storage::root())?;
-    let path=crate::storage::root().join("cloud-session.dpapi");crate::storage::safe_chain(&path)?;
+fn forget_recovery_session_at(account:&Path)->Result<()> {
+    let _lease=crate::storage::operation_lease_for_import(account)?;
+    let path=account.join("cloud-session.dpapi");crate::storage::safe_chain(&path)?;
+    crate::storage::write_mutable(&account.join("session-disabled.json"),&serde_json::to_vec(&serde_json::json!({"schema":1,"event":crate::flasher::generate_token()}))?)?;
     if path.exists() {fs::remove_file(path)?;}Ok(())
 }
-pub fn forget_rejected_session(rejected:&Session)->Result<()> {
-    let root=crate::storage::root();
-    if crate::storage::ensure_ready().is_err() {return forget_rejected_session_at(&crate::storage::account_recovery_root_at(&root)?,rejected);}
-    forget_rejected_session_at(&root,rejected)
+fn forget_all_account_sessions_at(root:&Path,between:&mut dyn FnMut()->Result<()>)->Result<()> {
+    let account=crate::storage::account_recovery_root_at(root)?;
+    let prior=read_optional_account_evidence(&account.join("cloud-session.dpapi"))?;
+    let prior_logout=read_optional_account_evidence(&account.join("session-disabled.json"))?;
+    {
+        let _lease=crate::storage::operation_lease_for_import(root)?;
+        crate::storage::ensure_ready_at(root)?;
+        let path=root.join("cloud-session.dpapi");crate::storage::safe_chain(&path)?;
+        if path.exists() {fs::remove_file(path)?;}
+    }
+    between()?;
+    {
+        let _lease=crate::storage::operation_lease_for_import(&account)?;
+        anyhow::ensure!(read_optional_account_evidence(&account.join("cloud-session.dpapi"))?==prior
+            && read_optional_account_evidence(&account.join("session-disabled.json"))?==prior_logout,
+            "La sesión cambió durante el cierre; revisa la cuenta actual");
+        forget_recovery_session_at(&account)?;
+    }
+    anyhow::ensure!(read_optional_account_evidence(&root.join("cloud-session.dpapi"))?.is_none(),"Hay un acceso nuevo durante el cierre; revisa la cuenta actual");Ok(())
 }
+pub fn forget_session()->Result<()> {
+    let root=crate::storage::root();
+    if crate::storage::ensure_ready().is_err() {return forget_recovery_session_at(&crate::storage::account_recovery_root_at(&root)?);}
+    forget_all_account_sessions_at(&root,&mut ||Ok(()))
+}
+fn forget_rejected_recovery_session_at(account:&Path,rejected:&Session)->Result<()> {
+    let _lease=crate::storage::operation_lease_for_import(account)?;
+    if load_session_at(account)?.is_some_and(|current|current.server==rejected.server && current.user_id==rejected.user_id && current.access_token==rejected.access_token) {forget_recovery_session_at(account)?;}
+    Ok(())
+}
+pub fn forget_rejected_session(rejected:&Session)->Result<()> {
+    let root=crate::storage::root();let account=crate::storage::account_recovery_root_at(&root)?;
+    if crate::storage::ensure_ready().is_err() {return forget_rejected_recovery_session_at(&account,rejected);}
+    forget_rejected_session_at(&root,rejected)?;
+    forget_rejected_recovery_session_at(&account,rejected)
+}
+
 fn forget_rejected_session_at(root:&Path,rejected:&Session)->Result<()> {
     let _lease=crate::storage::operation_lease_for_import(root)?;
     // Do not erase a newer login saved by another running app instance.
@@ -1195,10 +1281,13 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         fn count(&mut self,key:&'static str) {*self.counts.entry(key).or_default()+=1;}
         fn uncertain(&mut self,key:&'static str) {self.count(key);self.indeterminate=true;}
     }
+    #[derive(Debug)] struct AuditBudgetExceeded;
+    impl std::fmt::Display for AuditBudgetExceeded {fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("diagnostic read budget exhausted")}}
+    impl std::error::Error for AuditBudgetExceeded {}
     struct AuditReadBudget(usize);
     impl AuditReadBudget {
         fn charge(&mut self,bytes:usize)->Result<()> {
-            anyhow::ensure!(bytes<=self.0,"diagnostic read budget exhausted");self.0-=bytes;Ok(())
+            anyhow::ensure!(bytes<=self.0,AuditBudgetExceeded);self.0-=bytes;Ok(())
         }
         fn read(&mut self,path:&Path,max:usize)->Result<Vec<u8>> {
             crate::storage::safe_chain(path)?;let meta=fs::symlink_metadata(path)?;
@@ -1231,7 +1320,7 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         }Ok(files)
     }
     fn audit_retained_stages_at(root:&Path,max_stages:usize)->RetainedStageAudit {
-        let mut report=RetainedStageAudit::default();let mut budget=AuditReadBudget(1024*1024*1024);
+        let mut report=RetainedStageAudit::default();
         if crate::storage::safe_chain(root).is_err() {report.uncertain("root_unsafe");return report;}
         for area in ["cloud-staging","cloud-validated"] {
             let parent=root.join(area);
@@ -1241,9 +1330,12 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
             }
             let stages=match audit_children(&parent,max_stages) {Ok(paths)=>paths,Err(_)=>{report.uncertain("stage_inventory_unsafe_or_limited");continue;}};
             for stage in stages {
+                // A large first snapshot must not consume every later stage's
+                // allowance or turn an exhausted budget into fake corruption.
+                let mut budget=AuditReadBudget(4usize*1024*1024*1024);
                 report.count(if area=="cloud-staging" {"staging_directories"}else{"validated_directories"});
                 let Some(digest)=stage.file_name().and_then(|n|n.to_str()).filter(|n|n.len()==64 && n.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b))) else {report.uncertain("stage_digest_invalid");continue;};
-                let files=match audit_stage_files(&stage,&mut budget) {Ok(files)=>files,Err(_)=>{report.uncertain("stage_unsafe_incomplete_or_limited");continue;}};
+                let files=match audit_stage_files(&stage,&mut budget) {Ok(files)=>files,Err(error)=>{report.uncertain(if error.downcast_ref::<AuditBudgetExceeded>().is_some() {"stage_read_budget_exceeded"} else {"stage_unsafe_incomplete_or_limited"});continue;}};
                 let keys=files.keys().filter_map(|name|name.strip_prefix("bank/").and_then(|tail|tail.split('/').next())).collect::<std::collections::BTreeSet<_>>();
                 if keys.len()!=1 {report.uncertain("stage_baseline_count_invalid");continue;}
                 // These validators are read-only, but can re-read historical
@@ -1253,7 +1345,10 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
                 let charge=bytes.checked_mul(revisions.saturating_mul(4).saturating_add(4));
                 if charge.is_none_or(|charge|budget.charge(charge).is_err()) {report.uncertain("stage_validation_budget_exceeded");continue;}
                 let baseline=match crate::bank_backup::validate_bundle_directory(&stage.join("bank").join(keys.first().unwrap())) {
-                    Ok(base)=>{report.count("stage_baseline_valid");base},Err(_)=>{report.uncertain("stage_baseline_unproven");continue;}
+                    Ok(base)=>{report.count("stage_baseline_valid");base},Err(error)=>{
+                        if let Some(unproven)=error.downcast_ref::<crate::bank_backup::UnprovenOriginal>() {report.uncertain("stage_original_provenance_unproven");unproven.evidence().clone()}
+                        else {report.uncertain("stage_baseline_unproven");continue;}
+                    }
                 };
                 if crate::bank_changes::validate_cloud_chain(&stage.join("intents"),&baseline.udid,&baseline.card_hash).is_err() {report.uncertain("stage_history_invalid");}
                 else {report.count("stage_history_valid");}
@@ -1272,8 +1367,16 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
                     report.count("archive_bound_stage");archive_bound=true;
                     if expected.len()!=files.len() {report.count("stage_additional_history");}
                 }
-                if !archive_found {report.uncertain("stage_without_archive");}
-                else if !archive_bound {report.uncertain("stage_without_valid_archive_binding");}
+                if !archive_found {
+                    // Reconstruct only in memory. The directory name supplies
+                    // no authority unless the complete ZIP matches its SHA256.
+                    for compression in [zip::CompressionMethod::Stored,zip::CompressionMethod::Deflated] {
+                        if encode_bundle(&baseline,&files,compression).is_ok_and(|bytes|crate::bank_backup::sha256(&bytes).is_ok_and(|id|id==digest)) {
+                            archive_bound=true;report.count("stage_bound_by_exact_zip_reconstruction");break;
+                        }
+                    }
+                    if !archive_bound {report.uncertain("stage_without_archive_or_exact_reconstruction");}
+                } else if !archive_bound {report.uncertain("stage_without_valid_archive_binding");}
                 for (name,bytes) in files {
                     let (prefix,tail)=name.split_once('/').unwrap();
                     let destination=root.join(if prefix=="bank" {"bank-backups"} else {"bank-change-intents"}).join(tail);
@@ -1290,6 +1393,115 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         }
         if !report.counts.contains_key("staging_directories") && !report.counts.contains_key("validated_directories") {report.uncertain("no_retained_stages");}
         report
+    }
+    #[derive(Default)]
+    struct ImportIdentityCensus {known:std::collections::BTreeSet<(String,String)>,counts:BTreeMap<&'static str,usize>,unknown:usize}
+    impl ImportIdentityCensus {
+        fn unknown(&mut self,key:&'static str) {self.unknown+=1;*self.counts.entry(key).or_default()+=1;}
+        fn known(&mut self,id:(String,String),key:&'static str) {self.known.insert(id);*self.counts.entry(key).or_default()+=1;}
+    }
+    fn import_identity_census_at(root:&Path)->ImportIdentityCensus {
+        let mut census=ImportIdentityCensus::default();let mut budget=AuditReadBudget(4usize*1024*1024*1024);
+        for area in ["bank-backups","cloud-staging","cloud-validated"] {
+            let parent=root.join(area);if !parent.exists() {continue;}
+            let entries=match audit_children(&parent,1000) {Ok(entries)=>entries,Err(_)=>{census.unknown("unknown_bank_inventory");continue;}};
+            for entry in entries {
+                let bank=if area=="bank-backups" {entry.clone()} else {
+                    let roots=match audit_children(&entry.join("bank"),2) {Ok(roots) if roots.len()==1=>roots, _=>{census.unknown("unknown_stage_bank_identity");continue;}};roots[0].clone()
+                };
+                match crate::bank_backup::bundle_identity(&bank) {
+                    Ok(id)=>census.known(id,if area=="bank-backups" {"destination_bank_identities"} else {"stage_bank_identities"}),
+                    Err(_)=>census.unknown("unknown_baseline_identity"),
+                }
+            }
+        }
+        // Every historical metadata row must independently agree with the
+        // operation's identity; payload failures can then be scoped as review.
+        let histories=std::iter::once(root.join("bank-change-intents")).chain(["cloud-staging","cloud-validated"].into_iter().flat_map(|area|audit_children(&root.join(area),1000).unwrap_or_default().into_iter().map(|entry|entry.join("intents"))));
+        for history in histories {
+            if !history.exists() {continue;}
+            let entries=match audit_children(&history,1000) {Ok(entries)=>entries,Err(_)=>{census.unknown("unknown_history_inventory");continue;}};
+            for operation in entries {
+                let id=match crate::bank_changes::operation_identity(&operation) {Ok(id)=>id,Err(_)=>{census.unknown("unknown_operation_identity");continue;}};
+                let files=match audit_children(&operation,MAX_FILES) {Ok(files)=>files,Err(_)=>{census.unknown("unknown_history_files");continue;}};
+                let mut consistent=true;
+                for file in files {
+                    let name=file.file_name().and_then(|n|n.to_str()).unwrap_or("");
+                    if name.starts_with("state-") && name.ends_with(".json") {
+                        let value=budget.read(&file,1024*1024).and_then(|bytes|Ok(serde_json::from_slice::<serde_json::Value>(&bytes)?));
+                        match value {
+                            Ok(value) if value["udid"].as_str()==Some(&id.0) && value["card_hash"].as_str()==Some(&id.1) && value["operation_id"].as_str()==operation.file_name().and_then(|n|n.to_str())=>{},
+                            _=>consistent=false,
+                        }
+                    }
+                }
+                if consistent {census.known(id,"consistent_history_identities");} else {census.unknown("inconsistent_historical_identity");}
+            }
+        }
+        for area in ["quarantine","rejected-originals","cloud-import-evidence"] {
+            let parent=root.join(area);if !parent.exists() {continue;}
+            let entries=match audit_children(&parent,1000) {Ok(entries)=>entries,Err(_)=>{census.unknown("unknown_archive_inventory");continue;}};
+            for path in entries {
+                if is_retained_alias_artifact(&path).unwrap_or(false) {*census.counts.entry("retained_alias_artifacts").or_default()+=1;continue;}
+                let result=(||->Result<(String,String)> {
+                    let bytes=budget.read(&path,LIMIT)?;anyhow::ensure!(path.file_stem().and_then(|n|n.to_str())==Some(crate::bank_backup::sha256(&bytes)?.as_str()),"archive name mismatch");
+                    let (manifest,files)=parse_bundle(&bytes)?;
+                    let banks=files.iter().filter(|(name,_)|name.starts_with("bank/") && name.ends_with("/baseline.json")).collect::<Vec<_>>();
+                    anyhow::ensure!(banks.len()==1,"archive identity ambiguous");let (name,metadata)=banks[0];let value:serde_json::Value=serde_json::from_slice(metadata)?;
+                    anyhow::ensure!(value["udid"].as_str()==Some(&manifest.udid) && value["card_hash"].as_str()==Some(&manifest.card_hash) && manifest.udid.trim()==manifest.udid,"archive metadata identity mismatch");
+                    let key=crate::bank_backup::sha256(&[manifest.udid.as_bytes(),b"\0",manifest.card_hash.as_bytes()].concat())?;
+                    anyhow::ensure!(name.split('/').nth(1)==Some(key.as_str()),"archive identity key mismatch");
+                    Ok((manifest.udid,manifest.card_hash))
+                })();
+                match result {Ok(id)=>census.known(id,"consistent_archive_identities"),Err(_)=>census.unknown("unknown_archive_identity")}
+            }
+        }
+        match crate::wallet_export::pending_recovery_operations_at(&root.join("wallet-export-recovery")) {
+            Ok(pending)=>for item in pending {census.known((item.udid,item.card_hash),"pending_phone_recovery_identities");},
+            Err(_)=>census.unknown("unknown_phone_recovery_identity"),
+        }
+        census
+    }
+    #[test] #[ignore="explicit authorized read-only identity census; never grants import recovery authority"]
+    fn diagnose_import_identity_census_read_only() {
+        assert_eq!(std::env::var("WALLET_STUDIO_STAGE_DIAGNOSTIC").as_deref(),Ok("1"));
+        assert!(std::env::var_os("WALLET_STUDIO_TEST_FIXTURE").is_none() && std::env::var_os("WALLET_STUDIO_TEST_STORAGE_ROOT").is_none() && !crate::storage::is_demo());
+        let census=import_identity_census_at(&crate::storage::root());
+        println!("{}",serde_json::json!({"result":"read_only_import_identity_census","scope":"identity_consistency_only_not_original_authority","known_distinct_identities":census.known.len(),"unknown_identity_entries":census.unknown,"counts":census.counts}));
+    }
+    #[test] fn import_identity_census_keeps_malformed_identity_unknown_and_never_changes_evidence() {
+        let (source,_,bytes)=import_fixture();let target=fixture_root();import_bundle(&target,&bytes).unwrap();
+        let before=audit_fixture_snapshot(&target);let complete=import_identity_census_at(&target);assert_eq!(complete.unknown,0);assert_eq!(complete.known.len(),1);assert_eq!(audit_fixture_snapshot(&target),before);
+        let unknown=target.join("bank-backups").join("unknown").join("baseline.json");crate::storage::write_new(&unknown,b"broken identity").unwrap();
+        let before=audit_fixture_snapshot(&target);let failed=import_identity_census_at(&target);assert!(failed.unknown>0);assert_eq!(audit_fixture_snapshot(&target),before);
+        fs::remove_dir_all(target).unwrap();fs::remove_dir_all(source).unwrap();
+    }
+    fn original_authority_snapshot(root:&Path)->Result<BTreeMap<std::path::PathBuf,String>> {
+        fn visit(root:&Path,path:&Path,out:&mut BTreeMap<std::path::PathBuf,String>,budget:&mut AuditReadBudget)->Result<()> {
+            crate::storage::safe_chain(path)?;
+            let meta=match fs::symlink_metadata(path) {Err(error) if error.kind()==std::io::ErrorKind::NotFound=>return Ok(()),result=>result?};
+            anyhow::ensure!(out.len()<10000,"original snapshot count limit");
+            if meta.is_dir() {for child in audit_children(path,10000)? {visit(root,&child,out,budget)?;}}
+            else {let bytes=budget.read(path,128*1024*1024)?;out.insert(path.strip_prefix(root)?.into(),crate::bank_backup::sha256(&bytes)?);}
+            Ok(())
+        }
+        let mut out=BTreeMap::new();let mut budget=AuditReadBudget(2usize*1024*1024*1024);
+        for name in ["bank-backups","bank-change-intents","wallet-export-recovery","wallet-backups","transport-probe-recovery","card-review","lock-recovery",".cloud-import.lock",".migration.lock","storage-blocked.json","cloud-session.dpapi","computer-id.dpapi","vault-owner.json","cards.json"] {visit(root,&root.join(name),&mut out,&mut budget)?;}
+        Ok(out)
+    }
+    #[test] #[ignore="explicit host action only: restore the existing verified account session into separate storage"]
+    fn recover_existing_account_session_host_diagnostic() {
+        assert_eq!(std::env::var("WALLET_STUDIO_ACCOUNT_RECOVERY_DIAGNOSTIC").as_deref(),Ok("1"),"explicit recovery action required");
+        assert!(!crate::storage::is_demo() && std::env::var_os("WALLET_STUDIO_TEST_FIXTURE").is_none() && std::env::var_os("WALLET_STUDIO_TEST_STORAGE_ROOT").is_none(),"real recovery action cannot use a fixture");
+        const CANONICAL:&str="https://wallet-studio-accounts.onrender.com";
+        assert_eq!(option_env!("WALLET_STUDIO_CLOUD_URL"),Some(CANONICAL));
+        assert_eq!(option_env!("WALLET_STUDIO_CLOUD_TRANSPORT_URL"),Some("https://wallet-studio-accounts-v2.onrender.com"));
+        let root=crate::storage::root();let before=original_authority_snapshot(&root);assert!(before.is_ok(),"original snapshot requires review");let before=before.unwrap();
+        let result=recover_existing_account_session(CANONICAL);
+        let after=original_authority_snapshot(&root);assert!(after.is_ok(),"original readback requires review");
+        assert!(after.unwrap()==before,"original authority changed during account recovery");
+        assert!(result.is_ok(),"account recovery was not confirmed; no original was changed");
+        println!("{}",serde_json::json!({"result":"separate_account_session_verified","original_files_unchanged":before.len(),"phone_operations":0}));
     }
     #[test] #[ignore="requires explicit authorized exhaustive read-only retained-stage diagnostic"]
     fn diagnose_all_retained_stages_read_only() {
@@ -1314,13 +1526,17 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         let target=fixture_root();let stage=target.join("cloud-staging").join(&digest);
         materialize_inventory_archive(&stage,&manifest,&files).unwrap();
         let before=audit_fixture_snapshot(&target);
-        let unbound=audit_retained_stages_at(&target,1000);assert_eq!(audit_fixture_snapshot(&target),before);assert!(unbound.indeterminate);assert_eq!(unbound.counts.get("stage_without_archive"),Some(&1));assert!(unbound.counts.contains_key("destination_missing"));
+        let unbound=audit_retained_stages_at(&target,1000);assert_eq!(audit_fixture_snapshot(&target),before);assert!(unbound.indeterminate);assert_eq!(unbound.counts.get("stage_bound_by_exact_zip_reconstruction"),Some(&1));assert!(unbound.counts.contains_key("destination_missing"));
         assert!(!target.join(".vault-operation.lock").exists());assert!(!target.join(".cloud-import.lock").exists());assert!(!target.join("card-review").exists());
         crate::storage::write_new(&target.join("quarantine").join(format!("{digest}.zip")),&bytes).unwrap();
         let partial=audit_retained_stages_at(&target,1000);assert!(partial.indeterminate);assert_eq!(partial.counts.get("archive_bound_stage"),Some(&1));
         import_bundle(&target,&bytes).unwrap();
         let before=audit_fixture_snapshot(&target);
         let complete=audit_retained_stages_at(&target,1000);assert_eq!(audit_fixture_snapshot(&target),before);assert!(!complete.indeterminate);assert_eq!(complete.counts.get("staging_directories"),Some(&1));assert_eq!(complete.counts.get("validated_directories"),Some(&1));
+        fs::remove_file(target.join("quarantine").join(format!("{digest}.zip"))).unwrap();
+        fs::remove_file(target.join("cloud-import-evidence").join(format!("{digest}.zip"))).unwrap();
+        let before=audit_fixture_snapshot(&target);let reconstructed=audit_retained_stages_at(&target,1000);
+        assert!(!reconstructed.indeterminate);assert_eq!(reconstructed.counts.get("stage_bound_by_exact_zip_reconstruction"),Some(&2));assert_eq!(audit_fixture_snapshot(&target),before);
         let first=files.keys().next().unwrap().split_once('/').unwrap().1;let dest=target.join("bank-backups").join(first);
         fs::write(&dest,b"synthetic changed destination").unwrap();
         let changed=audit_retained_stages_at(&target,1000);assert!(changed.indeterminate);assert!(changed.counts.contains_key("destination_different"));
@@ -1569,6 +1785,13 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         assert!(!missing_original_capture_allowed(account_expected_at(&root,""),false));
         assert!(missing_original_capture_allowed(account_expected_at(&root,""),true));fs::remove_dir_all(root).unwrap();
     }
+    #[test] fn explicit_local_fixture_route_never_authorizes_other_hosts_ports_or_scheme() {
+        let fixture="http://127.0.0.1:12345";
+        assert!(explicit_fixture_url("http://127.0.0.1:12345/v1/auth/login",fixture));
+        assert!(explicit_fixture_url("http://127.0.0.1:12345/__fixture_redirect",fixture));
+        for wrong in ["http://127.0.0.1:123456/v1/auth/login","http://127.0.0.1:12346/v1/auth/login","https://127.0.0.1:12345/v1/auth/login","http://127.0.0.1:12345.evil/v1/auth/login","http://127.0.0.1:12345//v1/auth/login","http://127.0.0.1:12345/v1/auth/login?token=x"] {assert!(!explicit_fixture_url(wrong,fixture));}
+        assert!(!explicit_fixture_url("http://127.0.0.1:12345/v1/auth/login","http://127.0.0.1:12345/prefix"));
+    }
     #[test] fn provider_transport_routes_only_exact_canonical_api_without_changing_identity() {
         let canonical="https://wallet-studio-accounts.onrender.com";
         let transport="https://synthetic-new.example.test/proxy";
@@ -1592,6 +1815,78 @@ fn account_expected_at(root:&Path,endpoint:&str)->bool {
         assert!(route_account_url(&format!("{canonical}/v1/auth/login"),None,Some(transport)).is_err());
         assert!(route_account_url("https://another.example.test/v1/auth/login",Some(canonical),None).is_err());
         assert_eq!(route_account_url("http://127.0.0.1:1234/v1/auth/login",None,None).unwrap(),"http://127.0.0.1:1234/v1/auth/login");
+    }
+    #[test] fn explicit_session_recovery_is_verified_separate_and_preserves_original_vault() {
+        let root=fixture_root();fs::create_dir_all(&root).unwrap();
+        let session=Session {server:"https://synthetic.example.test".into(),user_id:"fixture-owner".into(),access_token:"synthetic-token".into()};
+        bind_owner_at(&root,&session,true).unwrap();
+        crate::storage::write_new(&root.join("computer-id.dpapi"),&protect("a".repeat(64).as_bytes(),false).unwrap()).unwrap();
+        crate::storage::write_new(&root.join("cloud-session.dpapi"),&protect(&serde_json::to_vec(&session).unwrap(),false).unwrap()).unwrap();
+        crate::storage::write_new(&root.join(".cloud-import.lock"),b"").unwrap();let before=audit_fixture_snapshot(&root);
+        assert!(load_recovery_session_at(&root).unwrap().is_none());
+        let saved=recover_existing_account_session_at(&root,&session.server,&mut |current| {assert_eq!(current.user_id,session.user_id);Ok(true)}).unwrap();
+        assert_eq!(saved.access_token,session.access_token);assert_eq!(audit_fixture_snapshot(&root),before);
+        assert!(recover_existing_account_session_at(&root,"https://other.example.test",&mut |_|panic!("must not send")).is_err());
+        assert!(recover_existing_account_session_at(&root,&session.server,&mut |_|Err(SessionRejected.into())).is_err());
+        assert!(recover_existing_account_session_at(&root,&session.server,&mut |_|Ok(false)).is_err());
+        assert_eq!(audit_fixture_snapshot(&root),before);
+        fs::remove_dir_all(crate::storage::account_recovery_root_at(&root).unwrap()).unwrap();fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn logout_across_storage_modes_removes_both_sessions_but_preserves_a_newer_login() {
+        for new_login in [false,true] {
+            let root=fixture_root();fs::create_dir_all(&root).unwrap();
+            let session=Session {server:"https://synthetic.example.test".into(),user_id:"fixture-owner".into(),access_token:"old-token".into()};
+            bind_owner_at(&root,&session,true).unwrap();crate::storage::write_new(&root.join("computer-id.dpapi"),&protect("a".repeat(64).as_bytes(),false).unwrap()).unwrap();
+            crate::storage::write_new(&root.join("cloud-session.dpapi"),&protect(&serde_json::to_vec(&session).unwrap(),false).unwrap()).unwrap();
+            persist_recovery_session_at(&root,&session).unwrap();
+            let account=crate::storage::account_recovery_root_at(&root).unwrap();
+            let result=forget_all_account_sessions_at(&root,&mut || {
+                if new_login {persist_recovery_session_at(&root,&Session {access_token:"newer-token".into(),..session.clone()})?;}Ok(())
+            });
+            assert_eq!(result.is_err(),new_login);assert!(load_session_at(&root).unwrap().is_none());
+            if new_login {
+                assert_eq!(load_session_at(&account).unwrap().unwrap().access_token,"newer-token");
+                forget_rejected_recovery_session_at(&account,&session).unwrap();
+                assert_eq!(load_session_at(&account).unwrap().unwrap().access_token,"newer-token");
+                let rejected=Session {access_token:"newer-token".into(),..session.clone()};forget_rejected_recovery_session_at(&account,&rejected).unwrap();
+            }
+            assert!(load_session_at(&account).unwrap().is_none());assert!(account.join("session-disabled.json").is_file());
+            fs::remove_dir_all(account).unwrap();fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[test] fn explicit_recovery_never_overwrites_newer_separate_login_or_inflight_logout() {
+        for action in ["new-login","logout"] {
+            let root=fixture_root();fs::create_dir_all(&root).unwrap();
+            let session=Session {server:"https://synthetic.example.test".into(),user_id:"fixture-owner".into(),access_token:"old-token".into()};
+            bind_owner_at(&root,&session,true).unwrap();crate::storage::write_new(&root.join("computer-id.dpapi"),&protect("a".repeat(64).as_bytes(),false).unwrap()).unwrap();
+            crate::storage::write_new(&root.join("cloud-session.dpapi"),&protect(&serde_json::to_vec(&session).unwrap(),false).unwrap()).unwrap();
+            let before=audit_fixture_snapshot(&root);let account=crate::storage::account_recovery_root_at(&root).unwrap();
+            assert!(recover_existing_account_session_at(&root,&session.server,&mut |_| {
+                if action=="new-login" {persist_recovery_session_at(&root,&Session {access_token:"newer-token".into(),..session.clone()})?;}
+                else {forget_recovery_session_at(&account)?;}Ok(true)
+            }).is_err());
+            if action=="new-login" {assert_eq!(load_session_at(&account).unwrap().unwrap().access_token,"newer-token");}
+            else {assert!(load_session_at(&account).unwrap().is_none());assert!(account.join("session-disabled.json").is_file());}
+            assert_eq!(audit_fixture_snapshot(&root),before);
+            fs::remove_dir_all(account).unwrap();fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[test] fn explicit_session_recovery_rejects_identity_change_during_online_validation() {
+        for change in ["owner","computer","session"] {
+            let root=fixture_root();fs::create_dir_all(&root).unwrap();
+            let session=Session {server:"https://synthetic.example.test".into(),user_id:"fixture-owner".into(),access_token:"synthetic-token".into()};
+            bind_owner_at(&root,&session,true).unwrap();crate::storage::write_new(&root.join("computer-id.dpapi"),&protect("a".repeat(64).as_bytes(),false).unwrap()).unwrap();
+            crate::storage::write_new(&root.join("cloud-session.dpapi"),&protect(&serde_json::to_vec(&session).unwrap(),false).unwrap()).unwrap();
+            assert!(recover_existing_account_session_at(&root,&session.server,&mut |_| {
+                match change {
+                    "owner"=>{let foreign=Session {user_id:"other-owner".into(),..session.clone()};fs::write(root.join("vault-owner.json"),serde_json::to_vec(&owner_for(&foreign)?)?)?;},
+                    "computer"=>fs::write(root.join("computer-id.dpapi"),protect("b".repeat(64).as_bytes(),false)?)?,
+                    _=>{let foreign=Session {access_token:"newer-token".into(),..session.clone()};fs::write(root.join("cloud-session.dpapi"),protect(&serde_json::to_vec(&foreign)?,false)?)?;},
+                }Ok(true)
+            }).is_err());
+            let account=crate::storage::account_recovery_root_at(&root).unwrap();assert!(!account.join("cloud-session.dpapi").exists());
+            if account.exists(){fs::remove_dir_all(account).unwrap();}fs::remove_dir_all(root).unwrap();
+        }
     }
     #[test] fn recovery_login_reuses_exact_identity_and_never_changes_blocked_vault_or_owner() {
         let root=fixture_root();fs::create_dir_all(&root).unwrap();

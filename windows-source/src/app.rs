@@ -442,11 +442,15 @@ impl AirCardApp {
                 }
               }
               Err(error)=> {
-                message.status=format!("{} Puedes acceder a tu biblioteca con la cuenta ya vinculada; las copias y el iPhone siguen bloqueados.",crate::storage::preparation_failure_message(&error));
-                if let Ok(Some(session))=crate::cloud_sync::load_session() {
-                    message.server=session.server.clone();
-                    (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status,message.capture_inventory)=cloud_sync_status(&session,false,&tx,&ctx);
-                    message.session=Some(session);
+                message.status=format!("{} Las copias y el iPhone siguen bloqueados hasta revisar el almacenamiento.",crate::storage::preparation_failure_message(&error));
+                match crate::cloud_sync::load_session() {
+                    Ok(Some(session))=> {
+                        message.server=session.server.clone();
+                        (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status,message.capture_inventory)=cloud_sync_status(&session,false,&tx,&ctx);
+                        message.session=Some(session);
+                    }
+                    Ok(None)=>message.status.push_str(" No hay una sesión separada guardada. Pulsa Recuperar mi sesión guardada o inicia sesión con tu contraseña."),
+                    Err(_)=>message.status.push_str(" La sesión separada no se pudo leer. Recupera la sesión guardada o inicia sesión de nuevo; tus originales se conservan."),
                 }
               },
             }
@@ -526,6 +530,22 @@ impl AirCardApp {
             let _=tx.send(CloudEvent::Complete(message));ctx.request_repaint();
         });
     }
+    fn start_existing_account_recovery(&mut self,ctx:egui::Context) {
+        if crate::storage::is_demo() || self.storage_ready || self.cloud_rx.is_some() || self.activation_rx.is_some() || self.is_busy || self.scanning_syslog {return;}
+        let server=self.account_server.clone();let (tx,rx)=channel();self.cloud_rx=Some(rx);
+        self.cloud_status="Verificando tu sesión guardada. Las copias y el iPhone siguen protegidos…".into();
+        thread::spawn(move|| {
+            let mut message=CloudMessage {authenticated:false,library_authenticated:false,session_pending:false,storage_ready:false,configured:true,synced:false,capture_inventory:None,server:server.clone(),status:String::new(),session:None};
+            match crate::cloud_sync::recover_existing_account_session(&server) {
+                Ok(session)=> {
+                    (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status,message.capture_inventory)=cloud_account_status(false,false,Ok(true),&mut ||anyhow::bail!("account-only recovery cannot synchronize"));
+                    message.session=Some(session);
+                }
+                Err(error)=>message.status=format!("No se pudo recuperar la sesión guardada. {} Inicia sesión con tu contraseña; tus copias se conservan.",crate::cloud_sync::account_failure_message(&error)),
+            }
+            let _=tx.send(CloudEvent::Complete(message));ctx.request_repaint();
+        });
+    }
     fn show_account_tab(&mut self,ui:&mut egui::Ui,ctx:&egui::Context) {
         m3_card(ui,|ui| {
             crate::auth_ui::steps(ui,self.account_stage,self.account_recovery);
@@ -568,8 +588,9 @@ impl AirCardApp {
                 if studio_button(ui,"Reintentar conexión con mi sesión guardada",!self.is_busy && self.activation_rx.is_none(),false) {self.start_cloud_sync(ctx.clone());}
             }
             if !self.storage_ready && self.cloud_rx.is_none() && !crate::storage::is_demo() {
-                ui.label("Si acabas de cerrar otra versión, puedes volver a comprobar el almacenamiento sin borrar ninguna copia.");
-                if studio_button(ui,"Volver a comprobar mis copias locales",!self.is_busy && self.activation_rx.is_none(),false) {self.start_cloud_startup(ctx.clone());}
+                ui.label("Tus copias requieren revisión. Puedes recuperar el acceso a la biblioteca sin modificar ningún original.");
+                if studio_button(ui,"Recuperar mi sesión guardada",!self.is_busy && self.activation_rx.is_none() && crate::cloud_sync::recovery_account_available(&self.account_server),true) {self.start_existing_account_recovery(ctx.clone());}
+                if studio_button(ui,"Volver a comprobar mis copias locales",!self.is_busy && self.activation_rx.is_none() && self.cloud_rx.is_none(),false) {self.start_cloud_startup(ctx.clone());}
             }
             if self.account_stage==2 { ui.label("Introduce el código que te enviamos a ese correo y elige tu contraseña."); }
             if self.account_server.is_empty() && !self.auth_preview { ui.add_space(8.0); ui.label(egui::RichText::new("El servicio de cuentas aún no está configurado. El acceso estará disponible cuando se active. Tus copias locales se conservan.").color(md3::ON_SURFACE_VARIANT)); }
