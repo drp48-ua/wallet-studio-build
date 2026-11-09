@@ -13,18 +13,27 @@ services:
     envVars:
       - key: PORT
         value: "8766"
+      # Preserve the existing value during migration; replacing it revokes sessions.
       - key: WALLET_AUTH_SECRET
-        generateValue: true
+        sync: false
       - key: WALLET_STORAGE_MODE
         value: remote
       - key: DATABASE_URL
         sync: false
-      - key: SUPABASE_URL
-        value: https://pbdaitvqblaltjosgkrm.supabase.co
-      - key: SUPABASE_SERVICE_ROLE_KEY
+      - key: WALLET_OBJECT_STORAGE
+        value: r2
+      - key: R2_ACCOUNT_ID
         sync: false
-      - key: SUPABASE_STORAGE_BUCKET
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: R2_BACKUP_BUCKET
         value: wallet-private
+      - key: R2_DESIGN_BUCKET
+        value: wallet-designs
       - key: WALLET_MAX_CONCURRENT_REQUESTS
         value: "1"
       - key: SHOPIFY_SHOP_DOMAIN

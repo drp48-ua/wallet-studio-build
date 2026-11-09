@@ -11,6 +11,7 @@ jobs:
     timeout-minutes: 30
     env:
       WALLET_STUDIO_CLOUD_URL: 'https://wallet-studio-accounts.onrender.com'
+      WALLET_STUDIO_CLOUD_TRANSPORT_URL: 'https://wallet-studio-accounts-v2.onrender.com'
     steps:
       - uses: actions/checkout@v7
         with:

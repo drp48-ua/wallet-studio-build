@@ -172,17 +172,28 @@ enum AppTab {
     Help,
     Account,
 }
-fn cloud_sync_status(session:&crate::cloud_sync::Session,previously_authenticated:bool,tx:&std::sync::mpsc::Sender<CloudEvent>,ctx:&egui::Context)->(bool,bool,bool,bool,String,Option<crate::cloud_sync::CaptureInventory>) {
-    match crate::cloud_sync::account_app_license(session) {
+type CloudStatus=(bool,bool,bool,bool,String,Option<crate::cloud_sync::CaptureInventory>);
+fn cloud_sync_status(session:&crate::cloud_sync::Session,previously_authenticated:bool,tx:&std::sync::mpsc::Sender<CloudEvent>,ctx:&egui::Context)->CloudStatus {
+    let licence=crate::cloud_sync::account_app_license(session);
+    cloud_account_status(crate::storage::ensure_ready().is_ok(),previously_authenticated,licence,&mut || {
+        crate::cloud_sync::synchronize_report_progress(session,|status| {let _=tx.send(CloudEvent::Progress(status));ctx.request_repaint();})
+    })
+}
+fn cloud_account_status(storage_ready:bool,previously_authenticated:bool,licence:anyhow::Result<bool>,sync:&mut dyn FnMut()->anyhow::Result<crate::cloud_sync::SyncReport>)->CloudStatus {
+    match licence {
         Ok(false)=>return (false,true,false,false,"Tu cuenta conserva derechos históricos de diseños. Necesitas una licencia vigente de Wallet Studio para utilizar el iPhone y sus copias.".into(),None),
         Err(error)=>{let retained=crate::cloud_sync::retained_session_after_failure(&error);return (false,retained,false,retained,crate::cloud_sync::session_connection_failure_message(&error),None);},
         Ok(true)=>{},
     }
-    match crate::cloud_sync::synchronize_report_progress(session,|status| {let _=tx.send(CloudEvent::Progress(status));ctx.request_repaint();}) {
+    if !storage_ready {
+        return (false,true,false,false,"Acceso a la biblioteca verificado. Las copias locales requieren revisión: sincronización y operaciones del iPhone bloqueadas. La sesión de biblioteca se guarda aparte.".into(),None);
+    }
+    match sync() {
         Ok(report)=>(true,true,report.complete(),false,report.message(),report.capture_inventory),
         Err(error)=>{let authenticated=crate::cloud_sync::authenticated_after_sync_failure(&error,previously_authenticated);let retained=crate::cloud_sync::retained_session_after_failure(&error);(authenticated,retained,false,!authenticated && retained,crate::cloud_sync::sync_failure_message(&error),None)},
     }
 }
+
 struct CloudMessage { authenticated:bool,library_authenticated:bool,session_pending:bool,storage_ready:bool,configured:bool,synced:bool,capture_inventory:Option<crate::cloud_sync::CaptureInventory>,server:String,status:String,session:Option<crate::cloud_sync::Session> }
 enum CloudEvent {Progress(&'static str),Restored(crate::cloud_sync::Session),Complete(CloudMessage)}
 
@@ -416,7 +427,7 @@ impl AirCardApp {
         thread::spawn(move || {
             let _=tx.send(CloudEvent::Progress("Comprobando y preparando las copias locales…"));ctx.request_repaint();
             let mut message=CloudMessage { authenticated:false,library_authenticated:false,session_pending:false,storage_ready:false,configured:true,synced:false,capture_inventory:None,server:String::new(),status:"No se pudo preparar el almacenamiento. Conserva las copias y revisa la recuperación.".into(),session:None };
-            match crate::storage::migrate_legacy().and_then(|_|crate::storage::ensure_ready()) {
+            match crate::storage::ensure_ready().and_then(|_|crate::storage::migrate_legacy()).and_then(|_|crate::storage::ensure_ready()) {
               Ok(()) => {
                 message.storage_ready=true;
                 message.configured=crate::cloud_sync::account_expected_without_session(&endpoint);
@@ -430,7 +441,18 @@ impl AirCardApp {
                     Err(_)=> { message.configured=true; message.status="La sesión no se pudo verificar. Inicia sesión de nuevo; no se capturará un original ausente.".into(); }
                 }
               }
-              Err(error)=>message.status=crate::storage::preparation_failure_message(&error).into(),
+              Err(error)=> {
+                message.status=format!("{} Las copias y el iPhone siguen bloqueados hasta revisar el almacenamiento.",crate::storage::preparation_failure_message(&error));
+                match crate::cloud_sync::load_session() {
+                    Ok(Some(session))=> {
+                        message.server=session.server.clone();
+                        (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status,message.capture_inventory)=cloud_sync_status(&session,false,&tx,&ctx);
+                        message.session=Some(session);
+                    }
+                    Ok(None)=>message.status.push_str(" No hay una sesión separada guardada. Pulsa Recuperar mi sesión guardada o inicia sesión con tu contraseña."),
+                    Err(_)=>message.status.push_str(" La sesión separada no se pudo leer. Recupera la sesión guardada o inicia sesión de nuevo; tus originales se conservan."),
+                }
+              },
             }
             if message.storage_ready { message.storage_ready=crate::storage::ensure_ready().is_ok(); }
             let _=tx.send(CloudEvent::Complete(message)); ctx.request_repaint();
@@ -471,7 +493,7 @@ impl AirCardApp {
             self.cloud_rx=None; self.storage_ready=message.storage_ready; self.cloud_configured=message.configured;
             self.cloud_synced=message.synced; self.cloud_capture_inventory=message.capture_inventory; self.cloud_status=message.status.into();
             let newly_authenticated=!self.account_authenticated && message.authenticated;
-            self.account_authenticated=message.authenticated;self.library_authenticated=message.library_authenticated;
+            self.account_authenticated=message.authenticated && self.storage_ready;self.library_authenticated=message.library_authenticated;
             self.session_pending=message.session_pending;
             if !message.server.is_empty() { self.account_server=message.server; }
             self.cloud_session=if !message.library_authenticated {
@@ -479,8 +501,9 @@ impl AirCardApp {
                 None
             } else {message.session};
             self.last_cloud_sync=Instant::now();
-            self.saved_cards=load_saved_cards(); self.invalidate_card_cache();
-            if newly_authenticated && self.apple_ready {self.refresh_devices();self.refresh_recovery_status();}
+            if self.storage_ready {self.saved_cards=load_saved_cards();self.invalidate_card_cache();}
+            else {self.saved_cards.clear();self.current_tab=AppTab::Library;}
+            if newly_authenticated && self.storage_ready && self.apple_ready {self.refresh_devices();self.refresh_recovery_status();}
         }
         let update_finished=if let Some(rx)=&self.update_rx {
             crate::auto_update::poll_status(rx,&mut self.update_status)
@@ -488,13 +511,13 @@ impl AirCardApp {
         if update_finished { self.update_rx=None; }
         if self.update_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(150)); }
         if self.cloud_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(150)); }
-        if self.cloud_configured && self.cloud_session.is_some() {
+        if self.storage_ready && self.cloud_configured && self.cloud_session.is_some() {
             if self.cloud_sync_queued || self.last_cloud_sync.elapsed().as_secs()>=60 { self.start_cloud_sync(ctx.clone()); }
             ctx.request_repaint_after(std::time::Duration::from_secs(60));
         }
     }
     fn start_cloud_sync(&mut self,ctx:egui::Context) {
-        if crate::storage::is_demo() || self.is_busy || self.scanning_syslog || self.cloud_rx.is_some() { return; }
+        if crate::storage::is_demo() || !self.storage_ready || crate::storage::ensure_ready().is_err() || self.is_busy || self.scanning_syslog || self.cloud_rx.is_some() { return; }
         let Some(session)=self.cloud_session.clone() else { return; };
         self.cloud_sync_queued=false; self.last_cloud_sync=Instant::now();
         self.cloud_synced=false;self.cloud_capture_inventory=None;
@@ -507,6 +530,22 @@ impl AirCardApp {
             let _=tx.send(CloudEvent::Complete(message));ctx.request_repaint();
         });
     }
+    fn start_existing_account_recovery(&mut self,ctx:egui::Context) {
+        if crate::storage::is_demo() || self.storage_ready || self.cloud_rx.is_some() || self.activation_rx.is_some() || self.is_busy || self.scanning_syslog {return;}
+        let server=self.account_server.clone();let (tx,rx)=channel();self.cloud_rx=Some(rx);
+        self.cloud_status="Verificando tu sesión guardada. Las copias y el iPhone siguen protegidos…".into();
+        thread::spawn(move|| {
+            let mut message=CloudMessage {authenticated:false,library_authenticated:false,session_pending:false,storage_ready:false,configured:true,synced:false,capture_inventory:None,server:server.clone(),status:String::new(),session:None};
+            match crate::cloud_sync::recover_existing_account_session(&server) {
+                Ok(session)=> {
+                    (message.authenticated,message.library_authenticated,message.synced,message.session_pending,message.status,message.capture_inventory)=cloud_account_status(false,false,Ok(true),&mut ||anyhow::bail!("account-only recovery cannot synchronize"));
+                    message.session=Some(session);
+                }
+                Err(error)=>message.status=format!("No se pudo recuperar la sesión guardada. {} Inicia sesión con tu contraseña; tus copias se conservan.",crate::cloud_sync::account_failure_message(&error)),
+            }
+            let _=tx.send(CloudEvent::Complete(message));ctx.request_repaint();
+        });
+    }
     fn show_account_tab(&mut self,ui:&mut egui::Ui,ctx:&egui::Context) {
         m3_card(ui,|ui| {
             crate::auth_ui::steps(ui,self.account_stage,self.account_recovery);
@@ -515,12 +554,14 @@ impl AirCardApp {
             crate::auth_ui::notice(ui,&self.cloud_status,self.cloud_rx.is_some() || self.activation_rx.is_some());
             ui.add_space(18.0);
             if self.account_authenticated || self.library_authenticated {
-                ui.label("Sesión guardada de forma segura en este equipo. Se comprobará al abrir la app; caduca tras 30 días sin uso o a los 90 días.");
+                ui.label(if self.storage_ready {"Sesión guardada de forma segura en este equipo. Se comprobará al abrir la app; caduca tras 30 días sin uso o a los 90 días."} else {"Modo solo biblioteca. La sesión se guarda por separado; las copias pendientes siguen bloqueadas."});
+                if !self.storage_ready && studio_button(ui,"Volver a comprobar mis copias locales",self.cloud_rx.is_none() && !self.is_busy,false) {self.start_cloud_startup(ctx.clone());}
                 let idle=self.account_devices_rx.is_none() && self.cloud_rx.is_none() && !self.is_busy && !self.scanning_syslog;
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(if self.cloud_synced {"Copias verificadas"} else {"Sincronización pendiente"}).strong().color(if self.cloud_synced {md3::SUCCESS} else {md3::PRIMARY}));
                 });
-                if studio_button(ui,if self.cloud_rx.is_some() {"Sincronizando…"} else {"Sincronizar ahora"},idle && (self.account_authenticated || self.session_pending),true) {self.start_cloud_sync(ctx.clone());}
+                if !self.storage_ready && studio_button(ui,"Volver a verificar mi acceso",idle,false) {self.start_cloud_startup(ctx.clone());}
+                if studio_button(ui,if self.cloud_rx.is_some() {"Sincronizando…"} else {"Sincronizar ahora"},idle && self.storage_ready && (self.account_authenticated || self.session_pending),true) {self.start_cloud_sync(ctx.clone());}
                 ui.add_space(16.0);
                 let mut revoke=None;
                 for (index,device) in self.account_devices.iter().enumerate() {
@@ -547,8 +588,9 @@ impl AirCardApp {
                 if studio_button(ui,"Reintentar conexión con mi sesión guardada",!self.is_busy && self.activation_rx.is_none(),false) {self.start_cloud_sync(ctx.clone());}
             }
             if !self.storage_ready && self.cloud_rx.is_none() && !crate::storage::is_demo() {
-                ui.label("Si acabas de cerrar otra versión, puedes volver a comprobar el almacenamiento sin borrar ninguna copia.");
-                if studio_button(ui,"Volver a comprobar mis copias locales",!self.is_busy && self.activation_rx.is_none(),false) {self.start_cloud_startup(ctx.clone());}
+                ui.label("Tus copias requieren revisión. Puedes recuperar el acceso a la biblioteca sin modificar ningún original.");
+                if studio_button(ui,"Recuperar mi sesión guardada",!self.is_busy && self.activation_rx.is_none() && crate::cloud_sync::recovery_account_available(&self.account_server),true) {self.start_existing_account_recovery(ctx.clone());}
+                if studio_button(ui,"Volver a comprobar mis copias locales",!self.is_busy && self.activation_rx.is_none() && self.cloud_rx.is_none(),false) {self.start_cloud_startup(ctx.clone());}
             }
             if self.account_stage==2 { ui.label("Introduce el código que te enviamos a ese correo y elige tu contraseña."); }
             if self.account_server.is_empty() && !self.auth_preview { ui.add_space(8.0); ui.label(egui::RichText::new("El servicio de cuentas aún no está configurado. El acceso estará disponible cuando se active. Tus copias locales se conservan.").color(md3::ON_SURFACE_VARIANT)); }
@@ -611,21 +653,22 @@ impl AirCardApp {
                 if self.account_stage==2 && !self.account_confirmation.is_empty() && self.account_password!=self.account_confirmation {ui.colored_label(md3::ERROR,"Las contraseñas todavía no coinciden.");}
                 if self.account_stage==2 && self.account_recovery {ui.checkbox(&mut self.account_reset_devices,"Desvincular mis equipos anteriores y registrar este PC (requiere el código del correo). Sus sesiones se cerrarán; sus copias locales se conservan.");}
             }
-            if self.account_stage>0 {ui.checkbox(&mut self.account_link_consent,"Vincular las copias de este perfil a mi cuenta").on_hover_text("Confirmo que todas las copias e historiales de este perfil me pertenecen. Se sincronizarán con esta cuenta; su propietario no podrá cambiarse desde esta instalación.");}
+            if self.account_stage>0 && self.storage_ready {ui.checkbox(&mut self.account_link_consent,"Vincular las copias de este perfil a mi cuenta").on_hover_text("Confirmo que todas las copias e historiales de este perfil me pertenecen. Se sincronizarán con esta cuenta; su propietario no podrá cambiarse desde esta instalación.");}
             let activation=self.account_stage==2;
             let matching=if activation {
                 self.account_password==self.account_confirmation && (12..=128).contains(&self.account_password.chars().count()) && self.account_code.len()==6 && self.account_code.bytes().all(|b|b.is_ascii_digit())
             } else {
                 (12..=128).contains(&self.account_password.chars().count())
             };
-            let action=if self.account_stage>0 && studio_button(ui,if activation {"Verificar y crear mi cuenta"} else {"Iniciar sesión"},available && matching,true) {Some(activation)} else {None};
+            if !self.storage_ready {ui.label("Acceso solo a biblioteca con la cuenta ya vinculada. No se modifican sus copias. Si la identidad del equipo no puede verificarse, será necesaria su revisión.");}
+            let action=if self.account_stage>0 && studio_button(ui,if activation {"Verificar y crear mi cuenta"} else {"Iniciar sesión"},available && matching && (self.storage_ready || crate::cloud_sync::recovery_account_available(&self.account_server)),true) {Some(activation)} else {None};
             if let Some(register)=action {
                 let server=self.account_server.clone(); let email=self.account_email.clone(); let password=std::mem::take(&mut self.account_password);
                 let confirmation=std::mem::take(&mut self.account_confirmation);let code=std::mem::take(&mut self.account_code);
                 let recovery=self.account_recovery;let reset_devices=self.account_reset_devices;
                 let consent=self.account_link_consent;
                 let old_configured=self.cloud_configured; let (tx,rx)=channel(); self.cloud_rx=Some(rx); self.cloud_synced=false;self.cloud_capture_inventory=None; self.storage_ready=false;
-                self.cloud_status="Verificando cuenta y originales…".into(); let ctx=ctx.clone();
+                self.cloud_status="Verificando el acceso a tu cuenta…".into(); let ctx=ctx.clone();
                 thread::spawn(move || {
                     let mut message=CloudMessage { authenticated:false,library_authenticated:false,session_pending:false,storage_ready:true,configured:old_configured,synced:false,capture_inventory:None,server:server.clone(),status:"Acceso rechazado: revisa compra, código, contraseña y límite de 3 equipos.".into(),session:None };
                     let result=if register && recovery {crate::cloud_sync::recover_account(&server,&email,&code,&password,&confirmation,reset_devices,consent)} else if register {crate::cloud_sync::activate(&server,&email,&code,&password,&confirmation,consent)} else {crate::cloud_sync::login(&server,&email,&password,false,consent)};
@@ -637,7 +680,7 @@ impl AirCardApp {
                       }
                       Err(error)=>message.status=crate::cloud_sync::account_failure_message(&error).into(),
                     }
-                    message.configured|=crate::cloud_sync::account_expected_without_session(&server);
+                    if crate::storage::ensure_ready().is_ok() {message.configured|=crate::cloud_sync::account_expected_without_session(&server);}
                     message.storage_ready=crate::storage::ensure_ready().is_ok();
                     let _=tx.send(CloudEvent::Complete(message)); ctx.request_repaint();
                 });
@@ -722,7 +765,7 @@ impl AirCardApp {
         let apple_prerequisites = if crate::storage::is_demo() {
             crate::apple_setup::Prerequisites { runtime:false, service:crate::apple_setup::ServiceState::Unavailable }
         } else { crate::apple_setup::probe() };
-        let saved_cards = load_saved_cards();
+        let saved_cards = if crate::storage::ensure_ready().is_ok() {load_saved_cards()} else {Vec::new()};
         let offline_baseline_device = HashMap::new();
         let mut app = Self {
             activation_requested:None,password_visible:false,activation_rx:None,account_stage:0,account_code:String::new(),account_confirmation:String::new(),account_authenticated:false,library_authenticated:false,session_pending:false,
@@ -956,7 +999,7 @@ impl AirCardApp {
 
     fn refresh_design_library(&mut self) {
         self.personal_library_needs_filter=true;
-        match crate::design_library::library_dir().and_then(|root| {if !crate::storage::is_demo() {crate::design_library::migrate_legacy_saves(&root)?;}crate::design_library::discover(&root)}) {
+        match crate::design_library::library_dir().and_then(|root| {if !crate::storage::is_demo() && crate::storage::ensure_ready().is_ok() {crate::design_library::migrate_legacy_saves(&root)?;}crate::design_library::discover(&root)}) {
             Ok(designs) => {
                 if !designs.iter().any(|design| Some(&design.path) == self.library_selection.path.as_ref())
                     && !self.purchased_designs.iter().any(|(_,path)| Some(path) == self.library_selection.path.as_ref()) {
@@ -985,7 +1028,7 @@ impl AirCardApp {
                 }
     }
     fn show_library_tab(&mut self,ctx:&egui::Context,ui:&mut egui::Ui) {
-        let owner=if crate::storage::is_demo() {"demo".into()} else {self.cloud_session.as_ref().map(|s|format!("{}|{}",s.server,s.user_id)).unwrap_or_default()};
+        let owner=if crate::storage::is_demo() {"demo".into()} else {self.cloud_session.as_ref().map(|s|format!("{}|{}|{}",s.server,s.user_id,if self.storage_ready {"vault"} else {"recovery-library"})).unwrap_or_default()};
         if owner!=self.library_owner {
             self.library_owner=owner.clone();self.library_designs.clear();self.library_textures.clear();self.library_selection.reset();self.purchased_designs.clear();self.purchased_status="Wallet Studio incluye una biblioteca de diseños. Actualízala para consultarlos.".into();self.purchased_rx=None;self.purchased_use_rx=None;self.library_previews.reset();self.refresh_design_library();
             self.start_purchased_refresh(ctx);
@@ -2212,9 +2255,9 @@ impl eframe::App for AirCardApp {
             });
             return;
         }
-        if !crate::storage::is_demo() && !self.account_authenticated && self.library_authenticated && !self.session_pending {
+        if !crate::storage::is_demo() && !self.account_authenticated && self.library_authenticated && (!self.session_pending || !self.storage_ready) {
             egui::CentralPanel::default().show(ctx,|ui| {
-                ui.label("Cuenta con pack de diseños · necesitas la licencia de Wallet Studio para utilizar el iPhone y sus copias.");
+                ui.label(if self.storage_ready {"Cuenta con pack de diseños · necesitas la licencia de Wallet Studio para utilizar el iPhone y sus copias."} else {"Modo solo biblioteca · las copias requieren revisión. El iPhone y la sincronización están bloqueados."});
                 ui.horizontal(|ui| {if ui.button("Biblioteca").clicked() {self.current_tab=AppTab::Library;}if ui.button("Cuenta").clicked() {self.current_tab=AppTab::Account;}});
                 egui::ScrollArea::vertical().show(ui,|ui| {if self.current_tab==AppTab::Account {self.show_account_tab(ui,ctx);}else{self.show_library_tab(ctx,ui);}});
             });
@@ -3396,6 +3439,17 @@ impl AirCardApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reviewed_storage_authenticates_only_library_without_sync_and_retry_requires_fresh_inventory() {
+        let mut calls=0;let mut sync=|| {calls+=1;Ok(crate::cloud_sync::SyncReport::default())};
+        let blocked=cloud_account_status(false,true,Ok(true),&mut sync);
+        assert!(!blocked.0 && blocked.1 && !blocked.2 && !blocked.3 && blocked.5.is_none());assert!(blocked.4.contains("bloqueadas"));
+        let failed=cloud_account_status(false,true,Err(anyhow::anyhow!("synthetic offline")),&mut sync);
+        assert!(!failed.0 && failed.1 && failed.3 && failed.5.is_none());
+        let revoked=cloud_account_status(false,true,Err(crate::auto_update::HttpStatus(401).into()),&mut sync);
+        assert!(!revoked.0 && !revoked.1 && !revoked.2 && !revoked.3 && revoked.5.is_none());
+        let retry=cloud_account_status(true,false,Ok(true),&mut sync);assert!(retry.0);assert_eq!(calls,1);
+    }
     #[test]
     fn disconnected_capture_drains_terminal_messages_before_deciding_failure() {
         for terminal in [false,true] {

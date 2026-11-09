@@ -388,7 +388,8 @@ pub fn native_geometry(width:u32,height:u32)->bool { (640..=4096).contains(&widt
 pub fn account_dir(session:&crate::cloud_sync::Session)->Result<PathBuf> {
     anyhow::ensure!(crate::cloud_sync::valid_server(&session.server) && !session.user_id.is_empty(),"Cuenta no válida");
     let key=crate::bank_backup::sha256(format!("{}|{}",session.server,session.user_id).as_bytes())?;
-    let root=crate::storage::root().join("design-library").join(key);crate::storage::safe_chain(&root)?;Ok(root)
+    let base=if crate::storage::ensure_ready().is_ok() {crate::storage::root()} else {crate::storage::account_recovery_root()?};
+    let root=base.join("design-library").join(key);crate::storage::safe_chain(&root)?;Ok(root)
 }
 pub fn purchased_catalog(session:&crate::cloud_sync::Session)->Result<PurchasedCatalog> {
     purchased_catalog_using(session,&mut |session,path,maximum|design_request(session,path,maximum))
@@ -465,7 +466,7 @@ static DESIGN_NETWORK:DesignNetwork=DesignNetwork::new();
 fn design_request(session:&crate::cloud_sync::Session,path:&str,maximum:usize)->Result<Vec<u8>> {
     let _network=DESIGN_NETWORK.acquire()?;
     for attempt in 0..3 {
-        let result=crate::auto_update::http_request("GET",&format!("{}{}",session.server,path),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("X-Wallet-Studio-Catalog".into(),NATIVE_CATALOG_CAPABILITY.into())],&[],maximum);
+        let result=crate::cloud_sync::account_http_request("GET",&format!("{}{}",session.server,path),&[("Authorization".into(),format!("Bearer {}",session.access_token)),("X-Wallet-Studio-Catalog".into(),NATIVE_CATALOG_CAPABILITY.into())],&[],maximum);
         let retry=result.as_ref().err().is_some_and(|error|error.downcast_ref::<crate::auto_update::HttpStatus>().map_or(true,|status|matches!(status.0,429|503)));
         if !retry || attempt==2 {return result;}
         std::thread::sleep(std::time::Duration::from_millis(400*(attempt+1)));
@@ -481,6 +482,8 @@ pub fn cached_thumbnail(session:&crate::cloud_sync::Session,item:&PurchasedDesig
     store_purchased_cache(&path,preview,&bytes)?;Ok(path)
 }
 fn store_purchased_cache(path:&Path,item:&PurchasedDesign,bytes:&[u8])->Result<()> {
+    if path.starts_with(crate::storage::root()) {crate::storage::ensure_ready().context("La cache anterior espera la revision de las copias")?;}
+
     verify_purchased(item,bytes)?;crate::storage::safe_chain(path)?;
     let root=path.parent().context("Carpeta de caché no válida")?;std::fs::create_dir_all(root)?;
     if read_image(path).is_ok_and(|old|old==bytes) {return Ok(());}
