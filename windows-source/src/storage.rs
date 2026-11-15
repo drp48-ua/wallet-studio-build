@@ -227,6 +227,22 @@ pub(crate) fn replace_file_at(temporary:&Path,destination:&Path)->Result<()> {
     Ok(())
 }
 
+/// Single same-volume commit point; never replaces an existing evidence file.
+pub(crate) fn archive_file_new_durable(source:&Path,destination:&Path)->Result<()> {
+    safe_chain(source)?;safe_chain(destination)?;
+    anyhow::ensure!(!destination.try_exists()?,"El archivo de evidencia ya existe");
+    #[cfg(windows)] {
+        #[link(name="kernel32")] unsafe extern "system" {fn MoveFileExW(source:*const u16,target:*const u16,flags:u32)->i32;}
+        let source=wide_path(source)?;let target=wide_path(destination)?;
+        // No REPLACE_EXISTING and no COPY_ALLOWED: cross-volume moves fail.
+        if unsafe {MoveFileExW(source.as_ptr(),target.as_ptr(),0x8)}==0 {
+            return Err(std::io::Error::last_os_error()).context("No se pudo archivar el bloqueo; conserva la evidencia");
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))] {anyhow::bail!("La recuperación duradera requiere Windows")}
+}
+
 pub(crate) fn write_mutable(path:&Path,bytes:&[u8])->Result<()> {
     let parent=path.parent().context("settings parent missing")?;
     let temporary=parent.join(format!(".settings-{}",crate::flasher::generate_token()));

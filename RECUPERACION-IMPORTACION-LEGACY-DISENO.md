@@ -1,6 +1,6 @@
 # Diseño de recuperación de una importación antigua
 
-Estado: propuesta revisable; no implementa retirada del bloqueo ni autoriza escrituras del iPhone.
+Estado actualizado el 15 de noviembre: se implementó y probó una reparación supervisada del marcador antiguo vacío. No autoriza escrituras del iPhone ni retira revisiones de tarjetas.
 
 La auditoría de solo lectura de 34 preparaciones encontró 32 baselines válidos, dos originales cuya procedencia requiere revisión, 33 historiales válidos y uno inválido. Hubo 410 archivos iguales al destino, 200 ausentes y cuatro diferentes. Las diferencias afectan a dos metadatos de baseline y dos imágenes locales; se conservan ambas versiones. Estas cifras cuentan apariciones, no tarjetas únicas. El censo independiente de identidades debe terminar antes de decidir si una barrera global puede convertirse en revisiones concretas.
 
@@ -24,3 +24,11 @@ El censo independiente posterior encontró ocho identidades distintas y cero ent
 8. Al recuperar la interfaz completa siguen siendo obligatorios la sesión, el inventario autenticado reciente, las revisiones por tarjeta y las recuperaciones del dispositivo. Retirar una barrera global no significa que todas las tarjetas estén verificadas.
 
 Pruebas necesarias: propietario activo, marcador desconocido, inventario modificado, identidades cruzadas, conflictos conservados, falta de archivo, caída antes y después de cada fase, repetición del plan y bloqueo del mismo dispositivo. No se ejecutó esta transacción sobre un perfil real.
+
+## Implementación aceptada y comprobada
+
+La implementación usa una transacción más pequeña que la propuesta inicial: el marcador antiguo permanece como barrera durante toda la preparación. Se escriben y verifican las revisiones necesarias y una auditoría privada en una carpeta hermana; el inventario vuelve a comprobarse bajo exclusión. El único punto de confirmación es archivar el marcador vacío mediante un renombrado duradero, en el mismo volumen y sin reemplazo. Así no se introduce una segunda barrera cuya retirada necesite otra transacción. No se copian ni mezclan originales o historiales.
+
+Las pruebas cubren fallos e interrupciones antes y después del punto de confirmación, concurrencia, inventario modificado y colisión del archivo de evidencia. La repetición posterior se rechaza sin modificar el almacén. Un error de lectura posterior al renombrado intenta restaurar la barrera y mantiene el almacenamiento bloqueado.
+
+La ejecución real supervisada confirmó dos identidades completas, seis en revisión y 2.147 archivos originales conservados. No operó sobre el teléfono. Los registros históricos de transporte completados se conservan como evidencia pasiva: carecen de un hash histórico independiente y nunca acreditan originales o el estado actual del dispositivo. Las recuperaciones del teléfono y revisiones de las seis tarjetas siguen siendo obligatorias antes de permitir sus operaciones.
